@@ -26,8 +26,9 @@ SOURCES = {
     "NFL": ("nflverse", "https://github.com/nflverse/nflverse-data"),
     "NCAAF": ("CollegeFootballData", "https://collegefootballdata.com"),
 }
+PLAYER_SPORTS = {"NBA", "NFL"}
 META = ["sport", "season", "season_type", "game_id", "event_date", "week",
-        "team", "opponent", "entity_type", "entity_id", "entity_name"]
+        "team", "opponent", "entity_type", "entity_id", "entity_name", "position", "matchup"]
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,8 @@ class Query:
             raise ValueError("Choose NBA, NFL, or NCAAF.")
         if self.entity_type not in {"team", "player"}:
             raise ValueError("Choose team or player statistics.")
+        if self.entity_type == "player" and self.sport not in PLAYER_SPORTS:
+            raise ValueError("Player statistics are available only for NBA and NFL. NCAAF supports team statistics only.")
         if self.season_type not in {"regular", "postseason"}:
             raise ValueError("Choose regular season or postseason.")
         minimum = {"NBA": 1946, "NFL": 1999, "NCAAF": 2001}[self.sport]
@@ -95,11 +98,11 @@ def slug(text):
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
 
 
-def numeric_stats(raw, prefix=""):
+def numeric_stats(raw):
     """Keep numeric stats; split compound CFBD box-score counts explicitly."""
     result = {}
     for name, value in raw.items():
-        key = prefix + slug(name)
+        key = slug(name)
         text = str(value).replace(",", "").strip()
         try:
             number = float(text)
@@ -108,13 +111,12 @@ def numeric_stats(raw, prefix=""):
         except (ValueError, TypeError):
             parts = re.fullmatch(r"(\d+)[/-](\d+)", text)
             if parts:
-                labels = {"c_att": ("completions", "attempts"),
-                          "completion_attempts": ("completions", "attempts"),
+                labels = {"completion_attempts": ("completions", "attempts"),
                           "third_down_eff": ("third_down_conversions", "third_down_attempts"),
                           "fourth_down_eff": ("fourth_down_conversions", "fourth_down_attempts"),
                           "total_penalties_yards": ("penalties", "penalty_yards")}.get(slug(name))
                 if labels:
-                    result.update({prefix + label: float(v) for label, v in zip(labels, parts.groups())})
+                    result.update({label: float(v) for label, v in zip(labels, parts.groups())})
             # Time-of-possession and unrecognized compound values are not numeric features.
     return result
 
@@ -130,7 +132,7 @@ def normalize(frame, query):
     for column in META:
         if column not in frame:
             frame[column] = None
-    for column in ("game_id", "entity_id", "entity_name", "team", "opponent"):
+    for column in ("game_id", "entity_id", "entity_name", "team", "opponent", "position", "matchup"):
         frame[column] = frame[column].astype("string")
     if frame[["game_id", "entity_id", "entity_name"]].isna().any().any():
         raise DataSourceError("The source response is missing required game or entity identifiers.")
@@ -165,7 +167,10 @@ def load_nba(query, client):
             "team": raw["TEAM_ABBREVIATION"], "opponent": raw["MATCHUP"].str.split().str[-1],
             "entity_id": raw["TEAM_ID" if query.entity_type == "team" else "PLAYER_ID"].astype(str),
             "entity_name": raw["TEAM_NAME" if query.entity_type == "team" else "PLAYER_NAME"],
+            "position": raw.get("POSITION") if query.entity_type == "player" else None,
         })
+        frame["matchup"] = [f"{opponent} @ {team}" if "vs." in matchup else f"{team} @ {opponent}"
+                            for team, opponent, matchup in zip(frame["team"], frame["opponent"], raw["MATCHUP"])]
         for name in ("PTS", "REB", "AST", "STL", "BLK", "TOV", "MIN", "FGM", "FGA",
                      "FG_PCT", "FG3M", "FG3A", "FG3_PCT", "FTM", "FTA", "FT_PCT",
                      "OREB", "DREB", "PF", "PLUS_MINUS"):
@@ -180,7 +185,7 @@ def load_nfl(query, client):
     kind = query.entity_type
     url = f"https://github.com/nflverse/nflverse-data/releases/download/stats_{kind}/stats_{kind}_week_{query.season}.csv"
     try:
-        raw = pd.read_csv(StringIO(client.get(url).text), dtype={"player_id": str, "game_id": str})
+        raw = pd.read_csv(StringIO(client.get(url).text), dtype={"player_id": str, "game_id": str}, low_memory=False)
         raw = raw[raw["season_type"] == ("REG" if query.season_type == "regular" else "POST")].copy()
         if query.week is not None:
             raw = raw[raw["week"] == query.week]
@@ -196,8 +201,20 @@ def load_nfl(query, client):
             "opponent": raw["opponent_team"],
             "entity_id": raw["player_id"] if kind == "player" else raw[team_col],
             "entity_name": raw["player_display_name"].fillna(raw["player_id"]) if kind == "player" else raw[team_col],
+            "position": raw.get("position") if kind == "player" else None,
         })
-        # NFL uses season/week ordering. Dates are deliberately absent rather than inferred.
+        # The nflverse game ID encodes away/home order; dates come from its schedule.
+        parts = frame["game_id"].str.split("_")
+        frame["matchup"] = parts.str[-2] + " @ " + parts.str[-1]
+        try:
+            schedule = pd.read_csv(StringIO(client.get(
+                "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv").text),
+                dtype={"game_id": str}, usecols=["game_id", "gameday", "away_team", "home_team"])
+            dates = schedule.drop_duplicates("game_id").set_index("game_id")["gameday"]
+            frame["event_date"] = frame["game_id"].map(dates)
+        except (DataSourceError, KeyError, ValueError):
+            # A failed schedule download must never invent dates or discard box scores.
+            frame["event_date"] = None
         excluded = set(META) | {"player_id", "player_name", "player_display_name",
                                 "headshot_url", "position", "position_group", "recent_team",
                                 "opponent_team", "jersey_number"}
@@ -248,6 +265,8 @@ def load_nba_archive(query, client):
             "entity_name": (raw["first_name"].fillna("") + " " + raw["family_name"].fillna("")).str.strip()
             if kind == "player" else raw["team_city"] + " " + raw["team_name"],
             "min": raw["min"],
+            "position": raw.get("position") if kind == "player" else None,
+            "matchup": raw["away_team_abbreviation"] + " @ " + raw["home_team_abbreviation"],
         })
         names = {"points": "pts", "rebounds_total": "reb", "assists": "ast", "steals": "stl",
                  "blocks": "blk", "turnovers": "tov", "field_goals_made": "fgm", "field_goals_attempted": "fga",
@@ -277,8 +296,7 @@ def load_ncaaf(query, client):
     headers = {"Authorization": f"Bearer {key}"}
     base = "https://api.collegefootballdata.com"
     games = client.json(base + "/games", params=params, headers=headers)
-    boxes = client.json(base + ("/games/teams" if query.entity_type == "team" else "/games/players"),
-                        params=params, headers=headers)
+    boxes = client.json(base + "/games/teams", params=params, headers=headers)
     try:
         completed = {str(game["id"]): game for game in games if game.get("completed") is True}
         rows = []
@@ -293,20 +311,11 @@ def load_ncaaf(query, client):
                 home = team_name == game["homeTeam"]
                 common = {"game_id": str(game["id"]), "event_date": game["startDate"],
                           "week": game["week"], "team": team_name,
-                          "opponent": game["awayTeam"] if home else game["homeTeam"]}
-                if query.entity_type == "team":
-                    rows.append({**common, "entity_id": str(team["teamId"]), "entity_name": team_name,
-                                 **numeric_stats({"points": team.get("points"), **{
-                                     s["category"]: s["stat"] for s in team["stats"]}})})
-                else:
-                    athletes = {}
-                    for category in team["categories"]:
-                        for stat in category["types"]:
-                            for athlete in stat["athletes"]:
-                                player = athletes.setdefault(str(athlete["id"]), {
-                                    **common, "entity_id": str(athlete["id"]), "entity_name": athlete["name"]})
-                                player.update(numeric_stats({stat["name"]: athlete["stat"]}, slug(category["name"]) + "_"))
-                    rows.extend(athletes.values())
+                          "opponent": game["awayTeam"] if home else game["homeTeam"],
+                          "matchup": f"{game['awayTeam']} @ {game['homeTeam']}"}
+                rows.append({**common, "entity_id": str(team["teamId"]), "entity_name": team_name,
+                             **numeric_stats({"points": team.get("points"), **{
+                                 s["category"]: s["stat"] for s in team["stats"]}})})
     except (KeyError, TypeError, ValueError) as exc:
         raise DataSourceError("CollegeFootballData returned an unexpected schema. Its API may have changed.") from exc
     return normalize(pd.DataFrame(rows), query)

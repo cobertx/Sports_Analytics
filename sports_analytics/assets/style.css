@@ -48,22 +48,28 @@ p { color: var(--muted); line-height: 1.65; margin: 8px 0; }
 .load-status { border: 1px solid #294047; background: #102329; color: #aec6cc; border-radius: 8px; padding: 13px 16px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .dataset-summary { color: var(--muted); font-size: 11px; padding: 13px 2px 20px; }
 .analysis-filters { display: grid; grid-template-columns: 1.6fr 1.2fr 1fr; gap: 16px; }
+.identity-filters { grid-template-columns: 1fr 1.6fr; }
+.identity-filters.single-entity { grid-template-columns: minmax(0, 1fr); }
 .kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 0 0 22px; }
 .kpi { border: 1px solid var(--line); border-radius: 10px; padding: 19px 18px; background: var(--panel); display: flex; flex-direction: column; gap: 11px; }
 .kpi strong { font-size: 30px; font-weight: 600; letter-spacing: -.8px; }
 .kpi small { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 21px 22px 16px; }
 .chart-panel { overflow: hidden; }
+.career-panel { margin-top: 22px; }
 .chart-note { font-size: 11px; padding: 0 22px 18px; margin: 0; }
 .table-panel { margin-top: 22px; overflow: hidden; padding-bottom: 10px; }
 .export-button { border: 1px solid #33445c; border-radius: 5px; background: transparent; color: #bacbdf; padding: 8px 12px; font-size: 11px; }
 footer { color: #64758d; font-size: 10px; margin-top: 30px; border-top: 1px solid var(--line); padding-top: 18px; letter-spacing: .4px; }
 /* Dash 3 (react-select) and Dash 4 dropdowns. */
-.Select-control, .Select-menu-outer { background: #0e1929 !important; border-color: #33445c !important; color: var(--text) !important; }
-.Select-value-label, .Select-input > input { color: var(--text) !important; }
+.Select-control { background: #f3f6fb !important; border-color: #8795a8 !important; color: #000 !important; }
+.Select-menu-outer { background: #0e1929 !important; border-color: #33445c !important; color: var(--text) !important; }
+.app-shell .Select-value-label, .app-shell .Select-input > input { color: #000 !important; }
 .Select-option { background: #111d2e !important; color: var(--text) !important; }
 .Select-option.is-focused { background: #20374d !important; }
-.dash-dropdown { --background-color: #0e1929; --border-color: #33445c; --text-color: #e7edf6; --placeholder-color: #93a5bd; }
+.dash-dropdown { background: #f3f6fb !important; color: #000 !important; --Dash-Text-Strong: #000; --Dash-Text-Disabled: #586577; --Dash-Stroke-Strong: #8795a8; }
+.dash-dropdown-value, .dash-dropdown-value-item { color: #000 !important; }
+.dash-dropdown-content { background: #111d2e; color: #e7edf6; --Dash-Text-Strong: #e7edf6; --Dash-Fill-Inverse-Strong: #111d2e; }
 .dash-table-container .dash-spreadsheet-container input { color: #c7d3e4 !important; }
 .dash-table-container button { background: #17253a; color: #c7d3e4; border-color: #33445c; }
 @media (min-width: 1300px) { .workspace { grid-template-columns: 285px minmax(0, 1fr); } }

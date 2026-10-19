@@ -14,7 +14,8 @@ def main():
     parser = argparse.ArgumentParser(description="Import historical game statistics into the local cache")
     parser.add_argument("sport", choices=["NBA", "NFL", "NCAAF"])
     parser.add_argument("--seasons", type=int, nargs="+", required=True, help="NBA uses the starting year, e.g. 2024 for 2024-25")
-    parser.add_argument("--entity", choices=["team", "player"], default="team")
+    parser.add_argument("--entity", choices=["team", "player"], default="team",
+                        help="Team statistics for any sport; player statistics for NBA and NFL only")
     parser.add_argument("--season-type", choices=["regular", "postseason"], default="regular")
     parser.add_argument("--team", default="", help="NCAAF school name, e.g. Michigan")
     parser.add_argument("--week", type=int)

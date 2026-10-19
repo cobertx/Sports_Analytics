@@ -74,7 +74,9 @@ class DataService:
                 raise
         if cached and not refresh:
             age = datetime.now(timezone.utc) - datetime.fromisoformat(cached.fetched_at)
-            if age.total_seconds() < self.ttl_hours * 3600:
+            needs_positions = query.entity_type == "player" and "position" not in cached.frame
+            needs_matchups = "matchup" not in cached.frame
+            if age.total_seconds() < self.ttl_hours * 3600 and not needs_positions and not needs_matchups:
                 return cached
         try:
             frame = fetch(query)
