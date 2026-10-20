@@ -24,6 +24,8 @@ from .nfl_markets import NflMarketService
 from .nba_markets import NBA_CATEGORIES, NBA_MARKETS, NbaMarketService
 from .ncaaf_markets import NCAAF_MARKETS, NcaafMarketService
 from .whp_service import WHPMarketService
+from .usage_opportunity_service import UsageOpportunityMarketService
+from .opponent_adjusted_service import OpponentAdjustedMarketService
 from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, NCAAF_LOGO_DIRECTORY, NCAAF_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
 from .display_time import eastern_datetime, format_eastern
 from .usage_log import ApiUsageLog, SPORTS as USAGE_SPORTS, usage_summary
@@ -240,7 +242,7 @@ def usage_figures(summary):
 def create_app(service=None, career_service=None, schedule_service=None, odds_service=None, nfl_market_service=None,
                api_usage_log=None, ppp_service=None, epa_service=None, nba_market_service=None, nba_ppp_service=None,
                nba_epa_service=None, elo_service=None, nba_elo_service=None, ncaaf_market_service=None,
-               whp_service=None):
+               whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None):
     service = service or DataService()
     career_service = career_service or CareerService(service.path.with_name("career.sqlite3"))
     schedule_service = schedule_service or ScheduleService(service.path.with_name("schedules.sqlite3"))
@@ -252,6 +254,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     elo_service = elo_service or ELOMarketService()
     nba_elo_service = nba_elo_service or NBAELOMarketService()
     whp_service = whp_service or WHPMarketService()
+    usage_opportunity_service = usage_opportunity_service or UsageOpportunityMarketService()
+    opponent_adjusted_service = opponent_adjusted_service or OpponentAdjustedMarketService()
     data_directory = Path(__file__).resolve().parent.parent / "data"
     nfl_market_service = nfl_market_service or NflMarketService(odds_service, service.path.with_name("nfl_markets.sqlite3"),
                                                               data_directory / "market_data", usage_log=api_usage_log)
@@ -424,7 +428,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                           value=5, min=-100, max=100, step="any")),
                                     html.Button("Apply Criteria", id="market-apply-criteria", n_clicks=0, className="apply-criteria-button"),
                                 ], className="criteria-controls"),
-                                html.Div("Applies to all calculated selections in the displayed category, including WHP player props. Rows must exceed both thresholds. Edge is measured in percentage points.",
+                                html.Div("Applies to all calculated selections in the displayed category, including player props. Rows must exceed both thresholds. Edge is measured in percentage points.",
                                          id="market-criteria-status", role="status", **{"aria-live": "polite"}, className="criteria-status"),
                             ], className="panel market-criteria"),
                             html.Div([
@@ -453,7 +457,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                               ], className="forecast-method-control"),
                               html.Div([
                                 field("Player Forecast Method", dcc.Dropdown(id="player-forecast-method", value="WHP",
-                                      options=[{"label": "Weighted Historical Performance (WHP)", "value": "WHP"}], clearable=False)),
+                                      options=[{"label": "Weighted Historical Performance (WHP)", "value": "WHP"},
+                                               {"label": "Usage & Opportunity (UO)", "value": "UO"},
+                                               {"label": "Opponent-Adjusted Matchup (OAM)", "value": "OAM"}], clearable=False)),
                                 html.P("Latest historical performance used: Not calculated yet", id="player-forecast-history",
                                        className="forecast-history", role="status"),
                               ], className="forecast-method-control"),
@@ -664,7 +670,18 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     for value in (probability, edge)) or not 0 <= probability <= 100 or not -100 <= edge <= 100):
             return no_update, "Enter an Estimated Probability from 0 to 100 and an Edge from -100 to 100. Previous criteria remain applied.", no_update
         return {"probability": probability / 100, "edge": edge / 100}, (
-            f"Applied to all calculated selections: estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Player tabs use WHP; Game Lines use the selected game forecast."), category or "Game"
+            f"Applied to all calculated selections: estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Player tabs and Game Lines use their selected forecast methods."), category or "Game"
+
+    @app.callback(Output("player-forecast-method", "options"), Output("player-forecast-method", "value"),
+                  Input("market-url", "hash"), State("player-forecast-method", "value"))
+    def player_forecast_methods(location_hash, previous):
+        supported = market_game_sport(location_hash) in {"NBA", "NFL"}
+        options = [{"label": "Weighted Historical Performance (WHP)", "value": "WHP"},
+                   {"label": "Usage & Opportunity (UO)" if supported else "Usage & Opportunity (NBA/NFL only)",
+                    "value": "UO", "disabled": not supported},
+                   {"label": "Opponent-Adjusted Matchup (OAM)" if supported else "Opponent-Adjusted Matchup (NBA/NFL only)",
+                    "value": "OAM", "disabled": not supported}]
+        return options, previous if previous == "WHP" or previous in {"UO", "OAM"} and supported else "WHP"
 
     @app.callback(Output("game-forecast-history", "children"), Output("player-forecast-history", "children"),
                   Input("market-forecast-history", "data"), Input("market-url", "hash"),
@@ -712,8 +729,16 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         forecast, model_error = None, None
         snapshot = {**snapshot, "sport": market_game_sport(location_hash)}
         if category != "Game":
+            player_method = player_method or "WHP"
+            if player_method not in {"WHP", "UO", "OAM"}:
+                raise PreventUpdate
             try:
-                forecast = whp_service.forecast({**snapshot, "rows": [row for row in snapshot["rows"] if row["group"] == category]})
+                if player_method in {"UO", "OAM"}:
+                    # Simulate the full saved game once, so changing a player tab
+                    # retains common team volumes and correlated prop outcomes.
+                    forecast = {"UO": usage_opportunity_service, "OAM": opponent_adjusted_service}[player_method].forecast(snapshot)
+                else:
+                    forecast = whp_service.forecast({**snapshot, "rows": [row for row in snapshot["rows"] if row["group"] == category]})
             except (DataSourceError, OSError, ValueError) as exc:
                 model_error = str(exc)
                 if "No saved player history." in model_error:
@@ -721,7 +746,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             dates = [item.diagnostics.get("last_game_date") for item in forecast.forecasts.values()] if forecast else []
             dates = [value for value in dates if value]
             history["player"][player_method or "WHP"] = {"latest_date": max(dates) if dates else None, "category": category}
-            return market_sections(snapshot, category, forecast, model_error, criteria, "WHP"), history
+            return market_sections(snapshot, category, forecast, model_error, criteria, player_method), history
         if category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
             try:
                 if market_game_sport(location_hash) == "NCAAF":

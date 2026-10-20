@@ -163,6 +163,64 @@ On a saved NFL game's **Game Lines** tab, every alternate spread and total shows
 
 Prepare data or run the model separately with `python models/Game_Outcome/PPP/PPP.py --seasons 2025 2026 --home SF --away WSH --as-of 2026-10-19T23:35:23+00:00`. See [models/README.md](models/README.md) for source definitions, formulas, validation requirements, cache behavior and limitations. This is the report's normal baseline; key-number probabilities are approximate and no weather or injury adjustment is assumed.
 
+## Usage & Opportunity player forecasts
+
+NBA/NFL saved FanDuel games offer **Usage & Opportunity (UO)** in the **Player
+Forecast Method** dropdown, alongside the default WHP method. UO simulates saved
+team workload, player participation/share scenarios and efficiency to show **UO
+probability**, **UO fair odds** and **Edge**. Apply Criteria uses the selected
+method. Hover a forecast for workload, predictive intervals, simulation error,
+last source date and EV. Reading a snapshot never pulls odds or downloads source
+history. NCAAF retains WHP; UO is disabled there.
+
+The implementation, exact NBA/NFL lookbacks, season carryover, supported markets,
+input requirements and limitations are documented in
+[`models/Player_Stats/Usage_Opportunity/README.md`](models/Player_Stats/Usage_Opportunity/README.md)
+and its separate `UO_Implementation_Guide.pdf`. It uses the existing NBA and
+nflverse box-score sources; routes, tracking chances, injuries and red-zone feeds
+are not connected. NFL touchdown/order markets therefore remain unavailable in UO.
+
+If player or team inputs are missing, prepare both seasons explicitly:
+
+```powershell
+python -m models.Player_Stats.Usage_Opportunity --sport NBA --prepare --start "2026-10-25T23:00:00Z"
+python -m models.Player_Stats.Usage_Opportunity --sport NFL --prepare --start "2026-10-25T17:00:00Z"
+```
+
+`--refresh` refreshes source history. These preparation commands make public data
+requests, never Odds API requests. UO forecasts and evaluation records live in the
+ignored `data/modeling/player_stats/usage_opportunity/` folder. These are research
+defaults; use the included historical snapshot replay to evaluate accuracy and
+calibration before relying on the estimates.
+
+## Opponent-Adjusted Matchup player forecasts
+
+NBA/NFL saved FanDuel games also offer **Opponent-Adjusted Matchup (OAM)** in
+**Player Forecast Method**. OAM first neutralizes historical matchup effects, then
+adjusts opportunity and efficiency components using chronological actual/expected
+defense ratios, recency weighting and small-sample shrinkage. NFL uses recorded
+position cohorts where sufficient data exists. The player table, Edge and Apply
+Criteria follow the selected model; hover a value for the neutral mean, adjusted
+mean, net multiplier and uncertainty. No new odds pull is needed.
+
+See [`models/Player_Stats/Opponent_Adjusted_Matchup/README.md`](models/Player_Stats/Opponent_Adjusted_Matchup/README.md)
+and `OAM_Implementation_Guide.pdf` for exact windows, sample requirements, prior
+season carryover, components, optional pregame lineup scenarios and historical
+WHP/UO/OAM comparison. The engine uses the existing NBA/nflverse box scores;
+unconnected tactical, tracking, route and live personnel feeds are not inferred.
+NCAAF OAM and NFL touchdown/order forecasts remain unavailable.
+
+```powershell
+python -m models.Player_Stats.Opponent_Adjusted_Matchup --sport NBA --prepare --start "2026-10-25T23:00:00Z"
+python -m models.Player_Stats.Opponent_Adjusted_Matchup --sport NFL --prepare --start "2026-10-25T17:00:00Z"
+```
+
+Preparation saves league-wide team/player inputs across two seasons. Forecasts
+and defensive-fit records are cached under the ignored
+`data/modeling/player_stats/opponent_adjusted_matchup/` folder. Accuracy requires
+chronological out-of-sample evaluation; implementation checks are not a claim
+that matchup adjustment improves every prop market.
+
 ## NBA team logo downloader
 
 Run `python download_nba_logos.py` to download all 30 current NBA team logos from ESPN's public team directory. It writes **500×500 transparent PNGs**, proportionally resized and centered, named for the team (for example `Golden State Warriors.png`). The default folder is **`images/NBA/Team Logos`**, alongside the NFL logos in the project's existing plural `images` folder. Restart the dashboard after adding logo files so they appear on NBA cards and matchup headers.

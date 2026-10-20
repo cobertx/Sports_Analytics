@@ -217,7 +217,7 @@ def manuscript(markdown, sheet):
 
 
 def build(method):
-    directory = (ROOT / "models" / "Player_Stats" / "Weighted_Historical_Performance" if method == "WHP"
+    directory = (ROOT / "models" / "Player_Stats" / {"WHP": "Weighted_Historical_Performance", "UO": "Usage_Opportunity", "OAM": "Opponent_Adjusted_Matchup"}[method] if method in {"WHP", "UO", "OAM"}
                  else ROOT / "models" / "Game_Outcome" / method)
     source = directory / "README.md"
     markdown = source.read_text(encoding="utf-8")
@@ -226,7 +226,9 @@ def build(method):
     document = Guide(destination, f"{method} implementation guide", f"{method} MODEL IMPLEMENTATION")
     story = [Spacer(1, 55), Paragraph("RX / SPORTS ANALYTICS", sheet["kicker"]),
              Paragraph(f"{method}<br/>Implementation Guide", sheet["cover"]),
-             Paragraph("NBA, NFL and NCAAF player models<br/>From source observations to market probabilities" if method == "WHP" else
+             Paragraph("NBA and NFL opponent-adjusted player models<br/>From neutral history to matchup probabilities" if method == "OAM" else
+                       "NBA and NFL player opportunity models<br/>From source observations to market probabilities" if method == "UO" else
+                       "NBA, NFL and NCAAF player models<br/>From source observations to market probabilities" if method == "WHP" else
                        "NFL and NBA models<br/>From source observations to market probabilities", sheet["subtitle"]),
              HRFlowable(width=CONTENT, thickness=2, color=TEAL), Spacer(1, 22),
              Paragraph("LOOKBACK / NEW SEASONS / CODE LOGIC / PRICING", sheet["kicker"]),
@@ -245,9 +247,13 @@ def build(method):
     ]
     story.extend([toc, PageBreak()])
     story.extend(manuscript(markdown, sheet))
-    story.append(Spacer(1, 18))
+    story.append(PageBreak() if method == "OAM" else Spacer(1, 18))
     story.append(Paragraph("Build provenance", sheet["h2"]))
     source_files = {"WHP": [p.relative_to(ROOT).as_posix() for p in sorted(directory.glob("*.py"))],
+                    "UO": [p.relative_to(ROOT).as_posix() for p in sorted(directory.glob("*.py"))] + ["sports_analytics/usage_opportunity_service.py"],
+                    "OAM": [p.relative_to(ROOT).as_posix() for p in sorted(directory.glob("*.py"))] + ["sports_analytics/opponent_adjusted_service.py"] +
+                           ["models/Player_Stats/Usage_Opportunity/" + name for name in
+                            ["nba_model.py", "nfl_model.py", "opportunity_model.py", "efficiency_model.py", "distributions.py", "historical_data.py"]],
                     "PPP": ["models/Game_Outcome/PPP/PPP.py", "models/Game_Outcome/PPP/NBA_PPP.py", "sports_analytics/ppp_service.py",
                      "sports_analytics/nba_ppp_service.py", "sports_analytics/nfl_model_data.py",
                      "sports_analytics/nba_model_data.py"],
@@ -258,10 +264,12 @@ def build(method):
                             "sports_analytics/ppp_service.py", "sports_analytics/nfl_model_data.py",
                             "sports_analytics/nba_model_data.py"]}[method]
     story.append(Paragraph("The following SHA-256 hashes identify the reviewed calculation/service files. They are documentation provenance, not a runtime cache identity.", sheet["small"]))
+    provenance_style = (ParagraphStyle("UOProvenance", parent=sheet["small"], leading=10, spaceAfter=6)
+                        if method in {"UO", "OAM"} else sheet["small"])
     for name in [source.relative_to(ROOT).as_posix(), *source_files]:
         digest = sha256((ROOT/name).read_bytes()).hexdigest()
         story.append(Paragraph(escape(name) + '<br/><font name="Courier" size="7.4">'
-                               + digest + '</font>', sheet["small"]))
+                               + digest + '</font>', provenance_style))
     document.multiBuild(story)
     model_copy = directory / destination.name
     shutil.copyfile(destination, model_copy)
@@ -271,7 +279,7 @@ def build(method):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--methods", nargs="+", choices=["PPP", "EPA", "ELO", "WHP"], default=["PPP", "EPA", "ELO", "WHP"])
+    parser.add_argument("--methods", nargs="+", choices=["PPP", "EPA", "ELO", "WHP", "UO", "OAM"], default=["PPP", "EPA", "ELO", "WHP", "UO", "OAM"])
     args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     for method in dict.fromkeys(args.methods):

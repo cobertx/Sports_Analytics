@@ -59,6 +59,10 @@ def main():
         "models.Game_Outcome.EPA.nba_epa_data", "models.Game_Outcome.EPA.nba_epa_training",
         "models.Game_Outcome.ELO.ELO", "models.Player_Stats.Weighted_Historical_Performance",
         "models.Player_Stats.Weighted_Historical_Performance.prediction_service",
+        "models.Player_Stats.Usage_Opportunity", "models.Player_Stats.Usage_Opportunity.backtesting",
+        "sports_analytics.usage_opportunity_service",
+        "models.Player_Stats.Opponent_Adjusted_Matchup", "models.Player_Stats.Opponent_Adjusted_Matchup.backtesting",
+        "sports_analytics.opponent_adjusted_service",
         "sports_analytics.dashboard", "sports_analytics.nfl_markets", "sports_analytics.nba_markets",
         "sports_analytics.ncaaf_markets", "sports_analytics.whp_service",
     ]
@@ -68,10 +72,20 @@ def main():
         from sports_analytics.dashboard import create_app
         from sports_analytics.market_view import NBA_LOGO_DIRECTORY, NFL_LOGO_DIRECTORY, NCAAF_LOGO_DIRECTORY, logo_badge
         from models.Player_Stats.Weighted_Historical_Performance import WeightedHistoricalPerformance
+        from models.Player_Stats.Usage_Opportunity import UsageOpportunityForecast
+        from models.Player_Stats.Usage_Opportunity.efficiency_model import beta_posterior
+        from models.Player_Stats.Opponent_Adjusted_Matchup.schedule_strength import shrunk_factor
 
         value = WeightedHistoricalPerformance(half_life=3, window=10).predict(
             [17, 22, 19, 25, 21, 28, 23, 31, 26, 29])["weighted_mean"]
         require(abs(value - 26.108708) < .00001, "WHP weighted forecast smoke check failed.")
+        require(abs(beta_posterior([18], [20], prior=(14, 6))["mean"] - .8) < 1e-12,
+                "Usage & Opportunity beta-binomial example failed.")
+        estimate = UsageOpportunityForecast.from_samples([0, 1, 2, 2]).market(1)
+        require((estimate.win, estimate.loss, estimate.push) == (.5, .25, .25),
+                "Usage & Opportunity integer settlement failed.")
+        require(abs(shrunk_factor([120]*4, [100]*4, prior_strength=6)["mean"]-1.08)<1e-12,
+                "Opponent-adjusted small-sample shrinkage example failed.")
         app = create_app()
         with app.server.test_client() as client:
             for route in ("/", "/_dash-layout", "/_dash-dependencies"):
