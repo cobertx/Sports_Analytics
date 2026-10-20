@@ -10,17 +10,17 @@ requires-python = ">=3.11"
 dynamic = ["dependencies"]
 
 [tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
+dependencies = {file = ["requirements/requirements.txt"]}
 
 [tool.setuptools.packages.find]
-include = ["sports_analytics*", "Models*"]
+include = ["sports_analytics*", "models*"]
 
 [tool.setuptools.package-data]
 sports_analytics = ["assets/*.css"]
-"Models" = ["*.md"]
-"Models.Game_Outcome" = ["*.md"]
-"Models.Player_Stats" = ["*.md"]
-"Models.Player_Stats.Weighted_Historical_Performance" = ["*.md", "*.pdf"]
-"Models.Game_Outcome.PPP" = ["*.md", "*.pdf"]
-"Models.Game_Outcome.EPA" = ["*.md", "*.pdf"]
-"Models.Game_Outcome.ELO" = ["*.md", "*.pdf"]
+"models" = ["*.md"]
+"models.Game_Outcome" = ["*.md"]
+"models.Player_Stats" = ["*.md"]
+"models.Player_Stats.Weighted_Historical_Performance" = ["*.md", "*.pdf"]
+"models.Game_Outcome.PPP" = ["*.md", "*.pdf"]
+"models.Game_Outcome.EPA" = ["*.md", "*.pdf"]
+"models.Game_Outcome.ELO" = ["*.md", "*.pdf"]

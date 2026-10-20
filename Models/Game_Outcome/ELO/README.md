@@ -107,26 +107,26 @@ participate in that identity.
 | --- | --- |
 | ELO.py | Configurations, logistic Elo helpers, delayed-availability replay, power/scoring fits, chronological calibration, normal forecast and CLI. |
 | __init__.py | Public imports, including ELOModel and ELOConfig. |
-| __main__.py | Enables `python -m Models.Game_Outcome.ELO`. |
+| __main__.py | Enables `python -m models.Game_Outcome.ELO`. |
 | ../../../sports_analytics/elo_service.py | Separate NFL/NBA saved-market services and frozen artifacts. |
 | ELO_Implementation_Guide.pdf | Implementation manual generated from this README. |
 
 No new runtime dependencies are required beyond existing NumPy/pandas. The
-optional documentation tools are in `requirements-docs.txt`. From the project root:
+optional documentation tools are in `requirements/requirements-docs.txt`. From the project root:
 
 ```powershell
 # NFL, abbreviations match the existing NFL data and team mapping.
-python -m Models.Game_Outcome.ELO --sport NFL --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-20T02:49:50+00:00
+python -m models.Game_Outcome.ELO --sport NFL --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-20T02:49:50+00:00
 
 # NBA uses starting-year seasons, and full-game box scores including overtime.
-python -m Models.Game_Outcome.ELO --sport NBA --seasons 2025 2026 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
+python -m models.Game_Outcome.ELO --sport NBA --seasons 2025 2026 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
 
 # Rebuild only this implementation guide.
 python scripts/build_model_docs.py --methods ELO
 ```
 
 `--refresh` refreshes public historical inputs. Direct execution with
-`python Models/Game_Outcome/ELO/ELO.py ...` also works. CLI output is a readable matchup JSON
+`python models/Game_Outcome/ELO/ELO.py ...` also works. CLI output is a readable matchup JSON
 under `data/modeling/<sport>/forecasts/elo_<home>_<away>.json`; this is distinct
 from the hashed live-service cache described in section 7.
 

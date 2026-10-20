@@ -5,11 +5,12 @@ Model implementations are grouped by prediction target. [Game_Outcome](Game_Outc
 - [PPP Implementation Guide](Game_Outcome/PPP/PPP_Implementation_Guide.pdf)
 - [EPA Implementation Guide](Game_Outcome/EPA/EPA_Implementation_Guide.pdf)
 - [ELO Implementation Guide](Game_Outcome/ELO/ELO_Implementation_Guide.pdf)
+- [WHP Player Implementation Guide](Player_Stats/Weighted_Historical_Performance/WHP_Implementation_Guide.pdf)
 
-Rebuild the manuals from their READMEs with `python -m pip install -r requirements-docs.txt`, then `python scripts/build_model_docs.py`. Use `--methods ELO` to build just that guide. Copies are also written under `output/pdf`. This documentation build makes no data or odds requests and does not change model calculations.
+Rebuild the manuals from their READMEs with `python -m pip install -r requirements/requirements-docs.txt`, then `python scripts/build_model_docs.py`. Use `--methods ELO` to build just that guide. Copies are also written under `output/pdf`. This documentation build makes no data or odds requests and does not change model calculations.
 
 ```text
-Models/
+models/
   Game_Outcome/
     PPP/
       PPP.py                 NFL points-per-play model and shared pricing
@@ -41,6 +42,14 @@ Models/
     README.md
     __init__.py
   Player_Stats/
+    Weighted_Historical_Performance/
+      core.py                Weighted player forecasts and predictive calibration
+      historical_data.py     NBA/NFL saved sources and scoped college player boxes
+      prediction_service.py  Saved market pricing, frozen estimates and audits
+      README.md              Complete implementation and new-season behavior
+      INPUT_SCHEMA.md        Canonical player-game import fields
+      WHP_Implementation_Guide.pdf
+      Weighted_Historical_Performance_NBA_NFL_NCAAF.pdf
     README.md
     __init__.py
 ```
@@ -56,8 +65,8 @@ fair odds, Edge, criteria and all four charts. Advanced simulators and college
 football's separate hierarchy remain unimplemented.
 
 ```powershell
-python -m Models.Game_Outcome.ELO --sport NFL --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-20T02:49:50+00:00
-python -m Models.Game_Outcome.ELO --sport NBA --seasons 2025 2026 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
+python -m models.Game_Outcome.ELO --sport NFL --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-20T02:49:50+00:00
+python -m models.Game_Outcome.ELO --sport NBA --seasons 2025 2026 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
 ```
 
 ## NFL PPP model
@@ -65,7 +74,7 @@ python -m Models.Game_Outcome.ELO --sport NBA --seasons 2025 2026 --home DET --a
 Operational. [Read the complete PPP documentation](Game_Outcome/PPP/README.md), covering the PPP PDF sections 1-5: scoring definitions, joint offense/defense log-link ratings, shared drives/plays, non-offensive scoring, chronological calibration, normal spread/total probabilities, pushes and fair prices. The preferred drive-state Monte Carlo is explicitly identified as unimplemented.
 
 ```powershell
-python -m Models.Game_Outcome.PPP --seasons 2025 2026 --home SF --away WSH --as-of 2026-10-19T23:35:23+00:00
+python -m models.Game_Outcome.PPP --seasons 2025 2026 --home SF --away WSH --as-of 2026-10-19T23:35:23+00:00
 ```
 
 ## NFL EPA model
@@ -73,7 +82,7 @@ python -m Models.Game_Outcome.PPP --seasons 2025 2026 --home SF --away WSH --as-
 Operational. [Read the complete EPA documentation](Game_Outcome/EPA/README.md), covering signed passing/rushing EPA, weighted ridge team effects, the fitted scoring bridge, EPA-specific forward score errors, covariance, pricing and the exact limits of the PDF implementation.
 
 ```powershell
-python -m Models.Game_Outcome.EPA --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-19T23:35:23+00:00
+python -m models.Game_Outcome.EPA --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-19T23:35:23+00:00
 ```
 
 ## NBA PPP model
@@ -81,7 +90,7 @@ python -m Models.Game_Outcome.EPA --seasons 2025 2026 --home BAL --away CIN --as
 Operational. [Read the NBA-specific PPP explanation](Game_Outcome/PPP/README.md#8-nba-specific-ppp-implementation). NBA efficiency uses estimated possessions and the EPA research note's additive PPP/shared-pace baseline. It has independent NBA calibration and no-tie spread settlement.
 
 ```powershell
-python -m Models.Game_Outcome.PPP.NBA_PPP --seasons 2025 --home GSW --away LAL --as-of 2026-10-19T23:00:00+00:00
+python -m models.Game_Outcome.PPP.NBA_PPP --seasons 2025 --home GSW --away LAL --as-of 2026-10-19T23:00:00+00:00
 ```
 
 ## NBA EPA/EPV model
@@ -89,21 +98,21 @@ python -m Models.Game_Outcome.PPP.NBA_PPP --seasons 2025 --home GSW --away LAL -
 Operational event-based research baseline. [The EPA README](Game_Outcome/EPA/README.md#10-nba-event-based-epv-and-pregame-forecast) explains scoreboard reconciliation, pre-action state valuation, signed possession residuals, projected shared pace and chronological score-error calibration. [The NBA setup guide](Game_Outcome/EPA/NBA_EPA_SETUP.md) records actual reconstruction results and remaining validation work. This model uses public event data; it does not reproduce continuous tracking EPV or a possession simulator.
 
 ```powershell
-python -m Models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025 --download
-python -m Models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025
-python -m Models.Game_Outcome.EPA.NBA_EPA --seasons 2025 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
+python -m models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025 --download
+python -m models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025
+python -m models.Game_Outcome.EPA.NBA_EPA --seasons 2025 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
 ```
 
 The second command is an offline raw-input audit using existing archives. The third prepares reconciled inputs and fits a forecast, downloading missing public inputs if needed. Historical source downloads consume no Odds API credits.
 
 ## Imports, integration and data locations
 
-Canonical imports use `Models.Game_Outcome.PPP.PPP`, `Models.Game_Outcome.PPP.NBA_PPP`, `Models.Game_Outcome.EPA.EPA`, `Models.Game_Outcome.EPA.NBA_EPA`, `Models.Game_Outcome.EPA.nba_epa_training` and `Models.Game_Outcome.ELO`. The raw audit utility remains `Models.Game_Outcome.EPA.nba_epa_data`. Package-level NFL imports such as `from Models.Game_Outcome.PPP import PPPModel` and `from Models.Game_Outcome.EPA import EPAModel` remain supported. Direct scripts also run from their new subfolders.
+Canonical imports use `models.Game_Outcome.PPP.PPP`, `models.Game_Outcome.PPP.NBA_PPP`, `models.Game_Outcome.EPA.EPA`, `models.Game_Outcome.EPA.NBA_EPA`, `models.Game_Outcome.EPA.nba_epa_training` and `models.Game_Outcome.ELO`. The raw audit utility remains `models.Game_Outcome.EPA.nba_epa_data`. Package-level NFL imports such as `from models.Game_Outcome.PPP import PPPModel` and `from models.Game_Outcome.EPA import EPAModel` remain supported. Direct scripts also run from their new subfolders.
 
 Dash orchestration stays in `sports_analytics/ppp_service.py`, `nba_ppp_service.py`, `epa_service.py`, `nba_epa_service.py`, `elo_service.py` and `market_view.py`. The shared historical adapters remain in `sports_analytics`; the methodology folders contain calculation/preparation code rather than app callbacks.
 
 Model inputs, frozen forecasts and the NBA EPV readiness report retain their existing `data/modeling/nfl` and `data/modeling/nba` locations. Saved market CSVs remain in `data/market_data`. Moving Python files does not change fitted algorithms, snapshot cutoffs, archive identities or market pulls.
 
-The complete READMEs distinguish formula checks, fitted calibration and untouched-future validation. These approaches are research baselines rather than the complete production simulators described in the PDFs, and NCAAF has no model enabled.
+The complete READMEs distinguish formula checks, fitted calibration and untouched-future validation. These approaches are research baselines rather than the complete production simulators described in the PDFs. NCAAF supports WHP player forecasts when CFBD/canonical history is available; college game-outcome forecasts remain unavailable.
 
-Run offline verification with `python -m unittest discover -s tests -q`.
+Run shared offline verification with `python scripts/check_project.py`. Local tests, if present, can be run separately with `python -m unittest discover -s tests -q`; test folders are not published to the repository.

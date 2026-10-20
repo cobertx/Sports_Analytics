@@ -1,7 +1,7 @@
 """Frozen NBA event-based EPV forecasts through the shared market contract."""
 
-from Models.Game_Outcome.EPA.NBA_EPA import NBAEPAForecast, NBAEPAModel
-from Models.Game_Outcome.EPA.nba_epa_training import NBAEPAData
+from models.Game_Outcome.EPA.NBA_EPA import NBAEPAForecast, NBAEPAModel
+from models.Game_Outcome.EPA.nba_epa_training import NBAEPAData
 from .nba_ppp_service import NBAPPPMarketService
 
 

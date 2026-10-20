@@ -1,6 +1,6 @@
 """Build implementation manuals from the model READMEs, without network access.
 
-Install requirements-docs.txt, then run: python scripts/build_model_docs.py
+Install requirements/requirements-docs.txt, then run: python scripts/build_model_docs.py
 Final PDFs are published in output/pdf and alongside their model source files.
 """
 
@@ -217,7 +217,8 @@ def manuscript(markdown, sheet):
 
 
 def build(method):
-    directory = ROOT / "Models" / "Game_Outcome" / method
+    directory = (ROOT / "models" / "Player_Stats" / "Weighted_Historical_Performance" if method == "WHP"
+                 else ROOT / "models" / "Game_Outcome" / method)
     source = directory / "README.md"
     markdown = source.read_text(encoding="utf-8")
     sheet = styles()
@@ -225,14 +226,15 @@ def build(method):
     document = Guide(destination, f"{method} implementation guide", f"{method} MODEL IMPLEMENTATION")
     story = [Spacer(1, 55), Paragraph("RX / SPORTS ANALYTICS", sheet["kicker"]),
              Paragraph(f"{method}<br/>Implementation Guide", sheet["cover"]),
-             Paragraph("NFL and NBA models<br/>From source observations to market probabilities", sheet["subtitle"]),
+             Paragraph("NBA, NFL and NCAAF player models<br/>From source observations to market probabilities" if method == "WHP" else
+                       "NFL and NBA models<br/>From source observations to market probabilities", sheet["subtitle"]),
              HRFlowable(width=CONTENT, thickness=2, color=TEAL), Spacer(1, 22),
              Paragraph("LOOKBACK / NEW SEASONS / CODE LOGIC / PRICING", sheet["kicker"]),
              Paragraph("A guide to the implementation in this repository, including the exact history windows, minimum samples, seasonal carryover, chronological calibration, saved forecast behavior and limitations.", sheet["body"]),
              Spacer(1, 22),
              Paragraph("Read section 0 first for the answers to how many games are used and what happens when a new season has little or no history.", sheet["body"]),
              Paragraph("The original research PDF is retained separately as a source reference. This manual explains what the code actually implements; advanced proposals in the source papers are not represented as completed features.", sheet["small"]),
-             Spacer(1, 18), Paragraph("Code review date: 20 October 2026<br/>Documentation source: Models/Game_Outcome/"+method+"/README.md", sheet["small"]),
+             Spacer(1, 18), Paragraph("Code review date: 20 October 2026<br/>Documentation source: "+source.relative_to(ROOT).as_posix(), sheet["small"]),
              PageBreak(), Paragraph("Contents", sheet["h1"])]
     toc = TableOfContents()
     toc.levelStyles = [
@@ -245,13 +247,14 @@ def build(method):
     story.extend(manuscript(markdown, sheet))
     story.append(Spacer(1, 18))
     story.append(Paragraph("Build provenance", sheet["h2"]))
-    source_files = {"PPP": ["Models/Game_Outcome/PPP/PPP.py", "Models/Game_Outcome/PPP/NBA_PPP.py", "sports_analytics/ppp_service.py",
+    source_files = {"WHP": [p.relative_to(ROOT).as_posix() for p in sorted(directory.glob("*.py"))],
+                    "PPP": ["models/Game_Outcome/PPP/PPP.py", "models/Game_Outcome/PPP/NBA_PPP.py", "sports_analytics/ppp_service.py",
                      "sports_analytics/nba_ppp_service.py", "sports_analytics/nfl_model_data.py",
                      "sports_analytics/nba_model_data.py"],
-                    "EPA": ["Models/Game_Outcome/EPA/EPA.py", "Models/Game_Outcome/EPA/NBA_EPA.py", "Models/Game_Outcome/EPA/nba_epa_training.py",
-                     "Models/Game_Outcome/EPA/nba_epa_data.py", "sports_analytics/epa_service.py",
+                    "EPA": ["models/Game_Outcome/EPA/EPA.py", "models/Game_Outcome/EPA/NBA_EPA.py", "models/Game_Outcome/EPA/nba_epa_training.py",
+                     "models/Game_Outcome/EPA/nba_epa_data.py", "sports_analytics/epa_service.py",
                      "sports_analytics/nba_epa_service.py", "sports_analytics/ppp_service.py"],
-                    "ELO": ["Models/Game_Outcome/ELO/ELO.py", "sports_analytics/elo_service.py",
+                    "ELO": ["models/Game_Outcome/ELO/ELO.py", "sports_analytics/elo_service.py",
                             "sports_analytics/ppp_service.py", "sports_analytics/nfl_model_data.py",
                             "sports_analytics/nba_model_data.py"]}[method]
     story.append(Paragraph("The following SHA-256 hashes identify the reviewed calculation/service files. They are documentation provenance, not a runtime cache identity.", sheet["small"]))
@@ -268,7 +271,7 @@ def build(method):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--methods", nargs="+", choices=["PPP", "EPA", "ELO"], default=["PPP", "EPA", "ELO"])
+    parser.add_argument("--methods", nargs="+", choices=["PPP", "EPA", "ELO", "WHP"], default=["PPP", "EPA", "ELO", "WHP"])
     args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     for method in dict.fromkeys(args.methods):

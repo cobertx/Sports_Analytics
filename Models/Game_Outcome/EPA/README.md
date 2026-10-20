@@ -124,17 +124,17 @@ The following commands download public statistics, not paid market quotes:
 
 ```powershell
 # NFL: explicitly include an extra historical season for a standalone fit.
-python -m Models.Game_Outcome.EPA --seasons 2024 2025 2026 --home BAL --away CIN --as-of 2026-10-20T03:48:47+00:00
+python -m models.Game_Outcome.EPA --seasons 2024 2025 2026 --home BAL --away CIN --as-of 2026-10-20T03:48:47+00:00
 
 # NBA: explicitly download a new season's missing raw archives and audit them.
-python -m Models.Game_Outcome.EPA.prepare_nba_epa --seasons 2026 --download
+python -m models.Game_Outcome.EPA.prepare_nba_epa --seasons 2026 --download
 
 # Populate independent current-season box-score caches for reconciliation.
 python -m sports_analytics.ingest NBA --seasons 2026 --entity team --season-type regular
 python -m sports_analytics.ingest NBA --seasons 2026 --entity team --season-type postseason
 
 # NBA: prepare both seasons and fit a standalone forecast at the chosen cutoff.
-python -m Models.Game_Outcome.EPA.NBA_EPA --seasons 2025 2026 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
+python -m models.Game_Outcome.EPA.NBA_EPA --seasons 2025 2026 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
 ```
 
 Use `--download --refresh` on the raw NBA preparation command to replace existing
@@ -177,7 +177,7 @@ old-date model; time filtering does not guarantee exact historical data vintages
 | [nba_epa_data.py](nba_epa_data.py) | Public NBA event/possession archive downloads, schema checks and score/coverage audits. No NBA forecast is calculated. |
 | [prepare_nba_epa.py](prepare_nba_epa.py) | NBA input-preparation CLI; offline by default, explicit download/refresh flags. |
 | [NBA_EPA_SETUP.md](NBA_EPA_SETUP.md) | Setup commands, raw audit findings, reconstruction results and remaining research work. |
-| [__init__.py](__init__.py) | Public NFL API; `from Models.Game_Outcome.EPA import EPAModel` remains supported. |
+| [__init__.py](__init__.py) | Public NFL API; `from models.Game_Outcome.EPA import EPAModel` remains supported. |
 | [__main__.py](__main__.py) | Package launcher for NFL EPA. |
 
 The included [EPA research PDF](EPA_Sports_Forecasting_NFL_NBA_College_Football.pdf)
@@ -191,20 +191,20 @@ From the project root:
 
 ```powershell
 # NFL: prepare observations, fit EPA, and save a standalone forecast.
-python -m Models.Game_Outcome.EPA --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-19T23:35:23+00:00
+python -m models.Game_Outcome.EPA --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-19T23:35:23+00:00
 
 # NBA: download missing public archives and audit inputs (not a forecast).
-python -m Models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025 --download
+python -m models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025 --download
 
 # NBA: repeat the audit offline using existing archives.
-python -m Models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025
+python -m models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025
 
 # NBA: prepare reconciled inputs and fit an event-based forecast.
-python -m Models.Game_Outcome.EPA.NBA_EPA --seasons 2025 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
+python -m models.Game_Outcome.EPA.NBA_EPA --seasons 2025 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
 ```
 
-Direct files also work: `python Models/Game_Outcome/EPA/EPA.py ...` and
-`python Models/Game_Outcome/EPA/prepare_nba_epa.py ...`. The NFL CLI supports `--refresh` for
+Direct files also work: `python models/Game_Outcome/EPA/EPA.py ...` and
+`python models/Game_Outcome/EPA/prepare_nba_epa.py ...`. The NFL CLI supports `--refresh` for
 public historical data and prepares observations alone when no matchup is given.
 The NBA audit CLI requires `--download --refresh` to replace existing raw archives.
 The NBA forecast pipeline reuses prepared inputs or downloads missing public

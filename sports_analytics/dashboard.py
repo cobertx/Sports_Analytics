@@ -678,6 +678,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Input("market-forecast-method", "value"), Input("player-history-signal", "data"),
                   Input("player-forecast-method", "value"))
     def show_saved_markets(category, selection, location_hash, criteria, method, _history, _player_method):
+        if category is None:
+            raise PreventUpdate
         method = method or "PPP"
         if method not in ("PPP", "EPA", "ELO"):
             raise PreventUpdate
@@ -690,7 +692,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         snapshot = {**snapshot, "sport": market_game_sport(location_hash)}
         if category != "Game":
             try:
-                forecast = whp_service.forecast(snapshot)
+                forecast = whp_service.forecast({**snapshot, "rows": [row for row in snapshot["rows"] if row["group"] == category]})
             except (DataSourceError, OSError, ValueError) as exc:
                 model_error = str(exc)
             return market_sections(snapshot, category, forecast, model_error, criteria, "WHP")

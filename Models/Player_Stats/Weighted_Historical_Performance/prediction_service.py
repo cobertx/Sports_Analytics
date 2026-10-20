@@ -11,6 +11,7 @@ import pandas as pd
 from sports_analytics.data import DataSourceError
 from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
+from sports_analytics.display_time import format_eastern
 from .core import MODEL_VERSION, WHPConfig, WHPForecast, WeightedHistoricalPerformance, eligible_history
 from .errors import WHPError
 from .historical_data import PlayerHistoryRepository, atomic_json, identity_name
@@ -46,7 +47,8 @@ class PlayerMarketForecast:
         d = forecast.diagnostics
         return (f"Mean {forecast.mean:.2f}; predictive SD {d['predictive_sd']:.2f}; {d['training_games']} appearances; "
                 f"effective N {d['effective_n']:.2f}; {d['validation_games']} walk-forward errors; "
-                f"distribution {forecast.family}; last observed game {d['last_game_date']}; cutoff {d['as_of']}.")
+                f"distribution {forecast.family}; last observed game {pd.Timestamp(d['last_game_date']).strftime('%m/%d/%Y')}; "
+                f"cutoff {format_eastern(d['as_of'])}.")
 
 
 class WHPMarketService:
@@ -59,7 +61,7 @@ class WHPMarketService:
 
     @staticmethod
     def _player(data, snapshot, subject, cutoff):
-        names = data["entity_name"].map(identity_name)
+        names = data["_whp_name"] if "_whp_name" in data else data["entity_name"].map(identity_name)
         found = data[names.eq(identity_name(subject))].copy()
         found = found[found["event_date"].lt(cutoff) & found["available_at"].lt(cutoff)]
         codes = NBA_TEAM_CODES if snapshot["sport"] == "NBA" else NFL_TEAM_CODES
@@ -92,6 +94,8 @@ class WHPMarketService:
         if cutoff.tzinfo is None:
             raise DataSourceError("Snapshot and game timestamps must include a timezone.")
         data = self.repository.load(sport, snapshot["commence_time"], [snapshot["home_team"], snapshot["away_team"]])
+        data = data[data["event_date"].lt(cutoff) & data["available_at"].lt(cutoff)].copy()
+        data["_whp_name"] = data["entity_name"].map(identity_name)
         result = PlayerMarketForecast()
         config = WHPConfig.for_sport(sport)
         implementation = sha256(b"".join((Path(__file__).parent/name).read_bytes() for name in

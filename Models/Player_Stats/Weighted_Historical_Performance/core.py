@@ -144,7 +144,7 @@ class WeightedHistoricalPerformance:
 
     def forecast(self, frame, as_of, *, nonnegative=True, count=False, opportunity_override=None):
         history = eligible_history(frame, as_of)
-        if nonnegative and history["value"].lt(0).any():
+        if (nonnegative or count or self.config.distribution == "count") and history["value"].lt(0).any():
             raise WHPError("A nonnegative count/statistic cannot contain negative observations.")
         point, sample, w = self._point(history, as_of, opportunity_override)
         # At each held-out game's start, exclude even earlier-starting games

@@ -129,7 +129,7 @@ not a reconstruction of the exact source revision known at the old date.
 | --- | --- |
 | [PPP.py](PPP.py) | NFL ratings, opportunity forecasts, chronological calibration, spread/total settlement and common American-odds functions. |
 | [NBA_PPP.py](NBA_PPP.py) | NBA box-score possession baseline, shrunk efficiency/pace, date-based calibration and no-tied-final-score spread settlement. |
-| [__init__.py](__init__.py) | Public NFL exports; existing `from Models.Game_Outcome.PPP import PPPModel` imports remain valid. |
+| [__init__.py](__init__.py) | Public NFL exports; existing `from models.Game_Outcome.PPP import PPPModel` imports remain valid. |
 | [__main__.py](__main__.py) | Package launcher for NFL PPP. |
 
 The primary NFL reference is the included [PPP research PDF](Football_Betting_PPP_Arbitrage_Strategy.pdf),
@@ -144,17 +144,17 @@ Run commands from the project root with the project's Python environment:
 
 ```powershell
 # NFL: prepare public observations.
-python -m Models.Game_Outcome.PPP --seasons 2025 2026
+python -m models.Game_Outcome.PPP --seasons 2025 2026
 
 # NFL: prepare, fit and write a standalone forecast.
-python -m Models.Game_Outcome.PPP --seasons 2025 2026 --home SF --away WSH --as-of 2026-10-19T23:35:23+00:00
+python -m models.Game_Outcome.PPP --seasons 2025 2026 --home SF --away WSH --as-of 2026-10-19T23:35:23+00:00
 
 # NBA: season 2025 means 2025-26.
-python -m Models.Game_Outcome.PPP.NBA_PPP --seasons 2025 --home GSW --away LAL --as-of 2026-10-19T23:00:00+00:00
+python -m models.Game_Outcome.PPP.NBA_PPP --seasons 2025 --home GSW --away LAL --as-of 2026-10-19T23:00:00+00:00
 ```
 
-Direct-file execution is also supported: `python Models/Game_Outcome/PPP/PPP.py ...` and
-`python Models/Game_Outcome/PPP/NBA_PPP.py ...`. Add `--refresh` only when public historical
+Direct-file execution is also supported: `python models/Game_Outcome/PPP/PPP.py ...` and
+`python models/Game_Outcome/PPP/NBA_PPP.py ...`. Add `--refresh` only when public historical
 inputs should be refreshed. These commands do not call The Odds API. Without
 `--home` and `--away`, they prepare observations without generating a matchup.
 Use the explicit historical `--as-of` cutoff when reproducing an old estimate.

@@ -4,7 +4,7 @@ import math
 from statistics import NormalDist
 import numpy as np
 
-from Models.Game_Outcome.PPP.PPP import MarketProbability
+from models.Game_Outcome.PPP.PPP import MarketProbability
 from .errors import WHPError
 
 

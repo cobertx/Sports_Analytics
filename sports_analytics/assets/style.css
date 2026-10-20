@@ -191,6 +191,10 @@ p { color: var(--muted); line-height: 1.65; margin: 8px 0; }
 .chart-note { font-size: 11px; padding: 0 22px 18px; margin: 0; }
 .table-panel { margin-top: 22px; overflow: hidden; padding-bottom: 10px; }
 .export-button { border: 1px solid #33445c; border-radius: 5px; background: transparent; color: #bacbdf; padding: 8px 12px; font-size: 11px; }
+.player-forecast-controls { padding: 16px; margin: 14px 0; }
+.player-forecast-controls .field { max-width: 620px; margin-bottom: 12px; }
+#player-history-refresh { color: #b8c8dc; font-size: 12px; margin: 12px 0; }
+#player-history-status:empty { display: none; }
 footer { color: #64758d; font-size: 10px; margin-top: 30px; border-top: 1px solid var(--line); padding-top: 18px; letter-spacing: .4px; }
 /* Dash 3 (react-select) and Dash 4 dropdowns. */
 .Select-control { background: #f3f6fb !important; border-color: #8795a8 !important; color: #000 !important; }

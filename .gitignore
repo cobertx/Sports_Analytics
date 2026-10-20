@@ -1,8 +1,27 @@
+# Local environments, credentials and interpreter output
 .venv/
+/venv/
+/env/
 __pycache__/
 *.py[cod]
-.pytest_cache/
 .env
+.env.*
+!.env.example
+!.env.*.example
+
+# Tests are local-only; CI runs scripts/check_project.py instead.
+test/
+tests/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local source caches, account logs, downloaded data and fitted estimates
 data/cache/
 market_data/*.csv
 data/market_data/*.csv
@@ -17,9 +36,31 @@ data/modeling/nba/team_games_*.csv
 data/modeling/nba/team_games_*.manifest.json
 data/modeling/nba/forecasts/
 data/modeling/nba/epa/
+data/modeling/nba/raw/
 data/modeling/player_stats/whp/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-journal
+
+# Rebuildable artifacts; canonical model manuals remain under models/.
+/output/
 tmp/
 *.log
 dist/
 build/
 *.egg-info/
+
+# Editor, OS and scratch files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+tempCodeRunnerFile.*
+*.tmp
+*.bak
+*.swp
+*.swo
+~$*

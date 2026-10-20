@@ -228,7 +228,14 @@ class PlayerHistoryRepository:
         # corrected participation records. See INPUT_SCHEMA.md.
         path = self.root / "imports" / f"{sport.lower()}.csv"
         if path.exists():
-            frames.append(pd.read_csv(path, dtype={"entity_id": str, "game_id": str}))
+            imported = pd.read_csv(path, dtype={"entity_id": str, "game_id": str})
+            if "season" in imported:
+                season = pd.to_numeric(imported["season"], errors="coerce")
+            else:
+                dates = pd.to_datetime(imported["event_date"], utc=True, errors="coerce", format="mixed")
+                season = dates.dt.year - dates.dt.month.lt(10 if sport == "NBA" else 3).astype(int)
+            imported = imported[season.isin(seasons_for(sport, start))]
+            frames.append(imported)
         if not frames:
             raise DataSourceError("No saved player history. Click Prepare player history; this does not pull odds.")
         data = pd.concat(frames, ignore_index=True)

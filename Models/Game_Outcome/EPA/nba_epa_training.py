@@ -9,8 +9,8 @@ import tempfile
 import numpy as np
 import pandas as pd
 
-from Models.Game_Outcome.EPA.NBA_EPA import FEATURES, state_features
-from Models.Game_Outcome.EPA.nba_epa_data import ROOT, archive_source, prepare_archive
+from models.Game_Outcome.EPA.NBA_EPA import FEATURES, state_features
+from models.Game_Outcome.EPA.nba_epa_data import ROOT, archive_source, prepare_archive
 from sports_analytics.data import DataSourceError, Query
 from sports_analytics.nfl_model_data import atomic_text
 from sports_analytics.service import DataService

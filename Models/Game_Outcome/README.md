@@ -13,11 +13,11 @@ original research reference.
 Run commands from the project root:
 
 ```powershell
-python -m Models.Game_Outcome.PPP --help
-python -m Models.Game_Outcome.PPP.NBA_PPP --help
-python -m Models.Game_Outcome.EPA --help
-python -m Models.Game_Outcome.EPA.NBA_EPA --help
-python -m Models.Game_Outcome.ELO --help
+python -m models.Game_Outcome.PPP --help
+python -m models.Game_Outcome.PPP.NBA_PPP --help
+python -m models.Game_Outcome.EPA --help
+python -m models.Game_Outcome.EPA.NBA_EPA --help
+python -m models.Game_Outcome.ELO --help
 ```
 
 Dashboard services remain in `sports_analytics`. Prepared data and frozen

@@ -1,6 +1,6 @@
 """Snapshot-cutoff NBA PPP estimates, archived separately from NFL forecasts."""
 
-from Models.Game_Outcome.PPP.NBA_PPP import NBAPPPForecast, NBAPPPModel
+from models.Game_Outcome.PPP.NBA_PPP import NBAPPPForecast, NBAPPPModel
 from .nba_markets import NBA_TEAM_CODES
 from .nba_model_data import NbaModelData
 from .ppp_service import PPPMarketService

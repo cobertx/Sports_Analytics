@@ -42,16 +42,16 @@ lineup IDs do not prove that the inferred lineups are correct.
 
 ```powershell
 # Already completed for 2025-26 during setup.
-python -m Models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025 --download
+python -m models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025 --download
 
 # Repeat the same audit offline using the saved inputs.
-python -m Models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025
+python -m models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025
 
 # Suggested research history: 2023-24, 2024-25, 2025-26.
-python -m Models.Game_Outcome.EPA.prepare_nba_epa --seasons 2023 2024 2025 --download
+python -m models.Game_Outcome.EPA.prepare_nba_epa --seasons 2023 2024 2025 --download
 
 # Reconstruct inputs, fit NBA EPV/EPA and export a standalone forecast.
-python -m Models.Game_Outcome.EPA.NBA_EPA --seasons 2025 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
+python -m models.Game_Outcome.EPA.NBA_EPA --seasons 2025 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00
 ```
 
 To compare additional seasons against independent box scores, populate the

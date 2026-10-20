@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import threading
 
-from Models.Game_Outcome.PPP.PPP import PPPError, PPPForecast, PPPModel
+from models.Game_Outcome.PPP.PPP import PPPError, PPPForecast, PPPModel
 from .data import DataSourceError
 from .nfl_markets import NFL_TEAM_CODES
 from .nfl_model_data import NflModelData, atomic_text

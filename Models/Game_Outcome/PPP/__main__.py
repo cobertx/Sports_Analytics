@@ -1,4 +1,4 @@
-"""Run the NFL PPP model with python -m Models.Game_Outcome.PPP."""
+"""Run the NFL PPP model with python -m models.Game_Outcome.PPP."""
 
 from .PPP import main
 

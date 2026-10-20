@@ -1,4 +1,4 @@
-"""Run the NFL EPA model with python -m Models.Game_Outcome.EPA."""
+"""Run the NFL EPA model with python -m models.Game_Outcome.EPA."""
 
 from .EPA import main
 

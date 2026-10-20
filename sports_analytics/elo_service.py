@@ -1,6 +1,6 @@
 """Separate frozen Elo/power forecasts using existing public historical adapters."""
 
-from Models.Game_Outcome.ELO import ELOConfig, ELOForecast, ELOModel, NBAELOForecast
+from models.Game_Outcome.ELO import ELOConfig, ELOForecast, ELOModel, NBAELOForecast
 from .nba_model_data import NbaModelData
 from .nfl_model_data import NflModelData
 from .nba_markets import NBA_TEAM_CODES

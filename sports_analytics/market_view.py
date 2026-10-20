@@ -9,7 +9,7 @@ from urllib.parse import quote
 from dash import dcc, html
 import plotly.graph_objects as go
 
-from Models.Game_Outcome.PPP.PPP import PPPError, implied_probability
+from models.Game_Outcome.PPP.PPP import PPPError, implied_probability
 from .display_time import eastern_datetime, format_eastern
 from .nfl_markets import NFL_TEAM_CODES
 from .nba_markets import NBA_TEAM_CODES

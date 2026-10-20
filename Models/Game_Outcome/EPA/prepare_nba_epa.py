@@ -1,7 +1,7 @@
 """Prepare/audit public NBA EPA/EPV inputs; this does not enable a forecast.
 
 Project seasons use starting years: 2025 = 2025-26. First run:
-    python -m Models.Game_Outcome.EPA.prepare_nba_epa --seasons 2024 2025 --download
+    python -m models.Game_Outcome.EPA.prepare_nba_epa --seasons 2024 2025 --download
 Later offline audits reuse cached archives without --download.
 No API keys, Odds API requests, or extra Python packages are required.
 """
@@ -14,7 +14,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from sports_analytics.data import DataSourceError
-from Models.Game_Outcome.EPA.nba_epa_data import prepare_inputs
+from models.Game_Outcome.EPA.nba_epa_data import prepare_inputs
 
 
 def main():

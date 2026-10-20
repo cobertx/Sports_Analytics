@@ -16,8 +16,8 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from Models.Game_Outcome.PPP.PPP import PPPError
-from Models.Game_Outcome.PPP.NBA_PPP import NBAPPPConfig, NBAPPPForecast, NBAPPPModel
+from models.Game_Outcome.PPP.PPP import PPPError
+from models.Game_Outcome.PPP.NBA_PPP import NBAPPPConfig, NBAPPPForecast, NBAPPPModel
 
 FEATURES = ("intercept", "clock", "quarter_2", "quarter_3", "quarter_4", "overtime",
             "elapsed", "offensive_rebounds", "points_so_far", "start_made", "start_missed",
@@ -186,7 +186,7 @@ def main():
     import argparse, json
     from dataclasses import asdict
     from datetime import datetime, timezone
-    from Models.Game_Outcome.EPA.nba_epa_training import NBAEPAData
+    from models.Game_Outcome.EPA.nba_epa_training import NBAEPAData
     from sports_analytics.nfl_model_data import atomic_text
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seasons",nargs="+",type=int,default=[2025])
