@@ -4,8 +4,10 @@ Run from any directory: python scripts/check_project.py
 No source data, credentials, fitted caches or external requests are required.
 """
 
+import argparse
 import importlib
 from pathlib import Path
+import subprocess
 import sys
 import tomllib
 from unittest.mock import patch
@@ -19,7 +21,18 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-def main():
+def check_layout():
+    # Windows can display lowercase models while Git still records Models.
+    # Check the next commit's index too; a filesystem-only check misses this.
+    if (ROOT / ".git").exists():
+        result = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True)
+        tracked = [name.decode("utf-8") for name in result.stdout.split(b"\0") if name]
+        wrong = [name for name in tracked if name.startswith("Models/")]
+        require(not wrong,
+                "Git still tracks Models/ with uppercase M. Record the rename with "
+                "git mv Models __models_case_fix, then git mv __models_case_fix models, "
+                "and include the staged renames in your commit.")
+        require(any(name.startswith("models/") for name in tracked), "Git must track the lowercase models/ package.")
     names = {path.name for path in ROOT.iterdir()}
     require("models" in names and "Models" not in names, "Model directory must be named exactly models (lowercase).")
     require("requirements" in names, "Requirements belong under requirements/.")
@@ -31,6 +44,15 @@ def main():
     require("models*" in config["tool"]["setuptools"]["packages"]["find"]["include"],
             "Package discovery must include lowercase models.")
 
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--layout-only", action="store_true", help="Check Git paths and project layout before installing dependencies")
+    args = parser.parse_args()
+    check_layout()
+    if args.layout_only:
+        print("Passed: Git paths, lowercase models/ and requirements/ layout.")
+        return
     modules = [
         "models.Game_Outcome.PPP.PPP", "models.Game_Outcome.PPP.NBA_PPP",
         "models.Game_Outcome.EPA.EPA", "models.Game_Outcome.EPA.NBA_EPA",
