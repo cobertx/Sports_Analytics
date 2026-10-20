@@ -40,6 +40,7 @@ data/modeling/nba/raw/
 data/modeling/player_stats/whp/
 data/modeling/player_stats/usage_opportunity/
 data/modeling/player_stats/opponent_adjusted_matchup/
+data/modeling/player_stats/pace_game_environment/
 *.sqlite
 *.sqlite3
 *.sqlite3-*

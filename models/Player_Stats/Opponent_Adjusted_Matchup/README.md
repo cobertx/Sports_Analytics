@@ -5,6 +5,11 @@ This package implements an NBA/NFL box-score version of the supplied
 reference and separate `OAM_Implementation_Guide.pdf` accompany the code. This
 guide describes what is implemented, rather than repeating the source roadmap.
 
+The shared UO engine also accepts an optional environment used by the separate
+Pace & Game Environment strategy. OAM supplies only its component-adjustment
+context, with no environment, so its own volume and role calculations retain
+their existing behavior. Selecting OAM does not also enable PGE.
+
 ## 0. Exact history windows and new seasons
 
 | Setting | NBA | NFL |

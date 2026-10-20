@@ -6,6 +6,9 @@ Model implementations are grouped by prediction target. [Game_Outcome](Game_Outc
 - [EPA Implementation Guide](Game_Outcome/EPA/EPA_Implementation_Guide.pdf)
 - [ELO Implementation Guide](Game_Outcome/ELO/ELO_Implementation_Guide.pdf)
 - [WHP Player Implementation Guide](Player_Stats/Weighted_Historical_Performance/WHP_Implementation_Guide.pdf)
+- [UO Player Implementation Guide](Player_Stats/Usage_Opportunity/UO_Implementation_Guide.pdf)
+- [OAM Player Implementation Guide](Player_Stats/Opponent_Adjusted_Matchup/OAM_Implementation_Guide.pdf)
+- [PGE Player Implementation Guide](Player_Stats/Pace_Game_Environment/PGE_Implementation_Guide.pdf)
 
 Rebuild the manuals from their READMEs with `python -m pip install -r requirements/requirements-docs.txt`, then `python scripts/build_model_docs.py`. Use `--methods ELO` to build just that guide. Copies are also written under `output/pdf`. This documentation build makes no data or odds requests and does not change model calculations.
 

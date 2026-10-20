@@ -26,5 +26,13 @@ folder includes the source PDF, separate implementation guide, CLI, optional
 pregame lineup scenarios and WHP/UO/OAM historical model comparison. NCAAF OAM
 and unconnected tactical/personnel feeds are explicitly unavailable.
 
+[Pace & Game Environment](Pace_Game_Environment/README.md) fits NBA/NFL regulation
+volume from earlier own/opponent history, draws paired game scripts and overtime,
+and conditions player participation/allocation before conversion. Select
+**Pace & Game Environment (PGE)** for saved NBA/NFL player markets. The folder
+includes source and implementation PDFs, input schema, CLI and WHP/UO/OAM/PGE
+replay comparison. NFL uses saved nflverse PBP for sacks/scrambles/non-attempts,
+with an explicitly labeled box-score fallback. NCAAF PGE remains unavailable.
+
 Team/game outcome strategies are organized separately under
 [Game_Outcome](../Game_Outcome/README.md).

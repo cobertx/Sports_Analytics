@@ -7,7 +7,10 @@ separate `UO_Implementation_Guide.pdf` is generated from this file.
 
 The shared simulation functions accept an optional component-adjustment context
 used by the separate Opponent-Adjusted Matchup model. Plain UO supplies no such
-context, so its calculations and forecast assumptions remain unchanged.
+context, so its calculations and forecast assumptions remain unchanged. Optional
+environment hooks support the separate Pace & Game Environment strategy's
+conditioned role sampling, shared volume and overtime budgets. Plain UO supplies
+no environment, retaining its original regulation-only calculation path.
 
 ## 0. Lookback and new seasons
 

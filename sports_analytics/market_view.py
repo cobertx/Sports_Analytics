@@ -270,7 +270,7 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=N
 
 
 def market_sections(snapshot, category, forecast=None, model_error=None, criteria=None, method="PPP"):
-    player_method = method in {"WHP", "UO", "OAM"}
+    player_method = method in {"WHP", "UO", "OAM", "PGE"}
     groups = OrderedDict()
     for row in snapshot["rows"]:
         if row["group"] != category:
@@ -351,7 +351,9 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
             className="criteria-evaluation" + (" criteria-evaluation-no-match" if evaluated and not matched else ""),
             role="status", **{"aria-live": "polite"}))
     if player_method:
-        note = ("OAM neutralizes past matchup effects and adjusts opportunity/efficiency using schedule-adjusted, recency-weighted defensive factors with small-sample shrinkage. Hover for neutral and adjusted means, opponent multiplier, uncertainty and EV. Uses saved box scores; live tactical, injury, route and tracking feeds are not connected. NFL TD/order props remain unavailable."
+        note = ("PGE forecasts regulation pace from lagged own/opponent volume, then draws shared game scripts and overtime before player participation, allocation and efficiency. Hover for projected game volume, usage-only baseline, opportunities, intervals and EV. Uses saved boxes and available NFL play-by-play; no market lines enter the forecast. NFL TD/order props remain unavailable."
+                if method == "PGE" else
+                "OAM neutralizes past matchup effects and adjusts opportunity/efficiency using schedule-adjusted, recency-weighted defensive factors with small-sample shrinkage. Hover for neutral and adjusted means, opponent multiplier, uncertainty and EV. Uses saved box scores; live tactical, injury, route and tracking feeds are not connected. NFL TD/order props remain unavailable."
                 if method == "OAM" else
                 "UO simulates historical team volume, player participation/allocation and conversion efficiency jointly. Hover for opportunities, distribution intervals, simulation error and EV. Uses saved box scores; tracking, injuries, route and red-zone feeds are not connected. NFL TD/order props remain unavailable. Research defaults have not been validated for betting accuracy."
                 if method == "UO" else

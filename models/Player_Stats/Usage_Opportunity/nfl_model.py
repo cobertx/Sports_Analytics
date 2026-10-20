@@ -24,9 +24,10 @@ def split_completions(attempts, completed, rng):
     return np.column_stack([*results, remaining_makes])
 
 
-def simulate_nfl(players, teams, config, rng, *, adjustment=None):
+def simulate_nfl(players, teams, config, rng, *, adjustment=None, environment=None):
     result = SimulationResult()
-    states = team_states(teams, config, rng, TEAM_COLUMNS)
+    state_source = team_states if environment is None else environment.team_states
+    states = state_source(teams, config, rng, TEAM_COLUMNS)
     for team, state in states.items():
         if state[['attempts', 'carries', 'sacks_suffered', 'targets', 'receptions']].lt(0).any().any():
             raise UsageOpportunityError('NFL workload counts cannot be negative.')
@@ -36,7 +37,10 @@ def simulate_nfl(players, teams, config, rng, *, adjustment=None):
                 continue
             try:
                 frame = info['history']
-                role, sample = share_rows(frame, teams[team], ['attempts', 'carries', 'targets'], config, rng, adjustment=adjustment)
+                columns = ['attempts','carries','targets']
+                if environment is not None and 'pge_scramble' in frame and 'pge_scramble' in teams[team]:
+                    columns.append('pge_scramble')
+                role, sample = share_rows(frame, teams[team], columns, config, rng, adjustment=adjustment, environment=environment)
                 # Observed zero opportunities may be retained; missing features
                 # are unavailable rather than silently inferred to be zero.
                 observed(frame, ['receptions', 'receiving_yards', 'rushing_yards', 'completions', 'interceptions'],
@@ -46,17 +50,22 @@ def simulate_nfl(players, teams, config, rng, *, adjustment=None):
                 result.errors[identity] = str(exc)
         if not ids:
             continue
-        plays = integer_pool(state.attempts + state.carries + state.sacks_suffered)
-        historical_dropbacks = state.attempts.to_numpy(float)+state.sacks_suffered.to_numpy(float)
-        p_pass = np.divide(historical_dropbacks, plays, out=np.zeros(config.simulations), where=plays > 0).clip(0, 1)
-        if adjustment is not None:
-            p_pass = adjustment.ratio(team, state, 'nfl:dropback', p_pass).clip(0, 1)
-        dropbacks = rng.binomial(plays, p_pass)
-        p_sack = np.divide(state.sacks_suffered.to_numpy(float), historical_dropbacks,
-                           out=np.zeros(config.simulations), where=historical_dropbacks > 0).clip(0, 1)
-        if adjustment is not None:
-            p_sack = adjustment.ratio(team, state, 'nfl:sack', p_sack).clip(0, 1)
-        attempts = dropbacks-rng.binomial(dropbacks, p_sack)
+        environment_audit = {}
+        if environment is not None:
+            plays,attempts,carry_pool,environment_audit = environment.nfl_opportunities(team,state,rng)
+        else:
+            plays = integer_pool(state.attempts + state.carries + state.sacks_suffered)
+            historical_dropbacks = state.attempts.to_numpy(float)+state.sacks_suffered.to_numpy(float)
+            p_pass = np.divide(historical_dropbacks, plays, out=np.zeros(config.simulations), where=plays > 0).clip(0, 1)
+            if adjustment is not None:
+                p_pass = adjustment.ratio(team, state, 'nfl:dropback', p_pass).clip(0, 1)
+            dropbacks = rng.binomial(plays, p_pass)
+            p_sack = np.divide(state.sacks_suffered.to_numpy(float), historical_dropbacks,
+                               out=np.zeros(config.simulations), where=historical_dropbacks > 0).clip(0, 1)
+            if adjustment is not None:
+                p_sack = adjustment.ratio(team, state, 'nfl:sack', p_sack).clip(0, 1)
+            attempts = dropbacks-rng.binomial(dropbacks, p_sack)
+            carry_pool = plays-dropbacks
         p_target = np.divide(state.targets.to_numpy(float), state.attempts.to_numpy(float),
                              out=np.zeros(config.simulations), where=state.attempts.to_numpy(float) > 0)
         if (p_target > 1 + 1e-6).any() or (state.receptions > state.targets).any():
@@ -64,7 +73,8 @@ def simulate_nfl(players, teams, config, rng, *, adjustment=None):
         if adjustment is not None:
             p_target = adjustment.ratio(team, state, 'nfl:target', p_target).clip(0, 1)
         targets = allocate(rng.binomial(attempts, p_target.clip(0,1)), np.column_stack([r['targets'] for r in roles]), rng)
-        carries = allocate(plays-dropbacks, np.column_stack([r['carries'] for r in roles]), rng)
+        carries = (allocate(carry_pool, np.column_stack([r['carries'] for r in roles]), rng) if environment is None else
+                   environment.allocate_carries(carry_pool,roles,environment_audit,rng))
         qb_attempts = allocate(attempts, np.column_stack([r['attempts'] for r in roles]), rng)
         caught, rec_yards, rush_yards, efficiencies, used = [], [], [], {}, {}
         for i, identity in enumerate([*ids, '__other__']):
@@ -100,7 +110,7 @@ def simulate_nfl(players, teams, config, rng, *, adjustment=None):
                                         [('attempts', qb_attempts), ('carries', carries), ('targets', targets)]},
                 efficiency_projection={**efficiencies[identity], 'interceptions_per_incompletion': interception_fit},
                 limitations='Observed target shares replace unavailable routes/snaps. Yards use game-level residuals, not play-level gain samples. TDs need red-zone inputs. No injury or score/clock adjustment.')
-        result.audit[team] = dict(plays=plays, attempts=attempts, targets=targets, carries=carries,
+        result.audit[team] = dict(**environment_audit, plays=plays, attempts=attempts, targets=targets, carries=carries,
             qb_attempts=qb_attempts, completions=completed, receptions=caught,
             passing_yards=passing_yards, receiving_yards=rec_yards)
     return result

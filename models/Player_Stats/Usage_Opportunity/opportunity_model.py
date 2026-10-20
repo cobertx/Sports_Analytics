@@ -58,7 +58,7 @@ def allocate(total, shares, rng):
     return np.column_stack([*columns, remaining])
 
 
-def share_rows(player, team, columns, config, rng, *, minutes=False, adjustment=None):
+def share_rows(player, team, columns, config, rng, *, minutes=False, adjustment=None, environment=None):
     """Bootstrap aligned player/team appearances, not future realized workload."""
     totals = team[['game_id', 'team', *columns]].rename(columns={c: 'team_' + c for c in columns})
     sample = player.merge(totals, on=['game_id', 'team'], how='inner', validate='one_to_one')
@@ -72,7 +72,7 @@ def share_rows(player, team, columns, config, rng, *, minutes=False, adjustment=
     for column in columns:
         if (sample[column] > sample['team_' + column] + 1e-6).any():
             raise UsageOpportunityError(f'Player {column} exceeds its matched team total.')
-    drawn = draw_rows(sample, config, rng)
+    drawn = draw_rows(sample, config, rng) if environment is None else environment.draw_rows(sample, config, rng)
     shares = {column: np.divide(drawn[column].to_numpy(float), drawn['team_' + column].to_numpy(float),
                                 out=np.zeros(config.simulations), where=drawn['team_' + column].to_numpy(float) > 0)
               for column in columns}
@@ -80,6 +80,10 @@ def share_rows(player, team, columns, config, rng, *, minutes=False, adjustment=
         regulation = np.divide(240., drawn['team_min'].to_numpy(float),
                                out=np.ones(config.simulations), where=drawn['team_min'].to_numpy(float) > 0)
         shares['minutes'] = (drawn['min'].to_numpy(float) * regulation).clip(0, 48)
+        if environment is not None:
+            shares['minutes'] *= environment.duration[str(drawn.iloc[0].team)]/48
     if adjustment is not None:
         shares = adjustment.shares(drawn, shares)
+    if environment is not None:
+        shares = environment.role_shares(drawn, shares)
     return shares, sample

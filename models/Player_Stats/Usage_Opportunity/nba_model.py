@@ -21,10 +21,11 @@ def features(frame):
     return data
 
 
-def simulate_nba(players, teams, config, rng, *, adjustment=None):
+def simulate_nba(players, teams, config, rng, *, adjustment=None, environment=None):
     result = SimulationResult()
     teams = {team: features(rows) for team, rows in teams.items()}
-    states = team_states(teams, config, rng, [*CHANNELS, 'min', 'two_pm', 'fg3m', 'ftm'])
+    state_source = team_states if environment is None else environment.team_states
+    states = state_source(teams, config, rng, [*CHANNELS, 'min', 'two_pm', 'fg3m', 'ftm'])
     for team, state in states.items():
         if (state['min'] < 240).any() or state[list(CHANNELS)].lt(0).any().any():
             raise UsageOpportunityError('NBA team counts must be nonnegative and team minutes at least 240.')
@@ -34,7 +35,7 @@ def simulate_nba(players, teams, config, rng, *, adjustment=None):
                 continue
             try:
                 frame = features(info['history'])
-                role, role_sample = share_rows(frame, teams[team], [*CHANNELS, 'min'], config, rng, minutes=True)
+                role, role_sample = share_rows(frame, teams[team], [*CHANNELS, 'min'], config, rng, minutes=True, environment=environment)
                 fit = {}
                 for name, made, attempts in [('two', 'two_pm', 'two_pa'), ('three', 'fg3m', 'fg3a'), ('ft', 'ftm', 'fta')]:
                     fit[name] = conversion(frame, made, attempts, config, rng, adjustment=adjustment, team=team)
@@ -45,12 +46,15 @@ def simulate_nba(players, teams, config, rng, *, adjustment=None):
         if not ids:
             continue
         minutes = np.column_stack([role['minutes'] for role in roles])
-        scale = np.minimum(1., 240 / np.maximum(1., minutes.sum(axis=1)))
+        budget = 240. if environment is None else 5*environment.duration[team]
+        scale = np.minimum(1., budget / np.maximum(1., minutes.sum(axis=1)))
         minutes *= scale[:, None]
         pools, allocations = {}, {}
         for channel in CHANNELS:
             # Normalize historical team overtime to a regulation baseline.
             projected = state[channel].to_numpy(float) * 240/state['min'].to_numpy(float)
+            if environment is not None:
+                projected = environment.nba_pool(team, state, channel)
             if adjustment is not None:
                 projected = adjustment.ratio(team, state, 'nba:' + channel, projected)
             pool = integer_pool(projected)
@@ -87,6 +91,6 @@ def simulate_nba(players, teams, config, rng, *, adjustment=None):
                     **{c: float(allocations[c][:, i].mean()) for c in CHANNELS}},
                 efficiency_projection={name: fit[1] for name, fit in posteriors[identity].items()},
                 limitations='Regulation-only; historical role scenarios. Rebounds/assists/defense use box-score pools, not tracking chances. No injury, lineup or opponent adjustment.')
-        result.audit[team] = dict(minutes_total=minutes.sum(axis=1), other_minutes=240-minutes.sum(axis=1),
+        result.audit[team] = dict(minutes_total=minutes.sum(axis=1), other_minutes=budget-minutes.sum(axis=1),
                                   pools=pools, allocations=allocations, makes=makes)
     return result

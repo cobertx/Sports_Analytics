@@ -26,6 +26,7 @@ from .ncaaf_markets import NCAAF_MARKETS, NcaafMarketService
 from .whp_service import WHPMarketService
 from .usage_opportunity_service import UsageOpportunityMarketService
 from .opponent_adjusted_service import OpponentAdjustedMarketService
+from .pace_game_environment_service import PaceGameEnvironmentMarketService
 from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, NCAAF_LOGO_DIRECTORY, NCAAF_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
 from .display_time import eastern_datetime, format_eastern
 from .usage_log import ApiUsageLog, SPORTS as USAGE_SPORTS, usage_summary
@@ -242,7 +243,7 @@ def usage_figures(summary):
 def create_app(service=None, career_service=None, schedule_service=None, odds_service=None, nfl_market_service=None,
                api_usage_log=None, ppp_service=None, epa_service=None, nba_market_service=None, nba_ppp_service=None,
                nba_epa_service=None, elo_service=None, nba_elo_service=None, ncaaf_market_service=None,
-               whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None):
+               whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None):
     service = service or DataService()
     career_service = career_service or CareerService(service.path.with_name("career.sqlite3"))
     schedule_service = schedule_service or ScheduleService(service.path.with_name("schedules.sqlite3"))
@@ -256,6 +257,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     whp_service = whp_service or WHPMarketService()
     usage_opportunity_service = usage_opportunity_service or UsageOpportunityMarketService()
     opponent_adjusted_service = opponent_adjusted_service or OpponentAdjustedMarketService()
+    pace_game_environment_service = pace_game_environment_service or PaceGameEnvironmentMarketService()
     data_directory = Path(__file__).resolve().parent.parent / "data"
     nfl_market_service = nfl_market_service or NflMarketService(odds_service, service.path.with_name("nfl_markets.sqlite3"),
                                                               data_directory / "market_data", usage_log=api_usage_log)
@@ -459,7 +461,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                 field("Player Forecast Method", dcc.Dropdown(id="player-forecast-method", value="WHP",
                                       options=[{"label": "Weighted Historical Performance (WHP)", "value": "WHP"},
                                                {"label": "Usage & Opportunity (UO)", "value": "UO"},
-                                               {"label": "Opponent-Adjusted Matchup (OAM)", "value": "OAM"}], clearable=False)),
+                                               {"label": "Opponent-Adjusted Matchup (OAM)", "value": "OAM"},
+                                               {"label": "Pace & Game Environment (PGE)", "value": "PGE"}], clearable=False)),
                                 html.P("Latest historical performance used: Not calculated yet", id="player-forecast-history",
                                        className="forecast-history", role="status"),
                               ], className="forecast-method-control"),
@@ -680,8 +683,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                    {"label": "Usage & Opportunity (UO)" if supported else "Usage & Opportunity (NBA/NFL only)",
                     "value": "UO", "disabled": not supported},
                    {"label": "Opponent-Adjusted Matchup (OAM)" if supported else "Opponent-Adjusted Matchup (NBA/NFL only)",
-                    "value": "OAM", "disabled": not supported}]
-        return options, previous if previous == "WHP" or previous in {"UO", "OAM"} and supported else "WHP"
+                    "value": "OAM", "disabled": not supported},
+                   {"label": "Pace & Game Environment (PGE)" if supported else "Pace & Game Environment (NBA/NFL only)",
+                    "value": "PGE", "disabled": not supported}]
+        return options, previous if previous == "WHP" or previous in {"UO", "OAM", "PGE"} and supported else "WHP"
 
     @app.callback(Output("game-forecast-history", "children"), Output("player-forecast-history", "children"),
                   Input("market-forecast-history", "data"), Input("market-url", "hash"),
@@ -730,13 +735,14 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         snapshot = {**snapshot, "sport": market_game_sport(location_hash)}
         if category != "Game":
             player_method = player_method or "WHP"
-            if player_method not in {"WHP", "UO", "OAM"}:
+            if player_method not in {"WHP", "UO", "OAM", "PGE"}:
                 raise PreventUpdate
             try:
-                if player_method in {"UO", "OAM"}:
+                if player_method in {"UO", "OAM", "PGE"}:
                     # Simulate the full saved game once, so changing a player tab
                     # retains common team volumes and correlated prop outcomes.
-                    forecast = {"UO": usage_opportunity_service, "OAM": opponent_adjusted_service}[player_method].forecast(snapshot)
+                    forecast = {"UO": usage_opportunity_service, "OAM": opponent_adjusted_service,
+                                "PGE": pace_game_environment_service}[player_method].forecast(snapshot)
                 else:
                     forecast = whp_service.forecast({**snapshot, "rows": [row for row in snapshot["rows"] if row["group"] == category]})
             except (DataSourceError, OSError, ValueError) as exc:

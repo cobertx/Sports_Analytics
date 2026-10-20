@@ -63,6 +63,8 @@ def main():
         "sports_analytics.usage_opportunity_service",
         "models.Player_Stats.Opponent_Adjusted_Matchup", "models.Player_Stats.Opponent_Adjusted_Matchup.backtesting",
         "sports_analytics.opponent_adjusted_service",
+        "models.Player_Stats.Pace_Game_Environment", "models.Player_Stats.Pace_Game_Environment.backtesting",
+        "sports_analytics.pace_game_environment_service",
         "sports_analytics.dashboard", "sports_analytics.nfl_markets", "sports_analytics.nba_markets",
         "sports_analytics.ncaaf_markets", "sports_analytics.whp_service",
     ]
@@ -75,6 +77,7 @@ def main():
         from models.Player_Stats.Usage_Opportunity import UsageOpportunityForecast
         from models.Player_Stats.Usage_Opportunity.efficiency_model import beta_posterior
         from models.Player_Stats.Opponent_Adjusted_Matchup.schedule_strength import shrunk_factor
+        from models.Player_Stats.Pace_Game_Environment import PaceForecast
 
         value = WeightedHistoricalPerformance(half_life=3, window=10).predict(
             [17, 22, 19, 25, 21, 28, 23, 31, 26, 29])["weighted_mean"]
@@ -86,6 +89,8 @@ def main():
                 "Usage & Opportunity integer settlement failed.")
         require(abs(shrunk_factor([120]*4, [100]*4, prior_strength=6)["mean"]-1.08)<1e-12,
                 "Opponent-adjusted small-sample shrinkage example failed.")
+        pace = PaceForecast.from_samples([0,1,2,2]).market(1)
+        require((pace.win,pace.loss,pace.push)==(.5,.25,.25),"PGE push-aware empirical pricing failed.")
         app = create_app()
         with app.server.test_client() as client:
             for route in ("/", "/_dash-layout", "/_dash-dependencies"):
