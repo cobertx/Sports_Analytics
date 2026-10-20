@@ -99,9 +99,22 @@ def preferred_metric(metrics):
 
 
 FOOTBALL_CATEGORIES = {
-    "scoring": "Scoring", "passing": "Passing", "rushing": "Rushing", "receiving": "Receiving", "defense": "Defense",
+    "scoring": "Scoring", "offense": "Offense", "passing": "Passing", "rushing": "Rushing", "receiving": "Receiving", "defense": "Defense",
     "kicking": "Kicking", "punting": "Punting", "special_teams": "Special teams", "returns": "Returns", "fumbles": "Fumbles",
     "penalties": "Penalties", "fantasy": "Fantasy", "other": "Other",
+}
+
+# CFBD team box scores use different names from nflverse player/team logs.
+# Keep those source names intact in saved data and classify them only for NCAAF.
+NCAAF_CATEGORIES = {
+    "first_downs": "offense", "third_down_conversions": "offense", "third_down_attempts": "offense",
+    "fourth_down_conversions": "offense", "fourth_down_attempts": "offense", "total_yards": "offense",
+    "turnovers": "offense", "net_passing_yards": "passing", "yards_per_pass": "passing",
+    "interceptions": "passing", "yards_per_rush_attempt": "rushing",
+    "passes_deflected": "defense", "qb_hurries": "defense", "sacks": "defense",
+    "tackles": "defense", "defensive_tds": "defense", "passes_intercepted": "defense",
+    "interception_tds": "defense", "interception_yards": "defense",
+    "total_fumbles": "fumbles", "kicking_points": "kicking",
 }
 NBA_CATEGORIES = {
     "scoring": "Scoring", "shooting": "Shooting", "rebounding": "Rebounding", "playmaking": "Playmaking",
@@ -112,6 +125,8 @@ NBA_CATEGORIES = {
 
 def statistic_category(metric, sport):
     if sport != "NBA":
+        if sport == "NCAAF" and metric in NCAAF_CATEGORIES:
+            return NCAAF_CATEGORIES[metric]
         if metric in {"points", "pts"} or sport == "NFL" and metric in {"pf", "pa"}:
             return "scoring"
         if metric == "special_teams_tds":
@@ -134,6 +149,15 @@ def statistic_categories(metrics, sport):
 
 
 def metric_label(metric, sport):
+    if sport == "NCAAF":
+        college = {
+            "points": "Points scored", "net_passing_yards": "Net passing yards",
+            "yards_per_pass": "Yards per pass", "yards_per_rush_attempt": "Yards per rushing attempt",
+            "interceptions": "Interceptions thrown", "passes_intercepted": "Defensive interceptions",
+            "qb_hurries": "Quarterback hurries", "kicking_points": "Kicking points",
+        }
+        if metric in college:
+            return college[metric]
     if sport == "NFL" and metric in {"pf", "pa"}:
         return {"pf": "PF (Points for)", "pa": "PA (Points against)"}[metric]
     basketball = {

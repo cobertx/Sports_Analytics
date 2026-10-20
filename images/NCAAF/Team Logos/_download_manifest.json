@@ -1,0 +1,808 @@
+{
+  "ranking_source": "https://api.collegefootballdata.com/ratings/srs",
+  "ranking_method": "SRS rating descending; school name breaks ties",
+  "season": 2026,
+  "retrieved_at": "2026-10-20T16:29:29+00:00",
+  "teams": [
+    {
+      "rank": 1,
+      "rating": 24.8,
+      "school": "LSU",
+      "team_id": 99,
+      "filename": "LSU Tigers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 2,
+      "rating": 24.6,
+      "school": "Alabama",
+      "team_id": 333,
+      "filename": "Alabama Crimson Tide.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 3,
+      "rating": 22.4,
+      "school": "Notre Dame",
+      "team_id": 87,
+      "filename": "Notre Dame Fighting Irish.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 4,
+      "rating": 21.5,
+      "school": "Ohio State",
+      "team_id": 194,
+      "filename": "Ohio State Buckeyes.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 5,
+      "rating": 20.9,
+      "school": "Georgia",
+      "team_id": 61,
+      "filename": "Georgia Bulldogs.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 6,
+      "rating": 20.5,
+      "school": "Indiana",
+      "team_id": 84,
+      "filename": "Indiana Hoosiers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 7,
+      "rating": 20.0,
+      "school": "Miami",
+      "team_id": 2390,
+      "filename": "Miami Hurricanes.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 8,
+      "rating": 18.9,
+      "school": "Tennessee",
+      "team_id": 2633,
+      "filename": "Tennessee Volunteers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 9,
+      "rating": 18.9,
+      "school": "Texas",
+      "team_id": 251,
+      "filename": "Texas Longhorns.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 10,
+      "rating": 18.5,
+      "school": "Utah",
+      "team_id": 254,
+      "filename": "Utah Utes.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 11,
+      "rating": 18.1,
+      "school": "BYU",
+      "team_id": 252,
+      "filename": "BYU Cougars.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 12,
+      "rating": 17.6,
+      "school": "Houston",
+      "team_id": 248,
+      "filename": "Houston Cougars.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 13,
+      "rating": 17.6,
+      "school": "Ole Miss",
+      "team_id": 145,
+      "filename": "Ole Miss Rebels.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 14,
+      "rating": 17.3,
+      "school": "Oregon",
+      "team_id": 2483,
+      "filename": "Oregon Ducks.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 15,
+      "rating": 17.3,
+      "school": "UCLA",
+      "team_id": 26,
+      "filename": "UCLA Bruins.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 16,
+      "rating": 16.7,
+      "school": "Nebraska",
+      "team_id": 158,
+      "filename": "Nebraska Cornhuskers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 17,
+      "rating": 16.7,
+      "school": "Texas Tech",
+      "team_id": 2641,
+      "filename": "Texas Tech Red Raiders.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 18,
+      "rating": 15.3,
+      "school": "Kentucky",
+      "team_id": 96,
+      "filename": "Kentucky Wildcats.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 19,
+      "rating": 15.2,
+      "school": "Northwestern",
+      "team_id": 77,
+      "filename": "Northwestern Wildcats.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 20,
+      "rating": 13.9,
+      "school": "Oklahoma State",
+      "team_id": 197,
+      "filename": "Oklahoma State Cowboys.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 21,
+      "rating": 13.7,
+      "school": "Florida",
+      "team_id": 57,
+      "filename": "Florida Gators.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 22,
+      "rating": 12.9,
+      "school": "Wake Forest",
+      "team_id": 154,
+      "filename": "Wake Forest Demon Deacons.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 23,
+      "rating": 12.4,
+      "school": "Iowa",
+      "team_id": 2294,
+      "filename": "Iowa Hawkeyes.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 24,
+      "rating": 12.3,
+      "school": "Arizona",
+      "team_id": 12,
+      "filename": "Arizona Wildcats.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 25,
+      "rating": 11.9,
+      "school": "Boise State",
+      "team_id": 68,
+      "filename": "Boise State Broncos.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 26,
+      "rating": 11.6,
+      "school": "Missouri",
+      "team_id": 142,
+      "filename": "Missouri Tigers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 27,
+      "rating": 11.2,
+      "school": "Oregon State",
+      "team_id": 204,
+      "filename": "Oregon State Beavers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 28,
+      "rating": 10.7,
+      "school": "Louisville",
+      "team_id": 97,
+      "filename": "Louisville Cardinals.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 29,
+      "rating": 10.5,
+      "school": "Auburn",
+      "team_id": 2,
+      "filename": "Auburn Tigers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 30,
+      "rating": 10.5,
+      "school": "TCU",
+      "team_id": 2628,
+      "filename": "TCU Horned Frogs.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 31,
+      "rating": 9.9,
+      "school": "UCF",
+      "team_id": 2116,
+      "filename": "UCF Knights.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 32,
+      "rating": 9.8,
+      "school": "James Madison",
+      "team_id": 256,
+      "filename": "James Madison Dukes.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 33,
+      "rating": 9.6,
+      "school": "Mississippi State",
+      "team_id": 344,
+      "filename": "Mississippi State Bulldogs.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 34,
+      "rating": 9.5,
+      "school": "North Carolina",
+      "team_id": 153,
+      "filename": "North Carolina Tar Heels.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 35,
+      "rating": 9.5,
+      "school": "USC",
+      "team_id": 30,
+      "filename": "USC Trojans.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 36,
+      "rating": 8.7,
+      "school": "South Carolina",
+      "team_id": 2579,
+      "filename": "South Carolina Gamecocks.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 37,
+      "rating": 8.1,
+      "school": "Wisconsin",
+      "team_id": 275,
+      "filename": "Wisconsin Badgers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 38,
+      "rating": 8.0,
+      "school": "Baylor",
+      "team_id": 239,
+      "filename": "Baylor Bears.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 39,
+      "rating": 7.9,
+      "school": "Texas A&M",
+      "team_id": 245,
+      "filename": "Texas A&M Aggies.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 40,
+      "rating": 7.3,
+      "school": "Texas State",
+      "team_id": 326,
+      "filename": "Texas State Bobcats.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 41,
+      "rating": 7.2,
+      "school": "New Mexico",
+      "team_id": 167,
+      "filename": "New Mexico Lobos.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 42,
+      "rating": 6.8,
+      "school": "North Texas",
+      "team_id": 249,
+      "filename": "North Texas Mean Green.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 43,
+      "rating": 6.6,
+      "school": "Oklahoma",
+      "team_id": 201,
+      "filename": "Oklahoma Sooners.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 44,
+      "rating": 6.5,
+      "school": "Pittsburgh",
+      "team_id": 221,
+      "filename": "Pittsburgh Panthers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 45,
+      "rating": 6.4,
+      "school": "Duke",
+      "team_id": 150,
+      "filename": "Duke Blue Devils.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 46,
+      "rating": 6.2,
+      "school": "Kansas State",
+      "team_id": 2306,
+      "filename": "Kansas State Wildcats.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 47,
+      "rating": 6.1,
+      "school": "Iowa State",
+      "team_id": 66,
+      "filename": "Iowa State Cyclones.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 48,
+      "rating": 5.6,
+      "school": "Florida State",
+      "team_id": 52,
+      "filename": "Florida State Seminoles.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 49,
+      "rating": 5.0,
+      "school": "Army",
+      "team_id": 349,
+      "filename": "Army Black Knights.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 50,
+      "rating": 4.9,
+      "school": "Penn State",
+      "team_id": 213,
+      "filename": "Penn State Nittany Lions.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 51,
+      "rating": 4.7,
+      "school": "Clemson",
+      "team_id": 228,
+      "filename": "Clemson Tigers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 52,
+      "rating": 4.1,
+      "school": "SMU",
+      "team_id": 2567,
+      "filename": "SMU Mustangs.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 53,
+      "rating": 3.8,
+      "school": "Michigan",
+      "team_id": 130,
+      "filename": "Michigan Wolverines.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 54,
+      "rating": 3.6,
+      "school": "Purdue",
+      "team_id": 2509,
+      "filename": "Purdue Boilermakers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 55,
+      "rating": 3.3,
+      "school": "Cincinnati",
+      "team_id": 2132,
+      "filename": "Cincinnati Bearcats.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 56,
+      "rating": 2.7,
+      "school": "Liberty",
+      "team_id": 2335,
+      "filename": "Liberty Flames.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 57,
+      "rating": 2.4,
+      "school": "North Dakota State",
+      "team_id": 2449,
+      "filename": "North Dakota State Bison.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 58,
+      "rating": 2.3,
+      "school": "Illinois",
+      "team_id": 356,
+      "filename": "Illinois Fighting Illini.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 59,
+      "rating": 2.1,
+      "school": "Virginia",
+      "team_id": 258,
+      "filename": "Virginia Cavaliers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 60,
+      "rating": 1.7,
+      "school": "Michigan State",
+      "team_id": 127,
+      "filename": "Michigan State Spartans.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 61,
+      "rating": 1.4,
+      "school": "West Virginia",
+      "team_id": 277,
+      "filename": "West Virginia Mountaineers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 62,
+      "rating": 1.2,
+      "school": "Virginia Tech",
+      "team_id": 259,
+      "filename": "Virginia Tech Hokies.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 63,
+      "rating": 0.9,
+      "school": "Louisiana",
+      "team_id": 309,
+      "filename": "Louisiana Ragin' Cajuns.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 64,
+      "rating": 0.6,
+      "school": "Georgia State",
+      "team_id": 2247,
+      "filename": "Georgia State Panthers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 65,
+      "rating": 0.6,
+      "school": "Memphis",
+      "team_id": 235,
+      "filename": "Memphis Tigers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 66,
+      "rating": 0.6,
+      "school": "Washington",
+      "team_id": 264,
+      "filename": "Washington Huskies.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 67,
+      "rating": 0.1,
+      "school": "Louisiana Tech",
+      "team_id": 2348,
+      "filename": "Louisiana Tech Bulldogs.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 68,
+      "rating": 0.1,
+      "school": "Tulsa",
+      "team_id": 202,
+      "filename": "Tulsa Golden Hurricane.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 69,
+      "rating": 0.1,
+      "school": "UTSA",
+      "team_id": 2636,
+      "filename": "UTSA Roadrunners.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 70,
+      "rating": -0.3,
+      "school": "Kansas",
+      "team_id": 2305,
+      "filename": "Kansas Jayhawks.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 71,
+      "rating": -0.4,
+      "school": "Arkansas",
+      "team_id": 8,
+      "filename": "Arkansas Razorbacks.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 72,
+      "rating": -0.4,
+      "school": "Syracuse",
+      "team_id": 183,
+      "filename": "Syracuse Orange.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 73,
+      "rating": -0.5,
+      "school": "Colorado",
+      "team_id": 38,
+      "filename": "Colorado Buffaloes.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 74,
+      "rating": -0.7,
+      "school": "South Florida",
+      "team_id": 58,
+      "filename": "South Florida Bulls.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 75,
+      "rating": -0.8,
+      "school": "Fresno State",
+      "team_id": 278,
+      "filename": "Fresno State Bulldogs.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 76,
+      "rating": -0.8,
+      "school": "Toledo",
+      "team_id": 2649,
+      "filename": "Toledo Rockets.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 77,
+      "rating": -1.1,
+      "school": "Minnesota",
+      "team_id": 135,
+      "filename": "Minnesota Golden Gophers.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 78,
+      "rating": -1.6,
+      "school": "Western Michigan",
+      "team_id": 2711,
+      "filename": "Western Michigan Broncos.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 79,
+      "rating": -1.8,
+      "school": "Tulane",
+      "team_id": 2655,
+      "filename": "Tulane Green Wave.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 80,
+      "rating": -2.1,
+      "school": "Air Force",
+      "team_id": 2005,
+      "filename": "Air Force Falcons.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 81,
+      "rating": -2.2,
+      "school": "NC State",
+      "team_id": 152,
+      "filename": "NC State Wolfpack.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 82,
+      "rating": -3.0,
+      "school": "Georgia Southern",
+      "team_id": 290,
+      "filename": "Georgia Southern Eagles.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 83,
+      "rating": -3.0,
+      "school": "Georgia Tech",
+      "team_id": 59,
+      "filename": "Georgia Tech Yellow Jackets.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 84,
+      "rating": -3.5,
+      "school": "Maryland",
+      "team_id": 120,
+      "filename": "Maryland Terrapins.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 85,
+      "rating": -3.8,
+      "school": "UConn",
+      "team_id": 41,
+      "filename": "UConn Huskies.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 86,
+      "rating": -3.9,
+      "school": "Arizona State",
+      "team_id": 9,
+      "filename": "Arizona State Sun Devils.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 87,
+      "rating": -3.9,
+      "school": "UNLV",
+      "team_id": 2439,
+      "filename": "UNLV Rebels.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 88,
+      "rating": -4.1,
+      "school": "Vanderbilt",
+      "team_id": 238,
+      "filename": "Vanderbilt Commodores.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 89,
+      "rating": -4.5,
+      "school": "South Alabama",
+      "team_id": 6,
+      "filename": "South Alabama Jaguars.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 90,
+      "rating": -5.7,
+      "school": "San Diego State",
+      "team_id": 21,
+      "filename": "San Diego State Aztecs.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 91,
+      "rating": -6.1,
+      "school": "Ohio",
+      "team_id": 195,
+      "filename": "Ohio Bobcats.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 92,
+      "rating": -6.3,
+      "school": "California",
+      "team_id": 25,
+      "filename": "California Golden Bears.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 93,
+      "rating": -6.3,
+      "school": "Rutgers",
+      "team_id": 164,
+      "filename": "Rutgers Scarlet Knights.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 94,
+      "rating": -6.7,
+      "school": "Navy",
+      "team_id": 2426,
+      "filename": "Navy Midshipmen.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 95,
+      "rating": -7.2,
+      "school": "Colorado State",
+      "team_id": 36,
+      "filename": "Colorado State Rams.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 96,
+      "rating": -7.4,
+      "school": "Florida Atlantic",
+      "team_id": 2226,
+      "filename": "Florida Atlantic Owls.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 97,
+      "rating": -7.4,
+      "school": "Jacksonville State",
+      "team_id": 55,
+      "filename": "Jacksonville State Gamecocks.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 98,
+      "rating": -7.7,
+      "school": "Arkansas State",
+      "team_id": 2032,
+      "filename": "Arkansas State Red Wolves.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 99,
+      "rating": -8.5,
+      "school": "Nevada",
+      "team_id": 2440,
+      "filename": "Nevada Wolf Pack.png",
+      "status": "already saved"
+    },
+    {
+      "rank": 100,
+      "rating": -8.7,
+      "school": "Florida International",
+      "team_id": 2229,
+      "filename": "Florida International Panthers.png",
+      "status": "already saved"
+    }
+  ]
+}

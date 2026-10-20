@@ -66,7 +66,7 @@ def main():
         for name in modules:
             importlib.import_module(name)
         from sports_analytics.dashboard import create_app
-        from sports_analytics.market_view import NBA_LOGO_DIRECTORY, NFL_LOGO_DIRECTORY, logo_badge
+        from sports_analytics.market_view import NBA_LOGO_DIRECTORY, NFL_LOGO_DIRECTORY, NCAAF_LOGO_DIRECTORY, logo_badge
         from models.Player_Stats.Weighted_Historical_Performance import WeightedHistoricalPerformance
 
         value = WeightedHistoricalPerformance(half_life=3, window=10).predict(
@@ -76,7 +76,8 @@ def main():
         with app.server.test_client() as client:
             for route in ("/", "/_dash-layout", "/_dash-dependencies"):
                 require(client.get(route).status_code == 200, f"Dashboard route failed: {route}")
-            for sport, directory, count in (("NBA", NBA_LOGO_DIRECTORY, 30), ("NFL", NFL_LOGO_DIRECTORY, 32)):
+            for sport, directory, count in (("NBA", NBA_LOGO_DIRECTORY, 30), ("NFL", NFL_LOGO_DIRECTORY, 32),
+                                            ("NCAAF", NCAAF_LOGO_DIRECTORY, 100)):
                 require(directory.parent.parent == ROOT / "images", f"{sport} logo path must use images/.")
                 paths = list(directory.glob("*.png"))
                 require(len(paths) >= count, f"Expected at least {count} {sport} team logos.")
@@ -86,7 +87,7 @@ def main():
                     require(response.status_code == 200 and response.data.startswith(b"\x89PNG\r\n\x1a\n"),
                             f"Logo route failed: {sport} {path.name}")
         requests.assert_not_called()
-    print(f"Passed: project layout, {len(modules)} imports, WHP math, Dash routes and NBA/NFL logos. No external requests.")
+    print(f"Passed: project layout, {len(modules)} imports, WHP math, Dash routes and NBA/NFL/NCAAF logos. No external requests.")
 
 
 if __name__ == "__main__":

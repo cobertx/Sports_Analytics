@@ -98,8 +98,11 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .ppp-probability, .ppp-fair-odds { color: #57dbc4; }
 .sportsbook-market:has(.market-line-comparison) { overflow-x: auto; }
 .ppp-comparison { margin-top: 24px; }
-.forecast-method-control { width: min(100%, 280px); margin: 18px 0 8px; }
+.forecast-methods { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 18px 0 8px; }
+.forecast-method-control { min-width: 0; }
 .forecast-method-control .field { margin-bottom: 0; }
+.forecast-history { color: #8fa7bd; font-size: 12px; line-height: 1.6; margin: 9px 0 0; }
+@media (max-width: 700px) { .forecast-methods { grid-template-columns: 1fr; } }
 .ppp-comparison-note { font-size: 12px; line-height: 1.7; margin: 14px 2px 20px; }
 .ppp-chart { overflow: hidden; margin: 18px 0; }
 .ppp-comparison-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
@@ -191,10 +194,6 @@ p { color: var(--muted); line-height: 1.65; margin: 8px 0; }
 .chart-note { font-size: 11px; padding: 0 22px 18px; margin: 0; }
 .table-panel { margin-top: 22px; overflow: hidden; padding-bottom: 10px; }
 .export-button { border: 1px solid #33445c; border-radius: 5px; background: transparent; color: #bacbdf; padding: 8px 12px; font-size: 11px; }
-.player-forecast-controls { padding: 16px; margin: 14px 0; }
-.player-forecast-controls .field { max-width: 620px; margin-bottom: 12px; }
-#player-history-refresh { color: #b8c8dc; font-size: 12px; margin: 12px 0; }
-#player-history-status:empty { display: none; }
 footer { color: #64758d; font-size: 10px; margin-top: 30px; border-top: 1px solid var(--line); padding-top: 18px; letter-spacing: .4px; }
 /* Dash 3 (react-select) and Dash 4 dropdowns. */
 .Select-control { background: #f3f6fb !important; border-color: #8795a8 !important; color: #000 !important; }

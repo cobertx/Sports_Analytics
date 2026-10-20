@@ -1,2 +1,2 @@
-# Image resizing for standalone team-logo downloaders, including download_nba_logos.py.
+# Image resizing for standalone team-logo downloaders, including download_ncaaf_logos.py.
 Pillow>=11

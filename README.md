@@ -22,10 +22,16 @@ FanDuel Market loads public ESPN schedules without an API key. Choose a 7- or 14
 cover source inputs, NBA/NFL/NCAAF windows, prior-season carryover, workload
 decomposition, forecast uncertainty, pushes and market comparison. In a saved
 game, open a player-prop tab to see **Market implied**, **WHP probability**,
-**WHP fair odds** and **Edge**. Use **Prepare player history** if needed; existing
-NBA/NFL logs are reused, while NCAAF preparation requires `CFBD_API_KEY` and
-downloads scoped CFBD player boxes. Preparation never pulls odds. Select the
-refresh checkbox only to replace saved source observations explicitly.
+**WHP fair odds** and **Edge**. The **Game Outcome Forecast Method** and **Player
+Forecast Method** dropdowns sit side by side. Each shows the latest historical
+game/performance date actually used by its calculated forecast underneath.
+Player dates summarize the displayed prop category; individual player dates
+remain in the model-value hover text. Uncalculated or unavailable forecasts are
+labeled explicitly, and dates reset when the saved game/snapshot changes.
+Existing NBA/NFL player logs are reused. Missing histories can be prepared with
+`python -m models.Player_Stats.Weighted_Historical_Performance --prepare` plus
+the sport, start and team arguments documented in the WHP guide; NCAAF requires
+`CFBD_API_KEY`. No history preparation controls appear in the game view.
 
 WHP uses up to 20 NBA, 16 NFL or 12 NCAAF appearances across the previous and
 current seasons, with independently replayed forecast errors for dispersion.
@@ -163,6 +169,36 @@ Run `python download_nba_logos.py` to download all 30 current NBA team logos fro
 
 Install its image dependency with `python -m pip install -r requirements/requirements-logos.txt`. Existing valid files are reported as **Already saved**, with their full paths; use `--overwrite` to download them again or `--output "another folder"` to select a different destination. The final message shows the total number of valid files ready in that folder. Failed files can be retried by rerunning; incomplete downloads never replace a completed image. No API key or Odds API credits are needed.
 
+## NCAAF top 100 team logos
+
+Run `python download_ncaaf_logos.py` to save **500×500 transparent PNGs** under
+`images/NCAAF/Team Logos`, named for each school and mascot (for example
+`Michigan Wolverines.png`). Install Pillow first with
+`python -m pip install -r requirements/requirements-logos.txt`.
+
+This utility uses your existing `.env` **CFBD_API_KEY** to retrieve
+[SRS ratings](https://api.collegefootballdata.com/api/ratings) and the
+[season's FBS team directory and logo URLs](https://api.collegefootballdata.com/api/teams).
+It selects the 100 highest SRS ratings among that season's FBS teams. Ties are
+ordered by school name. Same-name ratings are resolved using the FBS directory's
+conference; unresolved identities stop the run. This is an SRS power ranking,
+not an AP or CFP poll.
+The default tries the current season, then explicitly reports a fallback to the
+previous season if fewer than 100 rated FBS teams are available. `--year 2025`
+selects exactly that season and disables fallback. API access depends on your
+CollegeFootballData account; no Odds API requests or credits are used.
+
+Use `--overwrite` to redownload existing valid files, `--count 25` for a smaller
+selection, or `--output "another folder"` for a different destination. Each PNG
+is proportionally resized, centered and validated; invalid existing files are
+retried. The final summary shows the full output path and ready count.
+`_download_manifest.json` records the season, ranking, SRS score, team ID,
+filename and result. Failures return a nonzero exit status; rerun to retry them.
+Existing files outside the selected top 100 are preserved. NCAAF upcoming-game
+cards and game matchup headers use these local PNGs, matching the team display
+name to the filename. Teams without a downloaded logo show their abbreviation.
+Restart `python index.py` after adding logos so the dashboard indexes the files.
+
 ## NFL team logos
 
 The standalone `download_nfl_logos.py` script downloads the 32 NFL team logos from ESPN's public team directory to **`images/NFL/Team Logos`**. Filenames use full team names, such as `Arizona Cardinals.png`. Every output is validated as a complete **500×500 PNG**. Sources with different dimensions are resized proportionally and centered on a transparent canvas.
@@ -191,6 +227,14 @@ CFBD_API_KEY=your-key-here
 ```
 
 Alternatively set `$env:CFBD_API_KEY` in PowerShell. The server reads the key; it is not stored in the browser or cache. The college scope starts with `Michigan`; change it to another school or clear it and choose a week. These box-score endpoints require a team, week, or conference filter; the app supports team and week. A school filter returns only that school's observations. A week filter without a school returns teams across the requested FBS games. Each NCAAF import makes two requests: game metadata and team box scores. Historical availability, quotas, and endpoint access depend on the provider and your key.
+
+After adding or changing a key, restart `python index.py`, select NCAAF → Historical Data,
+and click **Load historical data**. The default is the prior regular season for Michigan.
+Once loaded, the statistic types reflect the available box-score fields: Scoring,
+Offense (yards and first/third/fourth downs), Passing, Rushing, Defense, Kicking,
+Returns, Fumbles and Penalties. Source failures appear above the selectors; an empty
+selector is not evidence that the school has no statistics. Successful imports are
+cached locally and can be reopened without another request for 24 hours.
 
 ### Seasons and source limitations
 

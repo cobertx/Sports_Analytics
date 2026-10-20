@@ -24,7 +24,7 @@ from .nfl_markets import NflMarketService
 from .nba_markets import NBA_CATEGORIES, NBA_MARKETS, NbaMarketService
 from .ncaaf_markets import NCAAF_MARKETS, NcaafMarketService
 from .whp_service import WHPMarketService
-from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
+from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, NCAAF_LOGO_DIRECTORY, NCAAF_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
 from .display_time import eastern_datetime, format_eastern
 from .usage_log import ApiUsageLog, SPORTS as USAGE_SPORTS, usage_summary
 from .ppp_service import PPPMarketService
@@ -278,12 +278,18 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             abort(404)
         return send_from_directory(NBA_LOGO_DIRECTORY, filename, mimetype="image/png")
 
+    @app.server.get("/images/ncaaf/team-logos/<filename>")
+    def ncaaf_team_logo(filename):
+        if filename not in NCAAF_LOGO_FILES.values():
+            abort(404)
+        return send_from_directory(NCAAF_LOGO_DIRECTORY, filename, mimetype="image/png")
+
     app.layout = html.Div([
         dcc.Store(id="dataset"), dcc.Download(id="download"),
         dcc.Location(id="market-url", refresh=False), dcc.Store(id="market-schedule", data=[]),
         dcc.Store(id="market-detail-context"), dcc.Store(id="market-refresh-signal"),
         dcc.Store(id="market-applied-criteria"),
-        dcc.Store(id="player-history-signal"),
+        dcc.Store(id="market-forecast-history"),
         dcc.Interval(id="market-timer", interval=5 * 60 * 1000, disabled=True),
         dcc.Interval(id="odds-timer", interval=5 * 60 * 1000, disabled=True),
         html.Header([
@@ -436,18 +442,22 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                                                      placeholder="No saved snapshots")),
                                 html.Div(id="market-snapshot-status", role="status", className="snapshot-description"),
                             ], className="snapshot-controls"),
-                            html.Div(field("Forecast method", dcc.Dropdown(id="market-forecast-method", value="PPP",
+                            html.Div([
+                              html.Div([
+                                field("Game Outcome Forecast Method", dcc.Dropdown(id="market-forecast-method", value="PPP",
                                            options=[{"label": "PPP", "value": "PPP"}, {"label": "EPA", "value": "EPA"},
                                                     {"label": "ELO / Power Rating", "value": "ELO"}],
-                                           clearable=False)), className="forecast-method-control"),
-                            html.Div([
-                                field("Player forecast method", dcc.Dropdown(id="player-forecast-method", value="WHP",
+                                           clearable=False)),
+                                html.P("Latest historical game used: Not calculated yet", id="game-forecast-history",
+                                       className="forecast-history", role="status"),
+                              ], className="forecast-method-control"),
+                              html.Div([
+                                field("Player Forecast Method", dcc.Dropdown(id="player-forecast-method", value="WHP",
                                       options=[{"label": "Weighted Historical Performance (WHP)", "value": "WHP"}], clearable=False)),
-                                html.Button("Prepare player history", id="player-history-prepare", n_clicks=0, className="export-button"),
-                                dcc.Checklist(id="player-history-refresh", options=[{"label": "Refresh saved source data", "value": "refresh"}], value=[]),
-                                html.Div(id="player-history-status", role="status", className="load-status"),
-                                html.P("Player tabs use WHP; Game Lines use the forecast method above. Prepare reuses saved NBA/NFL logs or downloads missing seasons. NCAAF uses CFBD_API_KEY. This button never pulls odds. Estimates are conditional on a recorded appearance; injuries and projected lineups are not modeled.", className="market-source-note"),
-                            ], className="panel player-forecast-controls"),
+                                html.P("Latest historical performance used: Not calculated yet", id="player-forecast-history",
+                                       className="forecast-history", role="status"),
+                              ], className="forecast-method-control"),
+                            ], className="forecast-methods"),
                             dcc.Tabs(id="market-category", value="Game", children=[], className="market-category-tabs"),
                             dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),
                             ], className="sportsbook-view"),
@@ -656,38 +666,49 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         return {"probability": probability / 100, "edge": edge / 100}, (
             f"Applied to all calculated selections: estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Player tabs use WHP; Game Lines use the selected game forecast."), category or "Game"
 
-    @app.callback(Output("player-history-signal", "data"), Output("player-history-status", "children"),
-                  Input("player-history-prepare", "n_clicks"), State("market-snapshot", "value"),
-                  State("market-url", "hash"), State("player-history-refresh", "value"),
-                  prevent_initial_call=True, running=[(Output("player-history-prepare", "disabled"), True, False)])
-    def prepare_player_history(clicks, selection, location_hash, refresh):
-        if not clicks:
-            raise PreventUpdate
-        snapshot = saved_snapshot(location_hash, selection)
-        if not snapshot:
-            return no_update, "Save a market snapshot first, then prepare player history."
-        snapshot = {**snapshot, "sport": market_game_sport(location_hash)}
-        try:
-            message = whp_service.prepare(snapshot, refresh="refresh" in (refresh or []))
-        except (DataSourceError, OSError, ValueError) as exc:
-            return no_update, f"Player history preparation unavailable: {exc}"
-        return {"sport": snapshot["sport"], "game_id": snapshot["game_id"], "attempt": clicks}, message
-
-    @app.callback(Output("saved-market-sections", "children"), Input("market-category", "value"),
-                  Input("market-snapshot", "value"), Input("market-url", "hash"), Input("market-applied-criteria", "data"),
-                  Input("market-forecast-method", "value"), Input("player-history-signal", "data"),
+    @app.callback(Output("game-forecast-history", "children"), Output("player-forecast-history", "children"),
+                  Input("market-forecast-history", "data"), Input("market-url", "hash"),
+                  Input("market-snapshot", "value"), Input("market-forecast-method", "value"),
                   Input("player-forecast-method", "value"))
-    def show_saved_markets(category, selection, location_hash, criteria, method, _history, _player_method):
+    def forecast_history(history, location_hash, selection, game_method, player_method):
+        current = history if history and history.get("context") == [location_hash, selection] else {}
+        def label(kind, method, prefix):
+            if not selection:
+                return prefix + "No saved snapshot selected"
+            if kind == "game" and market_game_sport(location_hash) == "NCAAF":
+                return prefix + "Not available for NCAAF"
+            record = current.get(kind, {}).get(method)
+            if record is None:
+                return prefix + "Not calculated yet"
+            try:
+                last = date.fromisoformat(record["latest_date"]).strftime("%m/%d/%Y")
+            except (ValueError, TypeError, KeyError):
+                return prefix + "Unavailable"
+            if kind == "player":
+                last += " · " + record["category"] + " markets"
+            return prefix + last
+        return (label("game", game_method or "PPP", "Latest historical game used: "),
+                label("player", player_method or "WHP", "Latest historical performance used: "))
+
+    @app.callback(Output("saved-market-sections", "children"), Output("market-forecast-history", "data"),
+                  Input("market-category", "value"),
+                  Input("market-snapshot", "value"), Input("market-url", "hash"), Input("market-applied-criteria", "data"),
+                  Input("market-forecast-method", "value"), Input("player-forecast-method", "value"),
+                  State("market-forecast-history", "data"))
+    def show_saved_markets(category, selection, location_hash, criteria, method, player_method, previous_history):
         if category is None:
             raise PreventUpdate
         method = method or "PPP"
         if method not in ("PPP", "EPA", "ELO"):
             raise PreventUpdate
+        context = [location_hash, selection]
+        previous = previous_history if previous_history and previous_history.get("context") == context else {}
+        history = {"context": context, "game": dict(previous.get("game", {})), "player": dict(previous.get("player", {}))}
         snapshot = saved_snapshot(location_hash, selection)
         if not snapshot:
-            return html.P("Use Pull Live Markets above to download this game's first snapshot.", className="saved-market-empty")
+            return html.P("Use Pull Live Markets above to download this game's first snapshot.", className="saved-market-empty"), history
         if not snapshot["rows"]:
-            return html.P("The saved response contains no FanDuel selections.", className="saved-market-empty")
+            return html.P("The saved response contains no FanDuel selections.", className="saved-market-empty"), history
         forecast, model_error = None, None
         snapshot = {**snapshot, "sport": market_game_sport(location_hash)}
         if category != "Game":
@@ -695,7 +716,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 forecast = whp_service.forecast({**snapshot, "rows": [row for row in snapshot["rows"] if row["group"] == category]})
             except (DataSourceError, OSError, ValueError) as exc:
                 model_error = str(exc)
-            return market_sections(snapshot, category, forecast, model_error, criteria, "WHP")
+                if "No saved player history." in model_error:
+                    model_error = "Player estimates are unavailable because no saved historical player data is available."
+            dates = [item.diagnostics.get("last_game_date") for item in forecast.forecasts.values()] if forecast else []
+            dates = [value for value in dates if value]
+            history["player"][player_method or "WHP"] = {"latest_date": max(dates) if dates else None, "category": category}
+            return market_sections(snapshot, category, forecast, model_error, criteria, "WHP"), history
         if category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
             try:
                 if market_game_sport(location_hash) == "NCAAF":
@@ -708,7 +734,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     forecast = {"PPP": ppp_service, "EPA": epa_service, "ELO": elo_service}[method].forecast(snapshot)
             except DataSourceError as exc:
                 model_error = str(exc)
-        return market_sections(snapshot, category, forecast, model_error, criteria, method)
+        history["game"][method] = {"latest_date": forecast.diagnostics.get("last_game_date") if forecast else None}
+        return market_sections(snapshot, category, forecast, model_error, criteria, method), history
 
     @app.callback(Output("odds-composition", "figure"), Output("odds-sport-summary", "children"),
                   Output("odds-history-chart", "figure"), Output("odds-history-table", "data"),
@@ -928,6 +955,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Input("dataset", "data"), Input("entity", "value"), Input("player-team", "value"),
                   State("metric-group", "value"), State("metric", "value"))
     def select_categories(dataset, entity, team, previous_category, previous_metric):
+        if not supported_dataset(dataset):
+            return [], None, True, "Load historical data — see source status above"
+        if entity is None:
+            return [], None, True, "Choose a team or player first"
         try:
             metrics = available_metrics(dataset, entity, team)
         except DataSourceError:
@@ -945,6 +976,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Input("dataset", "data"), Input("entity", "value"), Input("player-team", "value"),
                   Input("metric-group", "value"), State("metric", "value"))
     def select_metrics(dataset, entity, team, category, previous_metric):
+        if not supported_dataset(dataset):
+            return [], None, True, "Load historical data — see source status above"
+        if entity is None:
+            return [], None, True, "Choose a team or player first"
+        if category is None:
+            return [], None, True, "Choose a statistic type first"
         try:
             metrics = available_metrics(dataset, entity, team)
         except DataSourceError:

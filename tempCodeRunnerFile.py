@@ -1,2 +1,2 @@
 
-            raise SystemExit(130) from None
+from PIL import Image, ImageOps, UnidentifiedImageError

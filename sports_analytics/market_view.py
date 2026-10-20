@@ -20,6 +20,8 @@ NBA_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NBA" /
 NBA_LOGO_FILES = {path.stem.casefold(): path.name for path in NBA_LOGO_DIRECTORY.glob("*.png")}
 if "los angeles clippers" in NBA_LOGO_FILES:
     NBA_LOGO_FILES["la clippers"] = NBA_LOGO_FILES["los angeles clippers"]
+NCAAF_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NCAAF" / "Team Logos"
+NCAAF_LOGO_FILES = {path.stem.casefold(): path.name for path in NCAAF_LOGO_DIRECTORY.glob("*.png")}
 CATEGORIES = [("Game", "Game Lines"), ("Passing", "Passing Props"), ("Receiving", "Receiving Props"),
               ("Rushing", "Rushing Props"), ("Touchdowns", "TD Scorer Props")]
 MARKET_NAMES = {
@@ -76,11 +78,11 @@ def latest_pull_status(snapshot, now=None):
 
 
 def logo_badge(name, abbreviation, sport="NFL"):
-    files = NBA_LOGO_FILES if sport == "NBA" else NFL_LOGO_FILES if sport == "NFL" else {}
+    files = {"NBA": NBA_LOGO_FILES, "NFL": NFL_LOGO_FILES, "NCAAF": NCAAF_LOGO_FILES}.get(sport, {})
     filename = files.get(name.casefold())
     url = f"/images/{sport.lower()}/team-logos/" + quote(filename) if filename else None
     return html.Span(html.Img(src=url, alt=name + " logo", className="team-logo")
-                     if url else abbreviation, className="team-badge team-badge-logo")
+                     if url else abbreviation, className="team-badge team-badge-logo" if url else "team-badge")
 
 
 def game_header(game, snapshot=None, sport="NFL"):
