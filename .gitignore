@@ -4,6 +4,16 @@ __pycache__/
 .pytest_cache/
 .env
 data/cache/
+market_data/*.csv
+data/market_data/*.csv
+data/API Log/*.csv
+data/API Log/*.lock
+data/API Log/*.tmp
+data/modeling/nfl/raw/
+data/modeling/nfl/team_games_*.csv
+data/modeling/nfl/team_games_*.manifest.json
+data/modeling/nfl/forecasts/
+tmp/
 *.log
 dist/
 build/

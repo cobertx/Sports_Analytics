@@ -1,5 +1,7 @@
 dash>=3.0,<5
 pandas>=2.2,<4
+numpy>=2.0,<3
 plotly>=6.0,<7
 requests>=2.32,<3
 python-dotenv>=1.0,<2
+tzdata>=2024.1

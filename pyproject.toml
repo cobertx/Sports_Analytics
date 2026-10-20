@@ -13,7 +13,7 @@ dynamic = ["dependencies"]
 dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.packages.find]
-include = ["sports_analytics*"]
+include = ["sports_analytics*", "Models*"]
 
 [tool.setuptools.package-data]
 sports_analytics = ["assets/*.css"]

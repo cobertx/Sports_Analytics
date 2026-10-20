@@ -1,0 +1,2 @@
+# Only needed by the standalone download_nfl_logos.py resize fallback.
+Pillow>=11

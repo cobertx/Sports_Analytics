@@ -58,7 +58,7 @@ class FilterTests(unittest.TestCase):
             outputs = {"id": output.component_id, "property": output.component_property}
         defaults = {"dataset.data": self.dataset, "entity.value": "qb", "player-team.value": ALL_TEAMS,
                     "metric-group.value": "passing", "metric.value": "passing_yards", "window.value": 3,
-                    "entity-type.value": "player", "sport.value": "NFL"}
+                    "entity-type.value": "player", "sport.value": "NFL", "workspace-page.value": "historical"}
         defaults.update(values)
         def properties(items):
             return [{**item, "value": defaults.get(item["id"] + "." + item["property"])} for item in items]

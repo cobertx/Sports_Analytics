@@ -2,6 +2,50 @@
 
 A Python Dash workspace for analyzing historical **NBA, NFL, and NCAA Football (NCAAF)** team statistics, NBA and NFL player statistics, and developing forecasts of future performance. NCAAF is team-only.
 
+Each sport has two pages in the left toolbar: **Historical Data** contains the historical filters, charts, career histories, and game log; **FanDuel Market** shows upcoming game cards for the selected sport. Switching pages preserves the historical controls.
+
+The separate **Odds API** tab connects to your [The Odds API](https://the-odds-api.com/) account and shows monthly credit usage as a donut chart, with used, unused, and total credits. Add `ODDS_API_KEY=your_api_key_here` to the ignored `.env` file and restart `python index.py`. The key stays on the server and is never placed in browser components or stored in the usage cache.
+
+Usage comes from the provider's `x-requests-used` and `x-requests-remaining` headers on `GET /v4/sports/`, which [does not consume usage credits](https://the-odds-api.com/liveapi/guides/v4/#get-sports). Counters cover the subscription's current quota cycle across all sports; the app does not infer a calendar-month reset date. Usage loads when Odds API is opened, refreshes every five minutes while visible, and can be checked immediately using **Connect / Refresh usage**. The server shares a five-minute memory cache for the account. A failed refresh labels any saved snapshot explicitly; missing keys and invalid responses show setup/errors rather than invented credit values.
+
+FanDuel Market loads public ESPN schedules without an API key. Choose a 7- or 14-day window to see dated cards with away/home teams, EDT start times (`MM/DD/YYYY HH:MM:SS EDT`, or Time TBD), venues, neutral-site labels, and game-detail links. Games are grouped by their displayed EDT calendar date, including evening games after midnight UTC. Live, completed, canceled, and postponed games are excluded. The FanDuel link opens the selected sport's sportsbook page. NBA and NCAAF cards show schedules only; NFL cards also offer **Pull Live Markets** beside **Game details**.
+
+### API credit history
+
+Market snapshots live in **`data/market_data`**. The former top-level `market_data` folder has been moved there; existing snapshots remain readable with the same filenames. New live pulls use this location automatically.
+
+The Excel-readable credit ledger is **`data/API Log/api_credit_usage.csv`**. Each paid pull records its sport, matchup, game/event IDs, requested markets, exact `x-requests-last` credit charge, account counters when reported, timestamp in UTC and formatted EDT, and outcome. Missing charges remain blank and are labeled **Unreported** in the dashboard; they are never replaced with the estimated 17-credit maximum. A request that fails after being sent is recorded as failed, with its reported charge or an unknown charge. Account identifiers are irreversible fingerprints; API keys are never written to this file. Generated snapshots and logs are ignored by Git.
+
+The **Odds API** page places a current-month NBA/NFL/NCAAF composition pie beside the account quota donut, followed by per-sport monthly credit metrics, an all-history daily usage line chart, and a searchable, sortable table with CSV export. These reports read the local ledger without paid API requests. Calendar months and daily totals use EDT (UTC-4); timestamps display as `MM/DD/YYYY HH:MM:SS EDT`. Unknown charges are excluded from chart totals and explicitly counted. Activity outside this app remains reflected in the provider's quota donut, but cannot be attributed to a sport in the local ledger.
+
+Existing saved NFL snapshots are imported into the ledger without making API requests. Reopening a saved game, repeating the same click, or restarting the app does not create duplicate log entries. The SQLite snapshot index can recover missing log entries without another paid pull. Currently NFL has live-market pull buttons; NBA and NCAAF appear as zero until their usage is recorded. The ledger and reports support all three sports.
+
+### NFL live market snapshots
+
+The game-detail view has its own **Pull Live Markets** button. Opening a game checks `data/market_data` and displays saved snapshots without requesting odds. A button click explicitly requests a fresh snapshot, writes a new CSV, selects that snapshot immediately, and updates the game card's latest-data time. The detail button uses the same FanDuel-only 17-market package and duplicate-click protection as the card button.
+
+With `ODDS_API_KEY` configured in `.env`, click **Pull Live Markets** on one NFL game to save its current FanDuel odds. The app resolves the ESPN matchup to a unique Odds API event using both teams and commencement time through the free events endpoint. It then makes **one** current event-odds request with `bookmakers=fanduel`, American odds, and these **17 market keys**:
+
+| Category | Requested keys |
+| --- | --- |
+| Game | `alternate_spreads`, `alternate_totals` |
+| Passing | `player_pass_yds_alternate`, `player_pass_tds_alternate`, `player_pass_attempts_alternate`, `player_pass_completions_alternate`, `player_pass_interceptions_alternate` |
+| Receiving | `player_reception_yds_alternate`, `player_receptions_alternate`, `player_reception_tds_alternate` |
+| Rushing | `player_rush_yds_alternate`, `player_rush_attempts_alternate`, `player_rush_tds_alternate` |
+| Touchdowns | `player_anytime_td`, `player_1st_td`, `player_last_td`, `player_tds` |
+
+The [event-odds pricing rules](https://the-odds-api.com/liveapi/guides/v4/#usage-quota-costs-4) charge for distinct markets returned and bookmaker groups, so this configuration costs **up to 17 credits**, with lower charges when markets are unavailable. Player counts and numbers of alternate thresholds do not increase the number of market types. No main player-prop markets, `player_tds_over`, broader alternate categories, other bookmakers, or historical endpoints are added. The actual `x-requests-last` charge is displayed; a missing cost header is shown as unreported.
+
+After a pull, the game card only updates **Latest data** directly beneath **Game details**, in the same footer as Pull Live Markets. Saved times use `MM/DD/YYYY HH:MM:SS EDT`; for example, `2026-10-19T23:35:23+00:00` displays as `10/19/2026 19:35:23 EDT`. All displayed timestamps, including game kickoffs, saved snapshots, API connection checks, source updates, and retrieval statuses, use EDT (UTC?4) and the same numeric format. Stored UTC timestamps and CSV filenames are preserved. UTC timestamps remain unchanged in the stored CSV data and filenames. Click the card or Game details to enter the saved-game view. It follows the supplied FanDuel examples: an Eastern-time matchup header, Game Lines / Passing Props / Receiving Props / Rushing Props / TD Scorer Props tabs, collapsible player markets, alternate selection ladders, blue American-odds boxes, and Show more controls. Only returned categories and selections appear; the Unavailable Markets panel is removed. Threshold labels preserve the actual integer-stat meaning: Over 174.5 passing yards is 175+ yards; Under lines retain the provider's exact threshold. Source responses update the account usage cache used by the Odds API tab.
+
+Each pull writes a separate CSV in **`data/market_data`**, for example `nfl_sf_wsh_2026-10-19_20261019T233523000000Z.csv`. The filename is `nfl_<home abbreviation>_<away abbreviation>_<Eastern game date>_<UTC snapshot timestamp>.csv`. Every outcome gets a row with event IDs, teams, abbreviations, game date, snapshot time, market category/key, player/team, selection, line, American odds, and source update time. The first row also includes snapshot metadata and the complete original API response as JSON cells, preserving source fields beyond the displayed markets. Existing SQLite-only pulls are exported from the fields already saved; the original API response cannot be reconstructed if it was not previously retained.
+
+Saved CSVs are loaded on the next visit without an API request, including when the SQLite index is missing. The existing `data/cache/nfl_markets.sqlite3` remains a secondary snapshot index and duplicate-request guard. Both stores are scoped to the connected account, and generated CSVs are ignored by Git. Keep the same `ODDS_API_KEY` configured to reopen that account's saved data. Game-detail links such as `#nfl-game-401873011` can be bookmarked and restore the NFL market view after reopening the app.
+
+Only the button initiates a paid request. Opening pages, refreshing schedules, switching snapshots/categories, and expanding saved markets do not pull odds. The clicked button is disabled while loading; identical click identifiers are deduplicated across app restarts. A failed or timed-out paid request is not automatically retried, since its charge may already have been applied. Another deliberate click requests a fresh snapshot. Unmatched or ambiguous games are rejected before any paid request.
+
+Schedules load only while FanDuel Market is selected, refresh every five minutes, and are cached by sport/day in `data/cache/schedules.sqlite3`. **Refresh upcoming games** bypasses the cache. Source failures are shown explicitly, including dates with missing coverage or saved schedules. Historical filters do not restrict the upcoming schedule. NCAAF schedules cover FBS teams and do not require `CFBD_API_KEY`; the key is still required for NCAAF historical imports.
+
 ## Run locally
 
 Requires Python 3.11 or newer. From this repository in PowerShell:
@@ -30,6 +74,27 @@ Starting the Python server does not download data until you open the page. Openi
 **Performance over time** labels games with their date and **away @ home** matchup, for example `2025-11-01 · GSW @ TOR`. Longer game logs show a readable subset of axis labels; every point's hover shows its date and matchup. The next-appearance baseline has no fabricated future date or opponent.
 
 Selecting **Players** for NBA or NFL adds a **Player career** graph directly below the performance graph. It loads every published season available from the selected sport's summary source, matches the player by ID across all teams, and follows the selected statistic and regular/postseason phase. It ignores the season and week filters so earlier seasons and transfers remain visible. Counting statistics use **season totals**; rates keep their source units. Gaps remain missing rather than becoming zero. The caption reports source coverage and failed seasons. The first load can take longer; summaries are shared across players and saved in `data/cache/career.sqlite3` for 24 hours.
+
+## NFL PPP market probabilities
+
+The **Forecast method** dropdown above the saved NFL market tables offers **PPP** (default) and **EPA**. Selecting a method changes the probability and fair-odds columns, Edge, criteria highlighting and all four comparison charts. `Models/EPA.py` implements signed opponent-adjusted passing/rushing EPA, a trained points-per-drive/EPA scoring bridge, and historical score-error uncertainty from the supplied EPA research PDF. Both methods use cached observations and saved quotes; switching methods never pulls live odds. EPA archives are separate from PPP archives. Run it independently with `python Models/EPA.py --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-19T23:35:23+00:00`. See [the EPA model documentation](Models/README.md#nfl-epa-model) for formulas, configuration and limitations.
+
+`Models/PPP.py` implements the supplied PPP strategy document's sections 1–5 using joint opponent-adjusted efficiency, shared drive pace, separate non-offensive scoring and the section 4.1 normal baseline. Spread/total variances come from chronological held-out forecast errors, rather than the PDF's illustrative standard deviations. Public NFL schedules, team box scores, play-by-play and player snap counts are prepared in `data/modeling/nfl`; no Odds API credits are used for modeling.
+
+On a saved NFL game's **Game Lines** tab, every alternate spread and total shows **Market odds**, **Market implied**, **PPP probability**, and **PPP fair odds**. Whole-point lines account for pushes; hover the PPP cells for win/loss/push probabilities. Four charts below the markets separately compare each team's handicap, Over, and Under, using teal PPP and blue market-implied probability lines with transparent fills at the saved lines. Spread labels include the team and handicap, such as `Baltimore - 3.5`. Bookmaker margin remains included in the market probabilities. Player props retain their existing layout. Estimates are saved and reused after restarting; missing model data shows an explicit message alongside the saved market quotes.
+
+Prepare data or run the model separately with `python Models/PPP.py --seasons 2025 2026 --home SF --away WSH --as-of 2026-10-19T23:35:23+00:00`. See [Models/README.md](Models/README.md) for source definitions, formulas, validation requirements, cache behavior and limitations. This is the report's normal baseline; key-number probabilities are approximate and no weather or injury adjustment is assumed.
+
+## NFL team logos
+
+The standalone `download_nfl_logos.py` script downloads the 32 NFL team logos from ESPN's public team directory to **`images/NFL/Team Logos`**. Filenames use full team names, such as `Arizona Cardinals.png`. Every output is validated as a complete **500×500 PNG**. Sources with different dimensions are resized proportionally and centered on a transparent canvas.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-logos.txt
+.\.venv\Scripts\python.exe download_nfl_logos.py
+```
+
+This utility runs independently of the dashboard and does not need an API key. Existing valid logos are skipped. Use `--overwrite` to replace them, or `--output "another folder"` to choose a different destination. A failed run exits nonzero and can be rerun to retry missing files.
 
 ## Data sources
 
@@ -98,9 +163,16 @@ sports_analytics/
   data.py                      Validated queries, HTTP client, provider adapters
   service.py                   Source metadata and SQLite cache
   career.py                    Career season summaries and shared cache
+  schedule.py                  Upcoming ESPN games and daily schedule cache
+  odds_api.py                  Server-side Odds API connection and quota usage
+  nfl_markets.py               Fixed 17-market FanDuel NFL pulls and saved snapshots
+  market_view.py               Saved-game matchup headers and player odds ladders
   forecast.py                  Rolling baseline and chronological evaluation
   ingest.py                    Multi-season command line importer
 tests/test_history.py          Career, date/matchup, and dashboard integration checks
+tests/test_schedule.py         Upcoming schedules, cache behavior, and page navigation
+tests/test_odds_api.py         Credit headers, connection errors, and usage dashboard
+tests/test_nfl_markets.py      Market package, game matching, saved snapshots, and pull buttons
 ```
 
 Run the offline checks:
