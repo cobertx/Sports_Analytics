@@ -133,7 +133,7 @@ class ApiUsageLog:
     def import_snapshot(self, snapshot, account):
         identity = f"{account}:{snapshot['event_id']}:{snapshot['pulled_at']}"
         return self.record(usage_id=snapshot.get("usage_log_id") or hashlib.sha256(identity.encode()).hexdigest(),
-                           account=account, sport="NFL", game_id=snapshot["game_id"], event_id=snapshot["event_id"],
+                           account=account, sport=snapshot.get("sport", "NFL"), game_id=snapshot["game_id"], event_id=snapshot["event_id"],
                            home_team=snapshot["home_team"], away_team=snapshot["away_team"],
                            game_start=snapshot["commence_time"], timestamp=snapshot["pulled_at"],
                            markets=snapshot.get("requested", []), headers=snapshot.get("usage_headers"),

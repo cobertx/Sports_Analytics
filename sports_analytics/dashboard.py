@@ -5,7 +5,6 @@ import csv
 import math
 import re
 from pathlib import Path
-from urllib.parse import quote
 from uuid import uuid4
 
 from dash import Dash, Input, MATCH, Output, State, ctx, dash_table, dcc, html, no_update
@@ -22,18 +21,26 @@ from .service import DataService
 from .schedule import FANDUEL_LINKS, SCHEDULE_LINKS, ScheduleService
 from .odds_api import DOCUMENTATION as ODDS_DOCUMENTATION, OddsApiService
 from .nfl_markets import NflMarketService
-from .market_view import CATEGORIES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, market_sections
+from .nba_markets import NBA_CATEGORIES, NBA_MARKETS, NbaMarketService
+from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
 from .display_time import eastern_datetime, format_eastern
 from .usage_log import ApiUsageLog, SPORTS as USAGE_SPORTS, usage_summary
 from .ppp_service import PPPMarketService
 from .epa_service import EPAMarketService
+from .nba_ppp_service import NBAPPPMarketService
+from .nba_epa_service import NBAEPAMarketService
+from .elo_service import ELOMarketService, NBAELOMarketService
 
 ALL_TEAMS = "__all__"
 
 
 def market_game_id(location_hash):
-    match = re.fullmatch(r"#nfl-game-(\d+)", location_hash or "")
+    match = re.fullmatch(r"#(?:nfl|nba)-game-(\d+)", location_hash or "")
     return match[1] if match else None
+
+
+def market_game_sport(location_hash):
+    return location_hash[1:4].upper() if market_game_id(location_hash) else None
 
 
 def supported_dataset(dataset):
@@ -95,9 +102,8 @@ def performance_figure(history, metric, window, prediction):
     details = game_labels(history)
     figure = go.Figure()
     hover = "%{customdata[0]}<br>%{customdata[1]}<br>%{y:.2f}<extra>%{fullData.name}</extra>"
-    figure.add_trace(go.Scatter(x=x, y=history[metric], mode="lines+markers", name=label,
-                               line={"color": "#57dbc4", "width": 2}, marker={"size": 5},
-                               customdata=details, hovertemplate=hover))
+    figure.add_trace(go.Bar(x=x, y=history[metric], name=label, width=.65,
+                           marker={"color": "#57dbc4"}, customdata=details, hovertemplate=hover))
     figure.add_trace(go.Scatter(x=x, y=history["baseline"], mode="lines", name=f"Prior {window}-game mean",
                                line={"color": "#8197ff", "dash": "dot"}, customdata=details, hovertemplate=hover))
     step = max(1, math.ceil(len(history) / 10))
@@ -105,13 +111,13 @@ def performance_figure(history, metric, window, prediction):
     ticks = [x[i] for i in indices]
     labels = [f"{details[i][0]}<br>{details[i][1]}" for i in indices]
     if prediction is not None:
-        figure.add_trace(go.Scatter(x=[len(history) + 1], y=[prediction], name="Next appearance baseline", mode="markers",
-                                   marker={"color": "#f6c667", "size": 12, "symbol": "diamond"},
-                                   hovertemplate="Next appearance<br>Date and matchup not yet known<br>%{y:.2f}<extra>Baseline</extra>"))
+        figure.add_trace(go.Bar(x=[len(history) + 1], y=[prediction], name="Next appearance baseline", width=.65,
+                               marker={"color": "#f6c667"},
+                               hovertemplate="Next appearance<br>Date and matchup not yet known<br>%{y:.2f}<extra>Baseline</extra>"))
         ticks.append(len(history) + 1)
         labels.append("Next appearance<br>Matchup TBD")
     figure = style_figure(figure)
-    figure.update_layout(height=440, margin={"l": 55, "r": 25, "t": 35, "b": 115})
+    figure.update_layout(height=440, barmode="overlay", margin={"l": 55, "r": 25, "t": 35, "b": 115})
     figure.update_xaxes(title="Game date · Matchup (away @ home)", tickmode="array", tickvals=ticks,
                         ticktext=labels, tickangle=-35, automargin=True)
     figure.update_yaxes(title=label)
@@ -140,18 +146,17 @@ def career_figure(career, sport, metric, name):
 
 
 def game_card(game, sport, snapshot=None):
+    live = sport in {"NFL", "NBA"}
+    prefix = sport.lower()
+    credits = 17 if sport == "NFL" else len(NBA_MARKETS)
     def team_row(side, label):
         team = game[side]
-        logo = NFL_LOGO_FILES.get(team["name"].casefold()) if sport == "NFL" else None
-        badge = html.Span(
-            html.Img(src="/images/nfl/team-logos/" + quote(logo), alt=team["name"] + " logo",
-                     className="team-logo") if logo else team["abbreviation"],
-            className="team-badge team-badge-logo" if logo else "team-badge")
+        badge = logo_badge(team["name"], team["abbreviation"], sport)
         return html.Div([badge,
                          html.Div([html.Strong(team["name"]), html.Small(label)])], className="game-team")
     return html.Article([
-        html.A(href=f"#nfl-game-{game['id']}", className="game-card-hit",
-               **{"aria-label": f"View saved markets for {game['away']['name']} at {game['home']['name']}"}) if sport == "NFL" else None,
+        html.A(href=f"#{prefix}-game-{game['id']}", className="game-card-hit",
+               **{"aria-label": f"View saved markets for {game['away']['name']} at {game['home']['name']}"}) if live else None,
         html.Div([html.Span(sport, className="game-sport"),
                   html.Span("Time TBD" if game["time_tbd"] else format_eastern(game["start"]), className="game-time")],
                  className="game-card-heading"),
@@ -161,19 +166,19 @@ def game_card(game, sport, snapshot=None):
         html.Div([html.Strong(game["venue"]), html.Span(game["location"]),
                   html.Small("Neutral site") if game["neutral"] else None], className="game-venue"),
         html.Div([html.Div([
-                  html.A("Game details →", href=f"#nfl-game-{game['id']}") if sport == "NFL" else
+                  html.A("Game details →", href=f"#{prefix}-game-{game['id']}") if live else
                   html.A("Game details ↗", href=f"https://www.espn.com/{'nba' if sport == 'NBA' else 'college-football'}/game/_/gameId/{game['id']}",
                          target="_blank", rel="noopener noreferrer"),
-                  html.Div(latest_pull_status(snapshot), id={"type": "nfl-live-markets", "game": game["id"]},
-                             className="latest-pull-time", role="status", **{"aria-live": "polite"}) if sport == "NFL" else None,
+                  html.Div(latest_pull_status(snapshot), id={"type": f"{prefix}-live-markets", "game": game["id"]},
+                             className="latest-pull-time", role="status", **{"aria-live": "polite"}) if live else None,
                   ], className="game-footer-left"),
-                  html.Button("Pull Live Markets", id={"type": "nfl-pull", "game": game["id"]}, n_clicks=0,
-                              className="pull-markets-button", title="FanDuel only · up to 17 credits per snapshot") if sport == "NFL" else
+                  html.Button("Pull Live Markets", id={"type": f"{prefix}-pull", "game": game["id"]}, n_clicks=0,
+                              className="pull-markets-button", title=f"FanDuel only · up to {credits} credits per snapshot") if live else
                   html.Span("Scheduled", className="scheduled-label")], className="game-card-footer"),
         html.Div([
-            html.Small("FanDuel only · Up to 17 credits per pull", className="pull-credit-note"),
-            dcc.Store(id={"type": "nfl-game-context", "game": game["id"]}, data={**game, "token": uuid4().hex}),
-        ]) if sport == "NFL" else None,
+            html.Small(f"FanDuel only · Up to {credits} credits per pull", className="pull-credit-note"),
+            dcc.Store(id={"type": f"{prefix}-game-context", "game": game["id"]}, data={**game, "sport": sport, "token": uuid4().hex}),
+        ]) if live else None,
     ], className="panel game-card")
 
 
@@ -231,19 +236,27 @@ def usage_figures(summary):
 
 
 def create_app(service=None, career_service=None, schedule_service=None, odds_service=None, nfl_market_service=None,
-               api_usage_log=None, ppp_service=None, epa_service=None):
+               api_usage_log=None, ppp_service=None, epa_service=None, nba_market_service=None, nba_ppp_service=None,
+               nba_epa_service=None, elo_service=None, nba_elo_service=None):
     service = service or DataService()
     career_service = career_service or CareerService(service.path.with_name("career.sqlite3"))
     schedule_service = schedule_service or ScheduleService(service.path.with_name("schedules.sqlite3"))
     odds_service = odds_service or OddsApiService()
     ppp_service = ppp_service or PPPMarketService()
     epa_service = epa_service or EPAMarketService()
+    nba_ppp_service = nba_ppp_service or NBAPPPMarketService()
+    nba_epa_service = nba_epa_service or NBAEPAMarketService()
+    elo_service = elo_service or ELOMarketService()
+    nba_elo_service = nba_elo_service or NBAELOMarketService()
     data_directory = Path(__file__).resolve().parent.parent / "data"
     nfl_market_service = nfl_market_service or NflMarketService(odds_service, service.path.with_name("nfl_markets.sqlite3"),
                                                               data_directory / "market_data", usage_log=api_usage_log)
     market_log = getattr(nfl_market_service, "usage_log", None)
     api_usage_log = api_usage_log or (market_log if isinstance(market_log, ApiUsageLog) else
                                      ApiUsageLog(data_directory / "API Log" / "api_credit_usage.csv"))
+    nba_market_service = nba_market_service or NbaMarketService(odds_service, service.path.with_name("nba_markets.sqlite3"),
+                                                              data_directory / "market_data", usage_log=api_usage_log)
+    market_services = {"NFL": nfl_market_service, "NBA": nba_market_service}
     app = Dash(__name__, assets_folder=str(Path(__file__).parent / "assets"),
                title="Sports Analytics", update_title="Loading…")
 
@@ -252,6 +265,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if filename not in NFL_LOGO_FILES.values():
             abort(404)
         return send_from_directory(NFL_LOGO_DIRECTORY, filename, mimetype="image/png")
+
+    @app.server.get("/images/nba/team-logos/<filename>")
+    def nba_team_logo(filename):
+        if filename not in NBA_LOGO_FILES.values():
+            abort(404)
+        return send_from_directory(NBA_LOGO_DIRECTORY, filename, mimetype="image/png")
 
     app.layout = html.Div([
         dcc.Store(id="dataset"), dcc.Download(id="download"),
@@ -376,7 +395,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                       options=[{"label": "Next 7 days", "value": 7}, {"label": "Next 14 days", "value": 14}])),
                                 html.Button("Refresh upcoming games", id="market-refresh", n_clicks=0, className="export-button"),
                             ], className="market-controls"),
-                            html.P("Schedule data: ESPN · Times in EDT (UTC−4). NFL: use Pull Live Markets on a game to save its FanDuel snapshot (up to 17 credits). NBA and NCAAF show schedules only.",
+                            html.P("Schedule data: ESPN · Times in EDT (UTC−4). Use Pull Live Markets to save a FanDuel snapshot: NFL up to 17 credits; NBA up to 13 credits. NCAAF shows schedules only.",
                                    className="market-source-note"),
                             dcc.Loading(html.Div([
                                 html.Div(id="market-status", role="status", **{"aria-live": "polite"}, className="load-status"),
@@ -411,7 +430,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                 html.Div(id="market-snapshot-status", role="status", className="snapshot-description"),
                             ], className="snapshot-controls"),
                             html.Div(field("Forecast method", dcc.Dropdown(id="market-forecast-method", value="PPP",
-                                           options=[{"label": "PPP", "value": "PPP"}, {"label": "EPA", "value": "EPA"}],
+                                           options=[{"label": "PPP", "value": "PPP"}, {"label": "EPA", "value": "EPA"},
+                                                    {"label": "ELO / Power Rating", "value": "ELO"}],
                                            clearable=False)), className="forecast-method-control"),
                             dcc.Tabs(id="market-category", value="Game", children=[], className="market-category-tabs"),
                             dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),
@@ -516,7 +536,15 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     def restore_game_route(location_hash):
         if not market_game_id(location_hash):
             raise PreventUpdate
-        return "NFL", "market"
+        return market_game_sport(location_hash), "market"
+
+    @app.callback(Output("market-forecast-method", "options"), Output("market-forecast-method", "value"),
+                  Input("market-url", "hash"), State("market-forecast-method", "value"))
+    def forecast_methods(location_hash, previous):
+        options = [{"label": "PPP", "value": "PPP"},
+                   {"label": "EPA", "value": "EPA"},
+                   {"label": "ELO / Power Rating", "value": "ELO"}]
+        return options, previous if previous in {"PPP", "EPA", "ELO"} else "PPP"
 
     @app.callback(Output("market-list", "style"), Output("market-game-detail", "style"),
                   Output("market-game-header", "children"), Output("market-snapshot", "options"), Output("market-snapshot", "value"),
@@ -526,24 +554,24 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   State("market-snapshot", "value"), State("market-detail-context", "data"))
     def open_game(location_hash, sport, page, games, refreshed, previous, previous_context):
         game_id = market_game_id(location_hash)
-        if not game_id or sport != "NFL" or page != "market":
+        if not game_id or sport not in market_services or market_game_sport(location_hash) != sport or page != "market":
             return {"display": "block"}, {"display": "none"}, [], [], None, None
-        snapshots = nfl_market_service.history(game_id)
+        snapshots = market_services[sport].history(game_id)
         game = next((game for game in (games or []) if str(game["id"]) == game_id), None)
         if not game and snapshots:
             saved = snapshots[0]
             game = saved.get("game") or {"id": game_id, "start": saved["commence_time"],
                 "home": {"name": saved["home_team"], "abbreviation": saved.get("home_abbreviation", "HOME")},
                 "away": {"name": saved["away_team"], "abbreviation": saved.get("away_abbreviation", "AWAY")}, "time_tbd": False}
-        context = {**game, "token": previous_context["token"] if previous_context and str(previous_context.get("id")) == game_id
+        context = {**game, "sport": sport, "token": previous_context["token"] if previous_context and previous_context.get("sport", "NFL") == sport and str(previous_context.get("id")) == game_id
                    else uuid4().hex} if game else None
         options = [{"label": format_eastern(item["pulled_at"]),
                     "value": item.get("csv_file", item["pulled_at"])} for item in snapshots]
         chosen = previous if previous in {option["value"] for option in options} else options[0]["value"] if options else None
         if ("market-refresh-signal.data" in ctx.triggered_prop_ids and refreshed and
-                str(refreshed.get("game_id")) == game_id and refreshed.get("snapshot") in {item["value"] for item in options}):
+                refreshed.get("sport", "NFL") == sport and str(refreshed.get("game_id")) == game_id and refreshed.get("snapshot") in {item["value"] for item in options}):
             chosen = refreshed["snapshot"]
-        return {"display": "none"}, {"display": "block"}, game_header(game, snapshots[0] if snapshots else None), options, chosen, context
+        return {"display": "none"}, {"display": "block"}, game_header(game, snapshots[0] if snapshots else None, sport), options, chosen, context
 
     @app.callback(Output("market-refresh-signal", "data"),
                   Input("market-detail-pull", "n_clicks"), State("market-detail-context", "data"),
@@ -551,19 +579,19 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   prevent_initial_call=True, running=[(Output("market-detail-pull", "disabled"), True, False)])
     def pull_game_detail(clicks, game, location_hash, sport, page):
         game_id = market_game_id(location_hash)
-        if not clicks or sport != "NFL" or page != "market" or not game_id:
+        if not clicks or sport not in market_services or market_game_sport(location_hash) != sport or page != "market" or not game_id:
             raise PreventUpdate
-        if not game or str(game.get("id")) != game_id:
-            return {"game_id": game_id, "error": "Game information is not loaded yet. Refresh the upcoming schedule before pulling."}
+        if not game or game.get("sport", "NFL") != sport or str(game.get("id")) != game_id:
+            return {"sport": sport, "game_id": game_id, "error": "Game information is not loaded yet. Refresh the upcoming schedule before pulling."}
         try:
-            snapshot = nfl_market_service.pull(game, f"detail:{game_id}:{game['token']}:{clicks}")
+            snapshot = market_services[sport].pull(game, f"detail:{game_id}:{game['token']}:{clicks}")
         except DataSourceError as exc:
-            return {"game_id": game_id, "error": str(exc), "attempt": clicks}
-        return {"game_id": game_id, "snapshot": snapshot.get("csv_file", snapshot["pulled_at"]), "pulled_at": snapshot["pulled_at"]}
+            return {"sport": sport, "game_id": game_id, "error": str(exc), "attempt": clicks}
+        return {"sport": sport, "game_id": game_id, "snapshot": snapshot.get("csv_file", snapshot["pulled_at"]), "pulled_at": snapshot["pulled_at"]}
 
     @app.callback(Output("market-detail-pull-status", "children"), Input("market-refresh-signal", "data"), Input("market-url", "hash"))
     def detail_pull_status(result, location_hash):
-        if not result or str(result.get("game_id")) != market_game_id(location_hash):
+        if not result or result.get("sport", "NFL") != market_game_sport(location_hash) or str(result.get("game_id")) != market_game_id(location_hash):
             return []
         if result.get("error"):
             return html.P(result["error"], className="market-pull-error")
@@ -573,7 +601,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         game_id = market_game_id(location_hash)
         if not game_id or not selection:
             return None
-        return next((item for item in nfl_market_service.history(game_id)
+        return next((item for item in market_services[market_game_sport(location_hash)].history(game_id)
                      if item.get("csv_file", item["pulled_at"]) == selection), None)
 
     @app.callback(Output("market-category", "children"), Output("market-category", "value"), Output("market-snapshot-status", "children"),
@@ -583,14 +611,16 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if not snapshot:
             return [], None, "No saved markets yet. Use Pull Live Markets above to download a snapshot."
         available = {row["group"] for row in snapshot["rows"]}
+        categories = NBA_CATEGORIES if market_game_sport(location_hash) == "NBA" else CATEGORIES
         tabs = [dcc.Tab(label=label, value=key, className="market-category-tab", selected_className="market-category-tab selected")
-                for key, label in CATEGORIES if key in available]
+                for key, label in categories if key in available]
         value = previous if previous in available else tabs[0].value if tabs else None
         cost = f"{snapshot['cost']} credits" if snapshot["cost"] is not None else "Cost not reported"
         return tabs, value, [html.Span(latest_pull_text(snapshot) + f" · {cost}"),
                              html.Small("Saved in data/market_data", title=snapshot.get("csv_file", "Saved locally"))]
 
     @app.callback(Output("market-applied-criteria", "data"), Output("market-criteria-status", "children"),
+                  Output("market-category", "value", allow_duplicate=True),
                   Input("market-apply-criteria", "n_clicks"), State("market-probability-threshold", "value"),
                   State("market-edge-threshold", "value"), prevent_initial_call=True)
     def apply_market_criteria(clicks, probability, edge):
@@ -598,16 +628,16 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             raise PreventUpdate
         if (not all(isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
                     for value in (probability, edge)) or not 0 <= probability <= 100 or not -100 <= edge <= 100):
-            return no_update, "Enter an Estimated Probability from 0 to 100 and an Edge from -100 to 100. Previous criteria remain applied."
+            return no_update, "Enter an Estimated Probability from 0 to 100 and an Edge from -100 to 100. Previous criteria remain applied.", no_update
         return {"probability": probability / 100, "edge": edge / 100}, (
-            f"Applied to all calculated markets (alternate spreads and alternate totals): estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Matching rows have a highlighted border using the selected forecast method.")
+            f"Applied to all calculated markets (alternate spreads and alternate totals): estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Game Lines shows the match count and highlighted selections for the selected method."), "Game"
 
     @app.callback(Output("saved-market-sections", "children"), Input("market-category", "value"),
                   Input("market-snapshot", "value"), Input("market-url", "hash"), Input("market-applied-criteria", "data"),
                   Input("market-forecast-method", "value"))
     def show_saved_markets(category, selection, location_hash, criteria, method):
         method = method or "PPP"
-        if method not in ("PPP", "EPA"):
+        if method not in ("PPP", "EPA", "ELO"):
             raise PreventUpdate
         snapshot = saved_snapshot(location_hash, selection)
         if not snapshot:
@@ -617,7 +647,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         forecast, model_error = None, None
         if category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
             try:
-                forecast = (epa_service if method == "EPA" else ppp_service).forecast(snapshot)
+                if market_game_sport(location_hash) == "NBA":
+                    # Copies old CSV metadata so rendering always uses the correct sport.
+                    snapshot = {**snapshot, "sport": "NBA"}
+                    forecast = {"PPP": nba_ppp_service, "EPA": nba_epa_service, "ELO": nba_elo_service}[method].forecast(snapshot)
+                else:
+                    forecast = {"PPP": ppp_service, "EPA": epa_service, "ELO": elo_service}[method].forecast(snapshot)
             except DataSourceError as exc:
                 model_error = str(exc)
         return market_sections(snapshot, category, forecast, model_error, criteria, method)
@@ -635,8 +670,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             if not isinstance(account, str):
                 raise DataSourceError("Connect your account to view its recorded credit history.")
             # Import older saved pulls once; reading stored snapshots never requests odds.
-            if isinstance(nfl_market_service, NflMarketService):
-                nfl_market_service.export_existing()
+            for markets in market_services.values():
+                if isinstance(markets, NflMarketService):
+                    markets.export_existing()
             summary = usage_summary(api_usage_log.records(account))
         except (DataSourceError, OSError, ValueError, csv.Error) as exc:
             return (empty_figure("Credit history unavailable"),
@@ -676,22 +712,29 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             kpi("CREDITS UNUSED", f"{usage.remaining:,}", "Remaining before quota resets"),
             kpi("TOTAL CREDITS", f"{usage.total:,}", "Used + unused credits")], status
 
-    @app.callback(Output({"type": "nfl-live-markets", "game": MATCH}, "children"),
-                  Input({"type": "nfl-pull", "game": MATCH}, "n_clicks"),
-                  State({"type": "nfl-game-context", "game": MATCH}, "data"),
-                  State("sport", "value"), State("workspace-page", "value"), prevent_initial_call=True,
-                  running=[(Output({"type": "nfl-pull", "game": MATCH}, "disabled"), True, False)])
-    def pull_nfl_markets(clicks, game, sport, page):
-        if not clicks or sport != "NFL" or page != "market" or not game:
-            raise PreventUpdate
-        if not isinstance(ctx.triggered_id, dict) or str(ctx.triggered_id.get("game")) != str(game.get("id")):
-            raise PreventUpdate
-        try:
-            snapshot = nfl_market_service.pull(game, f"{game['id']}:{game['token']}:{clicks}")
-        except DataSourceError as exc:
-            saved = nfl_market_service.latest([game["id"]]).get(str(game["id"]))
-            return [latest_pull_status(saved), html.Span(str(exc), className="market-pull-error")]
-        return latest_pull_status(snapshot)
+    def register_card_pull(league):
+        prefix = league.lower()
+
+        @app.callback(Output({"type": f"{prefix}-live-markets", "game": MATCH}, "children"),
+                      Input({"type": f"{prefix}-pull", "game": MATCH}, "n_clicks"),
+                      State({"type": f"{prefix}-game-context", "game": MATCH}, "data"),
+                      State("sport", "value"), State("workspace-page", "value"), prevent_initial_call=True,
+                      running=[(Output({"type": f"{prefix}-pull", "game": MATCH}, "disabled"), True, False)])
+        def pull_markets(clicks, game, sport, page):
+            if not clicks or sport != league or page != "market" or not game or game.get("sport", league) != league:
+                raise PreventUpdate
+            if not isinstance(ctx.triggered_id, dict) or str(ctx.triggered_id.get("game")) != str(game.get("id")):
+                raise PreventUpdate
+            markets = market_services[league]
+            try:
+                snapshot = markets.pull(game, f"{game['id']}:{game['token']}:{clicks}")
+            except DataSourceError as exc:
+                saved = markets.latest([game["id"]]).get(str(game["id"]))
+                return [latest_pull_status(saved), html.Span(str(exc), className="market-pull-error")]
+            return latest_pull_status(snapshot)
+
+    for league in market_services:
+        register_card_pull(league)
 
     @app.callback(Output("market-games", "children"), Output("market-status", "children"), Output("market-schedule", "data"),
                   Input("workspace-page", "value"), Input("sport", "value"), Input("market-days", "value"),
@@ -701,8 +744,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     def upcoming_games(page, sport, days, _refresh, _timer, _refreshed, previous_games):
         if page != "market" or sport not in SOURCES:
             raise PreventUpdate
-        if ctx.triggered_id == "market-refresh-signal" and sport == "NFL" and previous_games:
-            saved = nfl_market_service.latest([game["id"] for game in previous_games])
+        if ctx.triggered_id == "market-refresh-signal" and sport in market_services and previous_games:
+            saved = market_services[sport].latest([game["id"] for game in previous_games])
             return schedule_blocks(previous_games, sport, saved), no_update, no_update
         try:
             schedule = schedule_service.load(sport, days, refresh=ctx.triggered_id == "market-refresh")
@@ -715,7 +758,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             status += " Saved schedules shown after a source error for: " + ", ".join(schedule.stale_days) + "."
         if schedule.failed_days:
             status += " Incomplete coverage; unavailable dates: " + ", ".join(schedule.failed_days) + "."
-        saved = nfl_market_service.latest([game["id"] for game in schedule.games]) if sport == "NFL" else {}
+        saved = market_services[sport].latest([game["id"] for game in schedule.games]) if sport in market_services else {}
         blocks = schedule_blocks(schedule.games, sport, saved)
         if not blocks:
             blocks = html.Div([html.H3("No upcoming games found"),
@@ -885,12 +928,14 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                      f"Mean of the last {window} appearances" if prediction is not None else f"Requires {window} recorded appearances"),
                  kpi("BACKTEST MAE", f"{mae:,.2f}" if mae is not None else "—",
                      f"{evaluated} past predictions evaluated" if evaluated else f"Requires more than {window} appearances")]
-        table = history.reindex(columns=["game_id", "event_date", "week", "team", "opponent", "matchup", metric, "baseline"]).copy()
+        fields = ["event_date"] + ([] if dataset["sport"] == "NBA" else ["week"])
+        table = history.reindex(columns=fields + ["team", "opponent", "matchup", metric, "baseline"]).copy()
         table["event_date"] = table["event_date"].dt.strftime("%Y-%m-%d")
         table = table.sort_index(ascending=False).round(3)
         # JSON nulls rather than NaN/NaT if schedule metadata is unavailable.
         records = table.astype(object).where(pd.notna(table), None).to_dict("records")
-        columns = [{"name": c.replace("_", " ").title(), "id": c} for c in table]
+        columns = [{"name": metric_label(c, dataset["sport"]) if c == metric else c.replace("_", " ").title(), "id": c}
+                   for c in table]
         return figure, cards, records, columns
 
     @app.callback(Output("career-panel", "style"), Input("entity-type", "value"), Input("sport", "value"))

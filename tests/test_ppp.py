@@ -12,8 +12,9 @@ from unittest.mock import Mock
 
 import numpy as np
 import pandas as pd
+from dash import html
 
-from Models.PPP import PPPConfig, PPPError, PPPForecast, PPPModel, fair_american_odds, implied_probability, matchup_ppp
+from Models.Game_Outcome.PPP.PPP import PPPConfig, PPPError, PPPForecast, PPPModel, fair_american_odds, implied_probability, matchup_ppp
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.market_view import _comparison_figure, criteria_match, market_sections, ppp_comparison
@@ -308,11 +309,12 @@ class PPPMarketTests(unittest.TestCase):
                 self.assertFalse(criteria_match(probability, edge, criteria))
         self.assertFalse(criteria_match(.9, .2, None))
 
-    def test_matching_rows_expand_and_missing_estimates_never_highlight(self):
+    def test_matching_rows_stay_collapsed_and_missing_estimates_never_highlight(self):
         saved = snapshot()
         sections = market_sections(saved, "Game", forecast(), criteria={"probability": .6, "edge": .05})
         # A qualifying spread and Over must both highlight on the same Apply.
-        for section, expected in zip(sections[:2], ["San Francisco", "Over"]):
+        groups = [section for section in sections if isinstance(section, html.Details)]
+        for section, expected in zip(groups, ["San Francisco", "Over"]):
             matches = [node for node in section._traverse()
                        if "market-criteria-match" in getattr(node, "className", "")]
             self.assertTrue(matches)
@@ -320,12 +322,13 @@ class PPPMarketTests(unittest.TestCase):
         # An Under at a high total must also qualify, alongside the spread.
         saved["rows"].append({**saved["rows"][-1], "line": 70.5})
         sections = market_sections(saved, "Game", forecast(), criteria={"probability": .6, "edge": .05})
-        total_matches = [node.children[0].children for node in sections[1]._traverse()
+        groups = [section for section in sections if isinstance(section, html.Details)]
+        total_matches = [node.children[0].children for node in groups[1]._traverse()
                          if "market-criteria-match" in getattr(node, "className", "")]
         self.assertTrue(any("Over" in label for label in total_matches))
         self.assertTrue(any("Under" in label for label in total_matches))
         # Put all selections under one market so qualifying rows occur under Show more.
-        from Models.PPP import MarketProbability
+        from Models.Game_Outcome.PPP.PPP import MarketProbability
         certain = Mock()
         certain.total.return_value = MarketProbability(.9, .1, 0)
         certain.spread.return_value = MarketProbability(.9, .1, 0)
@@ -333,11 +336,107 @@ class PPPMarketTests(unittest.TestCase):
         extended = {**saved, "rows": [{**saved["rows"][2], "group": "Test", "line": i + .5} for i in range(10)]}
         sections = market_sections(extended, "Test", certain, criteria={"probability": .75, "edge": .05})
         more = next(node for node in sections[0]._traverse() if getattr(node, "className", "") == "more-market-lines")
-        self.assertTrue(more.open)
+        self.assertFalse(more.open)
+        next_game = market_sections({**extended, "game_id": "456"}, "Test", certain,
+                                    criteria={"probability": .75, "edge": .05})[0]
+        self.assertNotEqual(sections[0].key, next_game.key)
         self.assertEqual(sum("market-criteria-match" in getattr(node, "className", "") for node in sections[0]._traverse()), 10)
         unavailable = repr(market_sections(saved, "Game", criteria={"probability": 0, "edge": -1}))
         self.assertNotIn("market-criteria-match", unavailable)
         self.assertIn("52.38%", unavailable)
+
+    def test_applied_criteria_highlight_each_team_over_and_under_in_the_charts(self):
+        from dash import dcc
+        saved = snapshot()
+        saved["rows"].append({**saved["rows"][-1], "line": 70.5})
+        criteria = {"probability": .6, "edge": .05}
+        for method in ["PPP", "EPA", "ELO"]:
+            sections = market_sections(saved, "Game", forecast(), criteria=criteria, method=method)
+            figures = [node.figure for section in sections for node in section._traverse() if isinstance(node, dcc.Graph)]
+            self.assertEqual(len(figures), 4)
+            for figure, key, group in zip(figures,
+                    ["alternate_spreads", "alternate_spreads", "alternate_totals", "alternate_totals"],
+                    [saved["home_team"], saved["away_team"], "Over", "Under"]):
+                rows = sorted([row for row in saved["rows"] if row["market_key"] == key
+                               and (row["subject"] if key == "alternate_spreads" else row["selection"]) == group],
+                              key=lambda row: row["line"])
+                expected = []
+                for row in rows:
+                    p = (forecast().spread("SF" if group == saved["home_team"] else "WSH", row["line"])
+                         if key == "alternate_spreads" else forecast().total(row["line"], group)).probability
+                    expected.append(p if p > .6 and p-implied_probability(row["odds"]) > .05 else None)
+                highlighted = [trace for trace in figure.data if trace.name == "Meets criteria"]
+                if any(p is not None for p in expected):
+                    self.assertEqual(len(highlighted), 1)
+                    self.assertEqual(list(highlighted[0].y), expected)
+                    self.assertFalse(highlighted[0].connectgaps)
+                    self.assertEqual(highlighted[0].line.color, "#f6c667")
+                    self.assertEqual(highlighted[0].fill, "tozeroy")
+                else:
+                    self.assertFalse(highlighted)
+
+    def test_chart_highlights_require_applied_criteria_and_never_bridge_nonmatches_or_missing_quotes(self):
+        from Models.Game_Outcome.PPP.PPP import MarketProbability
+        saved = snapshot()
+        base = saved["rows"][0]
+        saved["rows"] = [{**base, "line": line, "odds": odds}
+                         for line, odds in [(-5.5, -110), (-4.5, -10000), (-3.5, -110), (-2.5, None)]]
+        result = Mock()
+        result.spread.return_value = MarketProbability(.9, .1, 0)
+        args = (saved, result, "alternate_spreads", saved["home_team"])
+        self.assertEqual(len(_comparison_figure(*args).data), 2)
+        highlighted = _comparison_figure(*args, criteria={"probability": .75, "edge": .05}).data[-1]
+        self.assertEqual(highlighted.name, "Meets criteria")
+        self.assertEqual(list(highlighted.y), [.9, None, .9, None])
+        self.assertFalse(highlighted.connectgaps)
+        self.assertEqual(len(_comparison_figure(*args, criteria={"probability": .9, "edge": .05}).data), 2)
+        self.assertEqual(len(_comparison_figure(saved, None, "alternate_spreads", saved["home_team"],
+                                             criteria={"probability": 0, "edge": -1}).data), 1)
+
+    def test_no_match_marks_each_evaluated_section_red_and_preserves_matching_sections(self):
+        from Models.Game_Outcome.PPP.PPP import MarketProbability
+        saved = snapshot()
+        result = Mock()
+        result.spread.return_value = MarketProbability(.9, .1, 0)
+        result.total.return_value = MarketProbability(.1, .9, 0)
+        criteria = {"probability": .75, "edge": .05}
+        # This test concerns the market sections, not the chart forecast object.
+        saved["rows"] = [{**row, "group": "Test"} for row in saved["rows"]]
+        sections = market_sections(saved, "Test", result, criteria=criteria)
+        self.assertIn("market-criteria-group", sections[0].className)
+        self.assertNotIn("market-criteria-no-match", sections[0].className)
+        self.assertIn("market-criteria-no-match", sections[1].className)
+        self.assertNotIn("market-criteria-group", sections[1].className)
+        self.assertIn("no match", repr(sections[1].children[0]))
+        for estimate in [result, None]:
+            untouched = repr(market_sections(saved, "Test", estimate))
+            self.assertNotIn("market-criteria-no-match", untouched)
+        unavailable = repr(market_sections(saved, "Test", criteria=criteria))
+        self.assertNotIn("market-criteria-no-match", unavailable)
+        self.assertNotIn("no match", unavailable)
+        no_quotes = {**saved, "rows": [{**row, "odds": None} for row in saved["rows"]]}
+        self.assertNotIn("market-criteria-no-match", repr(market_sections(no_quotes, "Test", result, criteria=criteria)))
+        empty = market_sections(snapshot(), "Game", forecast(), criteria={"probability": 1, "edge": 1})
+        self.assertIn("criteria-evaluation-no-match", empty[0].className)
+        self.assertEqual(sum("market-criteria-no-match" in getattr(section, "className", "") for section in empty), 2)
+
+    def test_extra_selection_control_has_more_and_less_labels_and_keeps_the_first_six(self):
+        saved = snapshot()
+        saved["rows"] = [{**saved["rows"][0], "group": "Test", "line": i + .5} for i in range(10)]
+        section = market_sections(saved, "Test")[0]
+        first_six = next(node for node in section.children if getattr(node, "className", "") == "market-outcomes")
+        self.assertEqual(len(first_six.children), 6)
+        more = section.children[-1]
+        self.assertEqual(more.className, "more-market-lines")
+        self.assertFalse(more.open)
+        labels = more.children[0].children
+        self.assertEqual(labels[0].children, "Show more · 4 selections")
+        self.assertEqual(labels[0].className, "market-show-more")
+        self.assertEqual(labels[1].children, "Show less")
+        self.assertEqual(labels[1].className, "market-show-less")
+        self.assertEqual(len(more.children[1].children), 4)
+        saved["rows"] = saved["rows"][:6]
+        self.assertIsNone(market_sections(saved, "Test")[0].children[-1])
 
     def test_criteria_controls_default_to_75_and_5_and_only_apply_on_button_click(self):
         app = create_app(DataService(self.root / "data.sqlite3"), Mock(), Mock(), Mock(), Mock(), ppp_service=Mock())

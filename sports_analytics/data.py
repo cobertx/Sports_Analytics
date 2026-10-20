@@ -181,6 +181,31 @@ def load_nba(query, client):
     return normalize(frame, query)
 
 
+def nfl_team_scoring(frame, schedule):
+    """Attach actual final PF/PA by game and team; unavailable scores stay missing."""
+    result = frame.copy()
+    result["pf"], result["pa"] = float("nan"), float("nan")
+    required = {"game_id", "home_team", "away_team", "home_score", "away_score"}
+    if schedule is None or not required <= set(schedule):
+        return result
+    # Do not choose arbitrarily between duplicate game identities.
+    games = schedule.drop_duplicates("game_id", keep=False).set_index("game_id")
+    games = games.reindex(frame["game_id"].astype(str)).set_axis(frame.index)
+    aliases = {"WAS": "WSH", "LA": "LAR", "STL": "LAR", "OAK": "LV", "SD": "LAC", "JAC": "JAX"}
+    def canonical(column):
+        return column.astype("string").replace(aliases)
+    team, opponent = canonical(frame["team"]), canonical(frame["opponent"])
+    home, away = canonical(games["home_team"]), canonical(games["away_team"])
+    is_home = team.eq(home) & opponent.eq(away)
+    is_away = team.eq(away) & opponent.eq(home)
+    scores = games[["home_score", "away_score"]].apply(pd.to_numeric, errors="coerce")
+    valid = ((is_home | is_away).fillna(False) & scores.notna().all(axis=1) &
+             scores.ge(0).all(axis=1) & scores.mod(1).eq(0).all(axis=1))
+    result["pf"] = scores["home_score"].where(is_home, scores["away_score"]).where(valid)
+    result["pa"] = scores["away_score"].where(is_home, scores["home_score"]).where(valid)
+    return result
+
+
 def load_nfl(query, client):
     kind = query.entity_type
     url = f"https://github.com/nflverse/nflverse-data/releases/download/stats_{kind}/stats_{kind}_week_{query.season}.csv"
@@ -206,10 +231,12 @@ def load_nfl(query, client):
         # The nflverse game ID encodes away/home order; dates come from its schedule.
         parts = frame["game_id"].str.split("_")
         frame["matchup"] = parts.str[-2] + " @ " + parts.str[-1]
+        schedule = None
         try:
             schedule = pd.read_csv(StringIO(client.get(
                 "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv").text),
-                dtype={"game_id": str}, usecols=["game_id", "gameday", "away_team", "home_team"])
+                dtype={"game_id": str}, usecols=lambda column: column in {
+                    "game_id", "gameday", "away_team", "home_team", "home_score", "away_score"})
             dates = schedule.drop_duplicates("game_id").set_index("game_id")["gameday"]
             frame["event_date"] = frame["game_id"].map(dates)
         except (DataSourceError, KeyError, ValueError):
@@ -218,11 +245,22 @@ def load_nfl(query, client):
         excluded = set(META) | {"player_id", "player_name", "player_display_name",
                                 "headshot_url", "position", "position_group", "recent_team",
                                 "opponent_team", "jersey_number"}
+        if kind == "team":
+            excluded.update({"pf", "pa"})
         stats = {name: pd.to_numeric(raw[name], errors="coerce") for name in raw if name not in excluded}
         frame = pd.concat([frame, pd.DataFrame(stats, index=raw.index)], axis=1)
+        if kind == "team":
+            frame = nfl_team_scoring(frame, schedule)
     except (KeyError, ValueError, pd.errors.ParserError) as exc:
         raise DataSourceError("nflverse returned an unexpected schema. Its dataset may have changed.") from exc
-    return normalize(frame, query)
+    result = normalize(frame, query)
+    if kind == "team":
+        # Persist the scoring schema even if the schedule was unavailable. The
+        # selectors exclude missing values; don't repeatedly refresh a fresh cache.
+        for name in ("pf", "pa"):
+            if name not in result:
+                result[name] = float("nan")
+    return result
 
 
 def load_nba_archive(query, client):

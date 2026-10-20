@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import threading
 
-from Models.PPP import PPPError, PPPForecast, PPPModel
+from Models.Game_Outcome.PPP.PPP import PPPError, PPPForecast, PPPModel
 from .data import DataSourceError
 from .nfl_markets import NFL_TEAM_CODES
 from .nfl_model_data import NflModelData, atomic_text
@@ -19,6 +19,10 @@ class PPPMarketService:
     method = "PPP"
     forecast_class = PPPForecast
     model_version = MODEL_VERSION
+    sport = "NFL"
+    team_codes = NFL_TEAM_CODES
+    season_start_month = 3
+    input_patterns = ("team_games_*.csv",)
 
     def __init__(self, data=None, model=None):
         self.data = data or NflModelData()
@@ -28,14 +32,14 @@ class PPPMarketService:
 
     def forecast(self, snapshot):
         try:
-            home, away = NFL_TEAM_CODES[snapshot["home_team"]], NFL_TEAM_CODES[snapshot["away_team"]]
+            home, away = self.team_codes[snapshot["home_team"]], self.team_codes[snapshot["away_team"]]
             pulled = datetime.fromisoformat(snapshot["pulled_at"].replace("Z", "+00:00"))
             kickoff = datetime.fromisoformat(snapshot["commence_time"].replace("Z", "+00:00"))
             if pulled.tzinfo is None or kickoff.tzinfo is None:
                 raise ValueError("Timezone required")
             cutoff = min(pulled, kickoff).astimezone(timezone.utc)
         except (KeyError, ValueError, TypeError, AttributeError):
-            raise DataSourceError(f"{self.method} requires recognized NFL teams and timestamped saved game information.") from None
+            raise DataSourceError(f"{self.method} requires recognized {self.sport} teams and timestamped saved game information.") from None
         identity = {"version": self.model_version, "home": home, "away": away, "as_of": cutoff.isoformat(),
                     "config": asdict(self.model.config), "neutral": bool(snapshot.get("game", {}).get("neutral", False))}
         key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -52,7 +56,7 @@ class PPPMarketService:
                         return forecast
                 except (OSError, ValueError, TypeError, KeyError):
                     pass
-            season = cutoff.year - (cutoff.month < 3)
+            season = cutoff.year - (cutoff.month < self.season_start_month)
             try:
                 frame, notices = self.data.prepare([season - 1, season])
                 forecast = self.model.predict(frame, home, away, cutoff.isoformat(), neutral=identity["neutral"])
@@ -63,7 +67,8 @@ class PPPMarketService:
             forecast.diagnostics["prepared_at"] = datetime.now(timezone.utc).isoformat()
             forecast.diagnostics["input_files"] = [
                 {"file": source.name, "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
-                for source in self.data.directory.glob("team_games_*.csv") if str(season) in source.stem or str(season - 1) in source.stem]
+                for source in sorted({source for pattern in self.input_patterns for source in self.data.directory.glob(pattern)})
+                if str(season) in source.stem or str(season - 1) in source.stem]
             try:
                 atomic_text(path, json.dumps({"identity": identity, "forecast": asdict(forecast)}, indent=2))
             except OSError:

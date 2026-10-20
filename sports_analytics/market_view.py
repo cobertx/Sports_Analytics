@@ -1,4 +1,4 @@
-"""Saved NFL markets, presented as category tabs and player odds ladders."""
+"""Saved sport markets, presented as category tabs and player odds ladders."""
 
 from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
@@ -9,15 +9,31 @@ from urllib.parse import quote
 from dash import dcc, html
 import plotly.graph_objects as go
 
-from Models.PPP import PPPError, implied_probability
+from Models.Game_Outcome.PPP.PPP import PPPError, implied_probability
 from .display_time import eastern_datetime, format_eastern
 from .nfl_markets import NFL_TEAM_CODES
+from .nba_markets import NBA_TEAM_CODES
 
 NFL_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NFL" / "Team Logos"
 NFL_LOGO_FILES = {path.stem.casefold(): path.name for path in NFL_LOGO_DIRECTORY.glob("*.png")}
+NBA_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NBA" / "Team Logos"
+NBA_LOGO_FILES = {path.stem.casefold(): path.name for path in NBA_LOGO_DIRECTORY.glob("*.png")}
+if "los angeles clippers" in NBA_LOGO_FILES:
+    NBA_LOGO_FILES["la clippers"] = NBA_LOGO_FILES["los angeles clippers"]
 CATEGORIES = [("Game", "Game Lines"), ("Passing", "Passing Props"), ("Receiving", "Receiving Props"),
               ("Rushing", "Rushing Props"), ("Touchdowns", "TD Scorer Props")]
 MARKET_NAMES = {
+    "player_points_alternate": ("Alt Points", "Points"),
+    "player_rebounds_alternate": ("Alt Rebounds", "Rebounds"),
+    "player_assists_alternate": ("Alt Assists", "Assists"),
+    "player_threes_alternate": ("Alt Threes", "Threes"),
+    "player_blocks_alternate": ("Alt Blocks", "Blocks"),
+    "player_steals_alternate": ("Alt Steals", "Steals"),
+    "player_turnovers_alternate": ("Alt Turnovers", "Turnovers"),
+    "player_points_assists_alternate": ("Alt Points + Assists", "Points + Assists"),
+    "player_points_rebounds_alternate": ("Alt Points + Rebounds", "Points + Rebounds"),
+    "player_rebounds_assists_alternate": ("Alt Rebounds + Assists", "Rebounds + Assists"),
+    "player_points_rebounds_assists_alternate": ("Alt Points + Rebounds + Assists", "Points + Rebounds + Assists"),
     "player_pass_yds_alternate": ("Alt Passing Yds", "Passing Yards"),
     "player_pass_tds_alternate": ("Alt Passing TDs", "Passing TDs"),
     "player_pass_attempts_alternate": ("Alt Pass Attempts", "Pass Attempts"),
@@ -59,13 +75,15 @@ def latest_pull_status(snapshot, now=None):
               "Market data is at least 24 hours old" if snapshot else "No saved market data")
 
 
-def logo_badge(name, abbreviation):
-    filename = NFL_LOGO_FILES.get(name.casefold())
-    return html.Span(html.Img(src="/images/nfl/team-logos/" + quote(filename), alt=name + " logo", className="team-logo")
-                     if filename else abbreviation, className="team-badge team-badge-logo")
+def logo_badge(name, abbreviation, sport="NFL"):
+    files = NBA_LOGO_FILES if sport == "NBA" else NFL_LOGO_FILES if sport == "NFL" else {}
+    filename = files.get(name.casefold())
+    url = f"/images/{sport.lower()}/team-logos/" + quote(filename) if filename else None
+    return html.Span(html.Img(src=url, alt=name + " logo", className="team-logo")
+                     if url else abbreviation, className="team-badge team-badge-logo")
 
 
-def game_header(game, snapshot=None):
+def game_header(game, snapshot=None, sport="NFL"):
     if not game and snapshot:
         game = snapshot.get("game") or {"start": snapshot["commence_time"],
             "away": {"name": snapshot["away_team"], "abbreviation": snapshot.get("away_abbreviation", "AWAY")},
@@ -74,12 +92,12 @@ def game_header(game, snapshot=None):
         return html.H2("Saved game markets")
     def team(side):
         item = game[side]
-        return html.Div([logo_badge(item["name"], item["abbreviation"]), html.Strong(item["abbreviation"]),
+        return html.Div([logo_badge(item["name"], item["abbreviation"], sport), html.Strong(item["abbreviation"]),
                          html.Small(item["name"])], className="matchup-team")
     return html.Div([team("away"), html.Div([html.Strong(format_eastern(game["start"]) if not game.get("time_tbd") else
                                                        format_eastern(game["start"])[:10] + " EDT"),
                                            html.Span("Time TBD") if game.get("time_tbd") else None,
-                                           html.Small("NFL · FanDuel")], className="matchup-start"),
+                                           html.Small(f"{sport} · FanDuel")], className="matchup-start"),
                      team("home")], className="matchup-banner")
 
 
@@ -107,7 +125,7 @@ def _market_probability(row, forecast):
     if row["market_key"] == "alternate_totals":
         return forecast.total(row["line"], row["selection"])
     if row["market_key"] == "alternate_spreads":
-        team = NFL_TEAM_CODES.get(row["subject"])
+        team = {**NFL_TEAM_CODES, **NBA_TEAM_CODES}.get(row["subject"])
         return forecast.spread(team, row["line"])
     return None
 
@@ -141,7 +159,7 @@ def _line_values(row, forecast):
     return implied, estimate, edge
 
 
-def _comparison_figure(snapshot, forecast, market_key, group, method="PPP"):
+def _comparison_figure(snapshot, forecast, market_key, group, method="PPP", criteria=None):
     spreads = market_key == "alternate_spreads"
     selected = sorted([row for row in snapshot["rows"] if row["market_key"] == market_key and row["line"] is not None
                        and (row["subject"] if spreads else row["selection"]) == group], key=lambda row: row["line"])
@@ -150,27 +168,36 @@ def _comparison_figure(snapshot, forecast, market_key, group, method="PPP"):
     lines = [row["line"] for row in selected]
     city = group.rsplit(" ", 1)[0] if spreads else group
     labels = [f"{city} {'-' if line < 0 else '+'} {abs(line):g}" if spreads else f"{group} {line:g}" for line in lines]
+    values = [_line_values(row, forecast) for row in selected]
+    model_probabilities = [estimate.probability if estimate else None for _, estimate, _ in values]
+    market_probabilities = [implied for implied, _, _ in values]
     figure = go.Figure()
     if forecast:
-        probabilities = [(forecast.spread(NFL_TEAM_CODES[group], line) if spreads else
-                          forecast.total(line, group)).probability for line in lines]
-        figure.add_trace(go.Scatter(x=lines, y=probabilities, name=f"{method} probability", mode="lines+markers",
+        figure.add_trace(go.Scatter(x=lines, y=model_probabilities, name=f"{method} probability", mode="lines+markers",
                                    line={"color": "#57dbc4", "width": 2.5}, marker={"size": 4},
                                    fill="tozeroy", fillcolor="rgba(87, 219, 196, 0.16)", connectgaps=False,
                                    customdata=labels,
                                    hovertemplate=f"%{{customdata}}<br>{method} %{{y:.2%}}<extra>%{{fullData.name}}</extra>"))
-    probabilities = []
-    for row in selected:
-        try:
-            probabilities.append(implied_probability(row["odds"]))
-        except PPPError:
-            probabilities.append(None)
-    figure.add_trace(go.Scatter(x=lines, y=probabilities, name="Market implied probability", mode="lines+markers",
+    figure.add_trace(go.Scatter(x=lines, y=market_probabilities, name="Market implied probability", mode="lines+markers",
                                line={"color": "#8197ff", "width": 2.5}, marker={"symbol": "diamond", "size": 5},
                                fill="tozeroy", fillcolor="rgba(129, 151, 255, 0.16)", connectgaps=False,
                                customdata=[[label, f"{row['odds']:+g}" if row["odds"] is not None else "Unreported"]
                                            for label, row in zip(labels, selected)],
                                hovertemplate="%{customdata[0]}<br>Market %{y:.2%}<br>Odds %{customdata[1]}<extra>%{fullData.name}</extra>"))
+    matches = [criteria_match(probability, edge, criteria)
+               for probability, (_, _, edge) in zip(model_probabilities, values)]
+    if any(matches):
+        # Keep nonmatches as gaps: a gold line must never bridge unqualified quotes.
+        figure.add_trace(go.Scatter(
+            x=lines, y=[p if match else None for p, match in zip(model_probabilities, matches)],
+            name="Meets criteria", mode="lines+markers", connectgaps=False,
+            line={"color": "#f6c667", "width": 4},
+            marker={"color": "#f6c667", "size": 9, "symbol": "circle", "line": {"color": "#111d2e", "width": 1}},
+            fill="tozeroy", fillcolor="rgba(246, 198, 103, 0.20)",
+            customdata=[[label, probability_text(implied), f"{edge*100:+.2f} pp" if edge is not None else "—"]
+                        for label, (implied, _, edge) in zip(labels, values)],
+            hovertemplate=(f"%{{customdata[0]}}<br>{method} %{{y:.2%}}<br>Market %{{customdata[1]}}"
+                           "<br>Edge %{customdata[2]}<extra>Meets criteria</extra>")))
     figure.update_layout(template="plotly_dark", paper_bgcolor="#111d2e", plot_bgcolor="#111d2e", height=420,
                          font={"family": "Segoe UI, sans-serif", "color": "#b8c8dc"},
                          margin={"l": 55, "r": 20, "t": 65, "b": 115},
@@ -188,7 +215,7 @@ def _comparison_figure(snapshot, forecast, market_key, group, method="PPP"):
     return figure
 
 
-def ppp_comparison(snapshot, forecast=None, error=None, method="PPP"):
+def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=None):
     details = forecast.diagnostics if forecast else {}
     if forecast:
         last_date = date.fromisoformat(details["last_game_date"]).strftime("%m/%d/%Y") if details.get("last_game_date") else "—"
@@ -205,6 +232,14 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP"):
     methodology = ("The EPA model uses the PDF's fitted scoring bridge and normal score-error baseline; key-number probabilities are approximate. "
                    "No drive-state simulator, injury or weather adjustment is applied.") if method == "EPA" else (
                    "The PPP model uses the PDF's normal baseline with historical forecast errors; key-number probabilities are approximate. No injury or weather adjustment is applied.")
+    if snapshot.get("sport") == "NBA":
+        methodology = ("NBA EPA uses reconciled events, pre-action EPV and signed possession residual ratings with chronological normal score-error calibration. "
+                       "This is an event-based research baseline; tracking, projected lineups and an explicit overtime simulator are not modeled.") if method == "EPA" else (
+                       "NBA PPP uses estimated possessions, opponent-adjusted efficiency and chronological score-error calibration. Overtime is included; lineup and injury adjustments are not modeled.")
+    if method == "ELO":
+        methodology = ("ELO uses sequential neutral ratings, opponent-adjusted ridge power margins and a separate positive offense/defense "
+                       "scoring/pace model for totals. Elo calibration and the margin blend are fitted on chronological forecast records. "
+                       "This is a normal research baseline; roster, weather and explicit drive/possession/overtime simulation are not modeled.")
     children = [html.Div(status, className="load-status ppp-status", role="status"),
                 html.P(f"Market probabilities include the bookmaker margin. {method} probabilities and fair odds exclude pushes; hover a model value to see its win, loss and push probabilities. "
                        + methodology,
@@ -215,13 +250,16 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP"):
             ("alternate_spreads", snapshot["away_team"], "Spread probabilities by handicap"),
             ("alternate_totals", "Over", "Total points probabilities by line"),
             ("alternate_totals", "Under", "Total points probabilities by line")]:
-        figure = _comparison_figure(snapshot, forecast, key, group, method)
+        figure = _comparison_figure(snapshot, forecast, key, group, method, criteria)
         if figure:
             charts.append(html.Section([html.Div(html.H2(f"{title} · {group}"), className="panel-heading"),
                                         dcc.Graph(figure=figure, config={"displaylogo": False})], className="panel ppp-chart"))
     children.append(html.Div(charts, className="ppp-comparison-grid"))
     children.append(html.P("Curves show probabilities for each line, rather than probabilities that sum across alternate lines. "
                            "Market lines connect quotes from the selected saved snapshot; estimates never trigger an odds pull.", className="ppp-comparison-note"))
+    if criteria:
+        children.append(html.P("Gold segments and markers meet both applied criteria using the selected forecast method.",
+                               className="ppp-comparison-note"))
     return html.Div(children, className="ppp-comparison")
 
 
@@ -233,6 +271,8 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         player = row["subject"] if row["market_key"] in MARKET_NAMES else ""
         groups.setdefault((row["market_key"], player), []).append(row)
     sections = []
+    evaluated = 0
+    matched_counts = {"alternate_spreads": 0, "alternate_totals": 0}
     for index, ((key, player), rows) in enumerate(groups.items()):
         title = f"{player} - {MARKET_NAMES[key][0]}" if player else rows[0]["market"]
         rows = sorted(rows, key=lambda row: (row["subject"].casefold() if not player else "",
@@ -243,6 +283,12 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         matches = {identity: criteria_match(estimate.probability if estimate else None, edge, criteria)
                    for identity, (_, estimate, edge) in values.items()}
         match_count = sum(matches.values())
+        group_evaluated = sum(estimate is not None and estimate.probability is not None and edge is not None
+                              for _, estimate, edge in values.values())
+        no_match = bool(comparison and criteria and group_evaluated and not match_count)
+        if comparison:
+            evaluated += group_evaluated
+            matched_counts[key] += match_count
         def outcome(row):
             initials = "".join(part[0] for part in row["subject"].split()[:2])
             price = f"{row['odds']:+g}" if row["odds"] is not None else "—"
@@ -267,15 +313,30 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
             ], className="market-outcome")
         sections.append(html.Details([
             html.Summary([html.Strong(title),
-                          html.Span(f"{match_count} matches", className="criteria-match-count") if match_count else None,
+                          html.Span(f"{match_count} matches", className="criteria-match-count") if match_count else
+                          html.Span("no match", className="criteria-no-match-count") if no_match else None,
                           html.Span("⌄", className="market-chevron", **{"aria-hidden": "true"})]),
             html.Div([html.Span(label) for label in ["Selection", "Market odds", "Market implied", f"{method} probability", f"{method} fair odds", "Edge"]],
                      className="market-comparison-heading market-line-comparison") if comparison else None,
             html.Div([outcome(row) for row in rows[:6]], className="market-outcomes"),
-            html.Details([html.Summary(f"Show more · {len(rows) - 6} selections"),
+            html.Details([html.Summary([
+                              html.Span(f"Show more · {len(rows) - 6} selections", className="market-show-more"),
+                              html.Span("Show less", className="market-show-less"),
+                          ]),
                           html.Div([outcome(row) for row in rows[6:]])], className="more-market-lines",
-                         open=any(matches.get(id(row), False) for row in rows[6:])) if len(rows) > 6 else None,
-        ], open=index < 2 or bool(match_count), className="sportsbook-market" + (" market-criteria-group" if match_count else "")))
+                         open=False) if len(rows) > 6 else None,
+        ], key=f"{snapshot.get('game_id', snapshot.get('event_id', ''))}:{snapshot.get('pulled_at', '')}:{key}:{player}",
+           open=index < 2, className="sportsbook-market" + (
+            " market-criteria-group" if match_count else " market-criteria-no-match" if no_match else "")))
+    if category == "Game" and isinstance(criteria, dict) and criteria:
+        matched = sum(matched_counts.values())
+        message = (f"{matched} qualifying selections: {matched_counts['alternate_spreads']} spreads and {matched_counts['alternate_totals']} totals."
+                   if matched else f"No markets match these criteria. {evaluated} spread/total selections evaluated."
+                   if evaluated else "Criteria could not be evaluated: model estimates or market prices are unavailable.")
+        sections.insert(0, html.Div([html.Strong(message),
+            html.Span(f" {method} probability > {100*criteria.get('probability',0):g}% and Edge > {100*criteria.get('edge',0):g} pp. Both thresholds must be exceeded.")],
+            className="criteria-evaluation" + (" criteria-evaluation-no-match" if evaluated and not matched else ""),
+            role="status", **{"aria-live": "polite"}))
     if category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
-        sections.append(ppp_comparison(snapshot, forecast, model_error, method))
+        sections.append(ppp_comparison(snapshot, forecast, model_error, method, criteria))
     return sections or [html.P("No saved selections in this category.", className="saved-market-empty")]

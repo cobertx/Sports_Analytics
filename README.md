@@ -2,23 +2,65 @@
 
 A Python Dash workspace for analyzing historical **NBA, NFL, and NCAA Football (NCAAF)** team statistics, NBA and NFL player statistics, and developing forecasts of future performance. NCAAF is team-only.
 
+Code implementation manuals: [PPP guide](Models/Game_Outcome/PPP/PPP_Implementation_Guide.pdf)
+and [EPA guide](Models/Game_Outcome/EPA/EPA_Implementation_Guide.pdf), plus the
+[ELO / Power Rating guide](Models/Game_Outcome/ELO/ELO_Implementation_Guide.pdf). They cover lookback
+windows, minimum game counts, new-season carryover, formulas, calibration and
+saved-model behavior. The source research PDFs are retained separately.
+
 Each sport has two pages in the left toolbar: **Historical Data** contains the historical filters, charts, career histories, and game log; **FanDuel Market** shows upcoming game cards for the selected sport. Switching pages preserves the historical controls.
 
 The separate **Odds API** tab connects to your [The Odds API](https://the-odds-api.com/) account and shows monthly credit usage as a donut chart, with used, unused, and total credits. Add `ODDS_API_KEY=your_api_key_here` to the ignored `.env` file and restart `python index.py`. The key stays on the server and is never placed in browser components or stored in the usage cache.
 
 Usage comes from the provider's `x-requests-used` and `x-requests-remaining` headers on `GET /v4/sports/`, which [does not consume usage credits](https://the-odds-api.com/liveapi/guides/v4/#get-sports). Counters cover the subscription's current quota cycle across all sports; the app does not infer a calendar-month reset date. Usage loads when Odds API is opened, refreshes every five minutes while visible, and can be checked immediately using **Connect / Refresh usage**. The server shares a five-minute memory cache for the account. A failed refresh labels any saved snapshot explicitly; missing keys and invalid responses show setup/errors rather than invented credit values.
 
-FanDuel Market loads public ESPN schedules without an API key. Choose a 7- or 14-day window to see dated cards with away/home teams, EDT start times (`MM/DD/YYYY HH:MM:SS EDT`, or Time TBD), venues, neutral-site labels, and game-detail links. Games are grouped by their displayed EDT calendar date, including evening games after midnight UTC. Live, completed, canceled, and postponed games are excluded. The FanDuel link opens the selected sport's sportsbook page. NBA and NCAAF cards show schedules only; NFL cards also offer **Pull Live Markets** beside **Game details**.
+FanDuel Market loads public ESPN schedules without an API key. Choose a 7- or 14-day window to see dated cards with away/home teams, EDT start times (`MM/DD/YYYY HH:MM:SS EDT`, or Time TBD), venues, neutral-site labels, and game-detail links. Games are grouped by their displayed EDT calendar date, including evening games after midnight UTC. Live, completed, canceled, and postponed games are excluded. The FanDuel link opens the selected sport's sportsbook page. **NBA and NFL** cards offer **Pull Live Markets** beside **Game details**, saved snapshots and dedicated game views. NCAAF shows schedules only.
 
 ### API credit history
 
 Market snapshots live in **`data/market_data`**. The former top-level `market_data` folder has been moved there; existing snapshots remain readable with the same filenames. New live pulls use this location automatically.
 
-The Excel-readable credit ledger is **`data/API Log/api_credit_usage.csv`**. Each paid pull records its sport, matchup, game/event IDs, requested markets, exact `x-requests-last` credit charge, account counters when reported, timestamp in UTC and formatted EDT, and outcome. Missing charges remain blank and are labeled **Unreported** in the dashboard; they are never replaced with the estimated 17-credit maximum. A request that fails after being sent is recorded as failed, with its reported charge or an unknown charge. Account identifiers are irreversible fingerprints; API keys are never written to this file. Generated snapshots and logs are ignored by Git.
+The Excel-readable credit ledger is **`data/API Log/api_credit_usage.csv`**. Each paid pull records its sport, matchup, game/event IDs, requested markets, exact `x-requests-last` credit charge, account counters when reported, timestamp in UTC and formatted EDT, and outcome. Missing charges remain blank and are labeled **Unreported** in the dashboard; they are never replaced with an estimated maximum. A request that fails after being sent is recorded as failed, with its reported charge or an unknown charge. Account identifiers are irreversible fingerprints; API keys are never written to this file. Generated snapshots and logs are ignored by Git.
 
 The **Odds API** page places a current-month NBA/NFL/NCAAF composition pie beside the account quota donut, followed by per-sport monthly credit metrics, an all-history daily usage line chart, and a searchable, sortable table with CSV export. These reports read the local ledger without paid API requests. Calendar months and daily totals use EDT (UTC-4); timestamps display as `MM/DD/YYYY HH:MM:SS EDT`. Unknown charges are excluded from chart totals and explicitly counted. Activity outside this app remains reflected in the provider's quota donut, but cannot be attributed to a sport in the local ledger.
 
-Existing saved NFL snapshots are imported into the ledger without making API requests. Reopening a saved game, repeating the same click, or restarting the app does not create duplicate log entries. The SQLite snapshot index can recover missing log entries without another paid pull. Currently NFL has live-market pull buttons; NBA and NCAAF appear as zero until their usage is recorded. The ledger and reports support all three sports.
+Existing saved NBA and NFL snapshots are imported into the ledger without making API requests. Reopening a saved game, repeating the same click, or restarting the app does not create duplicate log entries. The SQLite snapshot index can recover missing log entries without another paid pull. NBA pulls are logged as NBA and included in the same usage charts and history table. The ledger and reports support all three sports.
+
+### NBA live markets and PPP
+
+NBA event-based EPV forecasting is available through `python -m Models.Game_Outcome.EPA.NBA_EPA --seasons 2025 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00` and the NBA market forecast selector. It reconstructs possession scoring from public events, quarantines inconsistent games, fits pre-action expected possession values and signed team residuals, and calibrates a normal score-error baseline. The separate `python -m Models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025 --download` command remains a raw-input audit; subsequent audit runs without `--download` are offline. See [NBA EPA/EPV setup](Models/Game_Outcome/EPA/NBA_EPA_SETUP.md) for preparation, reconstruction results and research limitations.
+
+NBA shares the NFL market-page structure: team-logo cards, bold latest-pull timestamps, a different background for data pulled within 24 hours, saved snapshot selection, an in-game **Pull Live Markets** button, collapsible player ladders and Game Lines comparisons. NBA cards and matchup headers use local PNGs from `images/NBA/Team Logos`; NFL uses its local PNGs. LA Clippers matches the `Los Angeles Clippers.png` filename. Abbreviations appear in the badge only when a local file is missing.
+
+Each explicit NBA pull makes one FanDuel event-odds request for **13 keys**, costing **up to 13 credits** according to returned markets. Actual cost comes from response headers. No automatic odds refreshes, other bookmakers or fantasy markets are included. Keys follow [The Odds API's market list](https://the-odds-api.com/sports-odds-data/betting-markets.html):
+
+| Category | Keys |
+| --- | --- |
+| Game Lines | `alternate_spreads`, `alternate_totals` |
+| Points / Rebounds / Assists / Threes | `player_points_alternate`, `player_rebounds_alternate`, `player_assists_alternate`, `player_threes_alternate` |
+| Defense / Turnovers | `player_blocks_alternate`, `player_steals_alternate`, `player_turnovers_alternate` |
+| Combos | `player_points_assists_alternate`, `player_points_rebounds_alternate`, `player_rebounds_assists_alternate`, `player_points_rebounds_assists_alternate` |
+
+Snapshots use `data/market_data/nba_<home>_<away>_<game-date>_<UTC-snapshot-timestamp>.csv`, with a secondary `data/cache/nba_markets.sqlite3` index. Opening a game reads saved files; only **Pull Live Markets** requests new odds. NBA and NFL records stay separate even if ESPN IDs coincide.
+
+**PPP** defaults to the NBA-specific model in [Models/Game_Outcome/PPP/NBA_PPP.py](Models/Game_Outcome/PPP/NBA_PPP.py). Select **EPA** for the independently fitted public event-based EPV model in [Models/Game_Outcome/EPA/NBA_EPA.py](Models/Game_Outcome/EPA/NBA_EPA.py). The selection updates probability/fair-odds headings, values, Edge and all four charts. Apply Criteria opens Game Lines and evaluates **both teams' spreads and both Over/Under totals**, using defaults of 75% probability and 5 percentage points Edge. Both must be strictly exceeded. Matching rows receive a highlighted border, including rows beyond Show more; a summary reports spread/total match counts or explicitly says that no markets match. Player props show prices without invented probabilities.
+
+Each market initially shows at most six selections. Apply Criteria keeps extra
+selections collapsed; use **Show more** to reveal them and the bottom **Show less**
+control to collapse them again. Applied criteria also add gold segments, fill
+and markers to qualifying lines in both teams' spread charts and the Over/Under
+charts. These use the same probability and Edge checks as the table rows.
+
+NFL and NBA also offer **ELO / Power Rating** in the forecast selector. It uses
+sequential neutral Elo, ridge point-margin strengths, a separate positive
+offense/defense and drive/possession scoring model for totals, and fitted
+chronological Elo/margin reconciliation. ELO has independent frozen estimates;
+selection updates probability, fair odds, Edge, highlights and all four charts
+without pulling odds. PPP remains the default. See [the ELO documentation](Models/Game_Outcome/ELO/README.md)
+for exact lookbacks, offseason carry, initial parameters and normal-baseline
+limitations. NCAAF does not have this forecast enabled.
+
+The NBA model uses the existing NBA Stats/SportsDataverse box-score adapters, estimated shared possessions, the EPA note's section 6.2 additive PPP baseline and section 6.3 shared pace, with chronological score-error calibration. Observations and frozen estimates live under `data/modeling/nba`. First estimates may download public statistics; this consumes no Odds API credits. See [model details](Models/Game_Outcome/PPP/README.md#8-nba-specific-ppp-implementation) for definitions and limitations.
 
 ### NFL live market snapshots
 
@@ -63,27 +105,35 @@ With the virtual environment activated, you can also run `python index.py`. The 
 
 Running `index.py` directly also selects this project's `.venv` automatically when it exists, so an IDE Run button using system Python can still launch the app. VS Code's default interpreter is configured to use `.venv`. Install the requirements with the setup command above when creating a new environment.
 
-Select NBA, NFL, or NCAAF, then choose a season. NBA and NFL offer team/player statistics; NCAAF offers teams only and automatically resets the mode to Teams when selected. The selected scope loads automatically when you open the page or change a filter, populating **Team or player** and **Statistic** from the actual observations. You can also click **Load historical data** to retry. Selectors are disabled with a source-status message when no data can be loaded. The game log supports filtering, sorting, and pagination. **Export loaded dataset** downloads all loaded rows and numeric statistics as CSV.
+Select NBA, NFL, or NCAAF, then choose a season. NBA and NFL offer team/player statistics; NCAAF offers teams only and automatically resets the mode to Teams when selected. The selected scope loads automatically when you open the page or change a filter, populating **Team or player** and **Statistic** from the actual observations. You can also click **Load historical data** to retry. Selectors are disabled with a source-status message when no data can be loaded. The game log hides Game ID for every sport and omits Week for NBA. It supports filtering, sorting, and pagination. **Export loaded dataset** downloads all loaded rows and numeric statistics as CSV.
 
 Player statistics are filtered by the selected player's position and available observations. Football kickers see kicking stats, defenders see defensive stats, and offensive players see their relevant stat families. Relevant zero values remain selectable. NBA positions share the same basketball box-score metrics. If a historical position label is unavailable, football options use only that player's recorded stat families. An incompatible statistic is replaced automatically when you switch players. Existing player caches without position metadata refresh automatically on their next load.
 
 In player mode, the first analysis filter is **Team**, followed by **Player**. Choose a team to narrow the player list and the selected player's current-season games, or select **All teams** to include every loaded team. The career graph always covers the selected player's full available history across teams. **Statistic type** selects a category, and **Statistic** then lists its detailed measures—for example **Passing → Passing yards / Passing touchdowns / Completions**. Categories also respect position relevance. Basketball uses categories such as Scoring, Shooting, Rebounding, Playmaking, and Defense. Changing a team, player, or category preserves compatible choices and replaces incompatible selections automatically. These analysis filters use the loaded dataset without additional source requests.
 
+NFL team statistics include **Scoring → PF (Points for) / PA (Points against)**, joined to actual final scores from the nflverse schedule. Missing scores stay unavailable, while zero-point games remain valid. Older NFL team caches refresh once to add the scoring fields.
+
 Starting the Python server does not download data until you open the page. Opening the dashboard loads its default scope, using the local cache when available. No sample statistics are presented as real observations.
 
-**Performance over time** labels games with their date and **away @ home** matchup, for example `2025-11-01 · GSW @ TOR`. Longer game logs show a readable subset of axis labels; every point's hover shows its date and matchup. The next-appearance baseline has no fabricated future date or opponent.
+**Performance over time** uses bars for the selected statistic and the next-appearance baseline, with the prior rolling-window mean kept as a line. It labels games with their date and **away @ home** matchup, for example `2025-11-01 · GSW @ TOR`. Longer game logs show a readable subset of axis labels; every point's hover shows its date and matchup. The next-appearance baseline has no fabricated future date or opponent.
 
 Selecting **Players** for NBA or NFL adds a **Player career** graph directly below the performance graph. It loads every published season available from the selected sport's summary source, matches the player by ID across all teams, and follows the selected statistic and regular/postseason phase. It ignores the season and week filters so earlier seasons and transfers remain visible. Counting statistics use **season totals**; rates keep their source units. Gaps remain missing rather than becoming zero. The caption reports source coverage and failed seasons. The first load can take longer; summaries are shared across players and saved in `data/cache/career.sqlite3` for 24 hours.
 
 ## NFL PPP market probabilities
 
-The **Forecast method** dropdown above the saved NFL market tables offers **PPP** (default) and **EPA**. Selecting a method changes the probability and fair-odds columns, Edge, criteria highlighting and all four comparison charts. `Models/EPA.py` implements signed opponent-adjusted passing/rushing EPA, a trained points-per-drive/EPA scoring bridge, and historical score-error uncertainty from the supplied EPA research PDF. Both methods use cached observations and saved quotes; switching methods never pulls live odds. EPA archives are separate from PPP archives. Run it independently with `python Models/EPA.py --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-19T23:35:23+00:00`. See [the EPA model documentation](Models/README.md#nfl-epa-model) for formulas, configuration and limitations.
+The **Forecast method** dropdown above the saved NFL market tables offers **PPP** (default), **EPA** and **ELO / Power Rating**. Selecting a method changes the probability and fair-odds columns, Edge, criteria highlighting and all four comparison charts. `Models/Game_Outcome/EPA/EPA.py` implements signed opponent-adjusted passing/rushing EPA, a trained points-per-drive/EPA scoring bridge, and historical score-error uncertainty from the supplied EPA research PDF. All methods use cached observations and saved quotes; switching methods never pulls live odds. Their archives have independent method prefixes. Run EPA independently with `python Models/Game_Outcome/EPA/EPA.py --seasons 2025 2026 --home BAL --away CIN --as-of 2026-10-19T23:35:23+00:00`. See [the EPA model documentation](Models/Game_Outcome/EPA/README.md) for formulas, configuration and limitations.
 
-`Models/PPP.py` implements the supplied PPP strategy document's sections 1–5 using joint opponent-adjusted efficiency, shared drive pace, separate non-offensive scoring and the section 4.1 normal baseline. Spread/total variances come from chronological held-out forecast errors, rather than the PDF's illustrative standard deviations. Public NFL schedules, team box scores, play-by-play and player snap counts are prepared in `data/modeling/nfl`; no Odds API credits are used for modeling.
+`Models/Game_Outcome/PPP/PPP.py` implements the supplied PPP strategy document's sections 1–5 using joint opponent-adjusted efficiency, shared drive pace, separate non-offensive scoring and the section 4.1 normal baseline. Spread/total variances come from chronological held-out forecast errors, rather than the PDF's illustrative standard deviations. Public NFL schedules, team box scores, play-by-play and player snap counts are prepared in `data/modeling/nfl`; no Odds API credits are used for modeling.
 
 On a saved NFL game's **Game Lines** tab, every alternate spread and total shows **Market odds**, **Market implied**, **PPP probability**, and **PPP fair odds**. Whole-point lines account for pushes; hover the PPP cells for win/loss/push probabilities. Four charts below the markets separately compare each team's handicap, Over, and Under, using teal PPP and blue market-implied probability lines with transparent fills at the saved lines. Spread labels include the team and handicap, such as `Baltimore - 3.5`. Bookmaker margin remains included in the market probabilities. Player props retain their existing layout. Estimates are saved and reused after restarting; missing model data shows an explicit message alongside the saved market quotes.
 
-Prepare data or run the model separately with `python Models/PPP.py --seasons 2025 2026 --home SF --away WSH --as-of 2026-10-19T23:35:23+00:00`. See [Models/README.md](Models/README.md) for source definitions, formulas, validation requirements, cache behavior and limitations. This is the report's normal baseline; key-number probabilities are approximate and no weather or injury adjustment is assumed.
+Prepare data or run the model separately with `python Models/Game_Outcome/PPP/PPP.py --seasons 2025 2026 --home SF --away WSH --as-of 2026-10-19T23:35:23+00:00`. See [Models/README.md](Models/README.md) for source definitions, formulas, validation requirements, cache behavior and limitations. This is the report's normal baseline; key-number probabilities are approximate and no weather or injury adjustment is assumed.
+
+## NBA team logo downloader
+
+Run `python download_nba_logos.py` to download all 30 current NBA team logos from ESPN's public team directory. It writes **500×500 transparent PNGs**, proportionally resized and centered, named for the team (for example `Golden State Warriors.png`). The default folder is **`images/NBA/Team Logos`**, alongside the NFL logos in the project's existing plural `images` folder. Restart the dashboard after adding logo files so they appear on NBA cards and matchup headers.
+
+Install its image dependency with `python -m pip install -r requirements-logos.txt`. Existing valid files are reported as **Already saved**, with their full paths; use `--overwrite` to download them again or `--output "another folder"` to select a different destination. The final message shows the total number of valid files ready in that folder. Failed files can be retried by rerunning; incomplete downloads never replace a completed image. No API key or Odds API credits are needed.
 
 ## NFL team logos
 
@@ -166,6 +216,9 @@ sports_analytics/
   schedule.py                  Upcoming ESPN games and daily schedule cache
   odds_api.py                  Server-side Odds API connection and quota usage
   nfl_markets.py               Fixed 17-market FanDuel NFL pulls and saved snapshots
+  nba_markets.py               NBA 13-market package and shared snapshot persistence
+  nba_model_data.py            Paired NBA box scores and estimated possessions
+  nba_ppp_service.py           NBA snapshot cutoffs and archived PPP estimates
   market_view.py               Saved-game matchup headers and player odds ladders
   forecast.py                  Rolling baseline and chronological evaluation
   ingest.py                    Multi-season command line importer
@@ -173,6 +226,7 @@ tests/test_history.py          Career, date/matchup, and dashboard integration c
 tests/test_schedule.py         Upcoming schedules, cache behavior, and page navigation
 tests/test_odds_api.py         Credit headers, connection errors, and usage dashboard
 tests/test_nfl_markets.py      Market package, game matching, saved snapshots, and pull buttons
+tests/test_nba_markets.py      NBA isolation, credit logs, model cutoffs and market UI
 ```
 
 Run the offline checks:

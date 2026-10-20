@@ -1,6 +1,6 @@
 """Independent EPA estimates using the shared saved-game cutoff/cache contract."""
 
-from Models.EPA import EPAForecast, EPAModel
+from Models.Game_Outcome.EPA.EPA import EPAForecast, EPAModel
 from .nfl_model_data import NflModelData
 from .ppp_service import PPPMarketService
 

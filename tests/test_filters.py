@@ -10,7 +10,7 @@ import pandas as pd
 from sports_analytics.career import Career
 from sports_analytics.dashboard import ALL_TEAMS, create_app
 from sports_analytics.data import Query, normalize
-from sports_analytics.metrics import statistic_categories
+from sports_analytics.metrics import metric_label, statistic_categories
 from sports_analytics.service import DataService
 
 
@@ -143,6 +143,32 @@ class FilterTests(unittest.TestCase):
         self.assertEqual({o["value"] for o in category["options"]}, {"scoring", "playmaking", "rebounding", "defense", "shooting"})
         shooting = self.callback("metric.options", **values, **{"metric-group.value": "shooting"})["metric"]
         self.assertEqual({o["value"] for o in shooting["options"]}, {"fgm", "fga", "fg_pct"})
+        trend = self.callback("trend.figure", **values, **{"metric.value": "pts"})
+        columns = {column["id"] for column in trend["game-log"]["columns"]}
+        self.assertNotIn("game_id", columns)
+        self.assertNotIn("week", columns)
+        self.assertNotIn("week", trend["game-log"]["data"][0])
+
+    def test_nfl_team_scoring_options_and_game_log_columns(self):
+        frame = normalize(pd.DataFrame({"game_id": ["g1", "g2"], "entity_id": ["KC", "KC"],
+                                        "entity_name": ["KC", "KC"], "team": ["KC", "KC"],
+                                        "opponent": ["BUF", "DAL"], "week": [1, 2],
+                                        "event_date": ["2025-09-01", "2025-09-08"],
+                                        "pf": [24, 0], "pa": [20, 27], "passing_yards": [250, 200]}), Query("NFL", 2025))
+        dataset = self.save(frame, "NFL", "team")
+        values = {"dataset.data": dataset, "entity.value": "KC", "metric-group.value": "scoring", "metric.value": "pf"}
+        categories = self.callback("metric-group.options", **values)["metric-group"]["options"]
+        self.assertIn({"label": "Scoring", "value": "scoring"}, categories)
+        scoring = self.callback("metric.options", **values)["metric"]["options"]
+        self.assertEqual(scoring, [{"label": "PF (Points for)", "value": "pf"}, {"label": "PA (Points against)", "value": "pa"}])
+        for metric in ["pf", "pa"]:
+            result = self.callback("trend.figure", **{**values, "metric.value": metric})
+            columns = {column["id"] for column in result["game-log"]["columns"]}
+            self.assertNotIn("game_id", columns)
+            self.assertIn("week", columns)
+            self.assertTrue(all("game_id" not in row for row in result["game-log"]["data"]))
+        self.assertIn("game_id", self.service.read(dataset["key"]).frame)
+        self.assertEqual(metric_label("pf", "NBA"), "Personal fouls")
 
     def test_empty_dataset_disables_dependent_filters(self):
         for token, component in [("player-team.options", "player-team"), ("entity.options", "entity"),

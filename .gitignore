@@ -13,6 +13,10 @@ data/modeling/nfl/raw/
 data/modeling/nfl/team_games_*.csv
 data/modeling/nfl/team_games_*.manifest.json
 data/modeling/nfl/forecasts/
+data/modeling/nba/team_games_*.csv
+data/modeling/nba/team_games_*.manifest.json
+data/modeling/nba/forecasts/
+data/modeling/nba/epa/
 tmp/
 *.log
 dist/

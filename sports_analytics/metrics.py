@@ -112,7 +112,7 @@ NBA_CATEGORIES = {
 
 def statistic_category(metric, sport):
     if sport != "NBA":
-        if metric in {"points", "pts"}:
+        if metric in {"points", "pts"} or sport == "NFL" and metric in {"pf", "pa"}:
             return "scoring"
         if metric == "special_teams_tds":
             return "special_teams"
@@ -134,6 +134,8 @@ def statistic_categories(metrics, sport):
 
 
 def metric_label(metric, sport):
+    if sport == "NFL" and metric in {"pf", "pa"}:
+        return {"pf": "PF (Points for)", "pa": "PA (Points against)"}[metric]
     basketball = {
         "pts": "Points", "reb": "Rebounds", "oreb": "Offensive rebounds", "dreb": "Defensive rebounds",
         "ast": "Assists", "stl": "Steals", "blk": "Blocks", "tov": "Turnovers", "pf": "Personal fouls",

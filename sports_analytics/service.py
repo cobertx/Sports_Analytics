@@ -76,7 +76,9 @@ class DataService:
             age = datetime.now(timezone.utc) - datetime.fromisoformat(cached.fetched_at)
             needs_positions = query.entity_type == "player" and "position" not in cached.frame
             needs_matchups = "matchup" not in cached.frame
-            if age.total_seconds() < self.ttl_hours * 3600 and not needs_positions and not needs_matchups:
+            needs_scoring = (query.sport == "NFL" and query.entity_type == "team" and
+                             not {"pf", "pa"} <= set(cached.frame))
+            if age.total_seconds() < self.ttl_hours * 3600 and not needs_positions and not needs_matchups and not needs_scoring:
                 return cached
         try:
             frame = fetch(query)

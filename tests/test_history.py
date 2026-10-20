@@ -11,7 +11,7 @@ import pandas as pd
 
 from sports_analytics.career import Career, CareerService, nba_season, nfl_season, season_value
 from sports_analytics.dashboard import career_figure, create_app, performance_figure
-from sports_analytics.data import DataSourceError, Query, load_nba, load_nba_archive, load_nfl, normalize
+from sports_analytics.data import DataSourceError, Query, load_nba, load_nba_archive, load_nfl, nfl_team_scoring, normalize
 from sports_analytics.forecast import rolling_baseline
 from sports_analytics.service import DataService
 
@@ -27,6 +27,29 @@ def game_frame(kind="player"):
 
 
 class GameLabelTests(unittest.TestCase):
+    def test_stat_and_next_baseline_are_bars_while_prior_five_game_mean_stays_a_line(self):
+        frame = game_frame()
+        extra = frame.iloc[:2].copy()
+        extra["game_id"] = ["005", "006"]
+        extra["event_date"] = pd.to_datetime(["2025-11-05", "2025-11-06"], utc=True)
+        extra["pts"] = [30, 35]
+        frame = pd.concat([frame, extra], ignore_index=True)
+        for sport, metric in [("NBA", "pts"), ("NFL", "pf"), ("NFL", "pa"), ("NFL", "passing_yards")]:
+            selected = frame.copy()
+            selected["sport"], selected[metric] = sport, selected["pts"]
+            history, prediction, *_ = rolling_baseline(selected, metric, 5)
+            figure = performance_figure(history, metric, 5, prediction)
+            with self.subTest(sport=sport, metric=metric):
+                self.assertEqual([trace.type for trace in figure.data], ["bar", "scatter", "bar"])
+                self.assertEqual(figure.data[1].mode, "lines")
+                self.assertEqual(figure.data[1].name, "Prior 5-game mean")
+                self.assertEqual(figure.data[1].y[-1], 23)
+                self.assertEqual(list(figure.data[2].y), [26])
+                self.assertEqual(list(figure.data[2].x), [7])
+                self.assertIn("Matchup TBD", figure.layout.xaxis.ticktext[-1])
+        history, *_ = rolling_baseline(frame.iloc[:2], "pts", 5)
+        self.assertEqual([trace.type for trace in performance_figure(history, "pts", 5, None).data], ["bar", "scatter"])
+
     def test_axis_and_hover_show_date_and_away_home_matchup(self):
         history, forecast, *_ = rolling_baseline(game_frame(), "pts", 3)
         figure = performance_figure(history, "pts", 3, forecast)
@@ -61,6 +84,51 @@ class GameLabelTests(unittest.TestCase):
         frame = load_nfl(Query("NFL", 2025), client)
         self.assertEqual(frame.iloc[0].matchup, "DAL @ PHI")
         self.assertEqual(frame.iloc[0].event_date.strftime("%Y-%m-%d"), "2025-09-04")
+
+    def test_nfl_team_scoring_uses_final_opposing_scores_with_shutouts_aliases_and_postseason(self):
+        stats = ("season,week,team,season_type,game_id,opponent_team,passing_yards\n"
+                 "2025,1,DAL,REG,2025_01_DAL_WAS,WSH,200\n"
+                 "2025,1,WSH,REG,2025_01_DAL_WAS,DAL,250\n"
+                 "2025,19,DAL,POST,2025_19_DAL_PHI,PHI,300\n")
+        schedule = ("game_id,gameday,away_team,home_team,away_score,home_score\n"
+                    "2025_01_DAL_WAS,2025-09-04,DAL,WAS,0,27\n"
+                    "2025_19_DAL_PHI,2026-01-11,DAL,PHI,21,24\n")
+        client = Mock()
+        client.get.side_effect = [Mock(text=stats), Mock(text=schedule)]
+        frame = load_nfl(Query("NFL", 2025), client).set_index("team")
+        self.assertEqual((frame.loc["DAL", "pf"], frame.loc["DAL", "pa"]), (0, 27))
+        self.assertEqual((frame.loc["WSH", "pf"], frame.loc["WSH", "pa"]), (27, 0))
+        client.get.side_effect = [Mock(text=stats), Mock(text=schedule)]
+        playoffs = load_nfl(Query("NFL", 2025, "team", "postseason", week=19), client)
+        self.assertEqual(len(playoffs), 1)
+        self.assertEqual((playoffs.iloc[0].pf, playoffs.iloc[0].pa), (21, 24))
+
+    def test_scoring_missing_invalid_or_ambiguous_results_are_never_zero_filled(self):
+        frame = pd.DataFrame({"game_id": ["g"], "team": ["DAL"], "opponent": ["PHI"]})
+        schedule = pd.DataFrame({"game_id": ["g"], "away_team": ["DAL"], "home_team": ["PHI"],
+                                 "away_score": [20], "home_score": [20]})
+        tied = nfl_team_scoring(frame, schedule)
+        self.assertEqual((tied.iloc[0].pf, tied.iloc[0].pa), (20, 20))
+        cases = [None, schedule.drop(columns="home_score"), pd.concat([schedule, schedule]),
+                 schedule.assign(home_score=float("nan")), schedule.assign(away_score=-1),
+                 schedule.assign(home_score=20.5), schedule.assign(home_team="NYG")]
+        for index, source in enumerate(cases):
+            with self.subTest(index=index):
+                result = nfl_team_scoring(frame, source)
+                self.assertTrue(result[["pf", "pa"]].isna().all().all())
+
+    def test_nfl_players_do_not_receive_team_scoring_and_missing_schedule_keeps_other_stats(self):
+        client = Mock()
+        stats = ("season,week,team,season_type,game_id,opponent_team,passing_yards,player_id,player_display_name,position\n"
+                 "2025,1,DAL,REG,2025_01_DAL_PHI,PHI,200,001,Test Player,QB\n")
+        client.get.side_effect = [Mock(text=stats), DataSourceError("Schedule unavailable")]
+        player = load_nfl(Query("NFL", 2025, "player"), client)
+        self.assertNotIn("pf", player)
+        self.assertNotIn("pa", player)
+        client.get.side_effect = [Mock(text=stats), DataSourceError("Schedule unavailable")]
+        team = load_nfl(Query("NFL", 2025), client)
+        self.assertEqual(team.iloc[0].passing_yards, 200)
+        self.assertTrue(team[["pf", "pa"]].isna().all().all())
 
     def test_nba_archive_home_player_still_shows_visitor_first(self):
         client = Mock()
@@ -184,6 +252,25 @@ class DashboardHistoryTests(unittest.TestCase):
                 self.assertEqual(upgraded.frame.matchup.iloc[0], "GSW @ TOR")
                 service.load(query)
                 self.assertEqual(fetch.call_count, 2)
+
+    def test_existing_nfl_team_cache_refreshes_once_for_scoring(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = DataService(Path(tmp) / "stats.sqlite3")
+            query = Query("NFL", 2025, "team")
+            old = normalize(pd.DataFrame({"game_id": ["g"], "entity_id": ["DAL"], "entity_name": ["DAL"],
+                                          "team": ["DAL"], "opponent": ["PHI"], "passing_yards": [200]}), query)
+            upgraded = old.assign(pf=24., pa=20.)
+            with patch("sports_analytics.service.fetch", side_effect=[old, upgraded]) as fetch:
+                initial = service.load(query)
+                result = service.load(query)
+                self.assertEqual(result.key, initial.key)
+                self.assertEqual((result.frame.iloc[0].pf, result.frame.iloc[0].pa), (24, 20))
+                service.load(query)
+                self.assertEqual(fetch.call_count, 2)
+            with patch("sports_analytics.service.fetch", return_value=old.assign(pf=float("nan"), pa=float("nan"))) as fetch:
+                service.load(query, refresh=True)
+                service.load(query)
+                fetch.assert_called_once()
 
 
 if __name__ == "__main__":

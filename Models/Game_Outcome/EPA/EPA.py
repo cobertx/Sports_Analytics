@@ -22,9 +22,9 @@ import pandas as pd
 if __name__ == "__main__":
     import sys
     from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from Models.PPP import PPPConfig, PPPError, PPPForecast, PPPModel
+from Models.Game_Outcome.PPP.PPP import PPPConfig, PPPError, PPPForecast, PPPModel
 
 
 class EPAError(PPPError):

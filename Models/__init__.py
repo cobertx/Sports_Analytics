@@ -1,1 +1,1 @@
-"""Reusable forecasting models, independent of the dashboard."""
+"""Forecasting families: Game_Outcome and Player_Stats."""

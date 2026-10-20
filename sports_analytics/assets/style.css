@@ -112,13 +112,24 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .apply-criteria-button { border: 1px solid #57dbc4; border-radius: 6px; padding: 11px 18px; background: #193b3c; color: #57dbc4; font-size: 12px; font-weight: 600; }
 .apply-criteria-button:hover { background: #24504f; }
 .criteria-status { color: #a7b9cd; font-size: 11px; line-height: 1.6; margin-top: 12px; }
+.criteria-evaluation { margin: 0 0 14px; padding: 12px 14px; border: 1px solid #f6c667; border-radius: 4px; background: #292719; color: #f7e5b5; font-size: 13px; line-height: 1.5; }
+.criteria-evaluation strong { display: block; }
+.criteria-evaluation-no-match { border-color: #f0747c; background: #301e23; color: #ffb6bc; }
 .market-outcome.market-line-comparison { border: 2px solid transparent; }
 .market-outcome.market-criteria-match { border-color: #f6c667; background: #302b1b; border-radius: 5px; }
 .sportsbook-market.market-criteria-group { border-color: #f6c667; }
-.criteria-match-count { color: #f6c667; font-size: 11px; margin-left: auto; }
+.sportsbook-market.market-criteria-no-match { border-color: #f0747c; }
+.criteria-match-count, .criteria-no-match-count { font-size: 11px; margin-left: auto; }
+.criteria-match-count { color: #f6c667; }
+.criteria-no-match-count { color: #f0747c; font-weight: 700; }
 @media (max-width: 600px) { .criteria-controls { grid-template-columns: 1fr 1fr; } .apply-criteria-button { grid-column: 1 / -1; } }
-.more-market-lines { border-top: 1px solid #383c40; }
-.more-market-lines > summary { padding: 12px; list-style: none; text-align: center; color: var(--odds-blue); font-size: 11px; cursor: pointer; }
+.more-market-lines { position: relative; border-top: 1px solid #383c40; }
+.more-market-lines > summary { padding: 12px; min-height: 42px; line-height: 18px; list-style: none; text-align: center; color: var(--odds-blue); font-size: 11px; cursor: pointer; }
+.more-market-lines .market-show-less { display: none; }
+.more-market-lines[open] { border-top: 0; padding-bottom: 43px; }
+.more-market-lines[open] > summary { position: absolute; bottom: 0; left: 0; right: 0; border-top: 1px solid #383c40; }
+.more-market-lines[open] .market-show-more { display: none; }
+.more-market-lines[open] .market-show-less { display: inline; }
 .saved-market-empty { padding: 24px 12px; color: #98aabc; font-size: 13px; }
 @media (max-width: 700px) { .snapshot-controls { flex-direction: column; align-items: stretch; } .snapshot-controls .field { width: 100%; } .sportsbook-view { padding: 12px 8px; } .matchup-banner { gap: 20px; } }
 .market-empty { padding: 32px 24px; margin-top: 22px; }

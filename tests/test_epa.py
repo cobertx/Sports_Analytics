@@ -12,8 +12,8 @@ from unittest.mock import Mock
 import numpy as np
 import pandas as pd
 
-from Models.EPA import EPAConfig, EPAError, EPAForecast, EPAModel, expected_points_added, scoring_bridge
-from Models.PPP import PPPConfig, PPPForecast
+from Models.Game_Outcome.EPA.EPA import EPAConfig, EPAError, EPAForecast, EPAModel, expected_points_added, scoring_bridge
+from Models.Game_Outcome.PPP.PPP import PPPConfig, PPPForecast
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.epa_service import EPAMarketService
@@ -170,7 +170,7 @@ class EPAIntegrationTests(unittest.TestCase):
         app = create_app(DataService(self.root / "data.sqlite3"), Mock(), Mock(), odds, markets, ppp_service=ppp, epa_service=epa)
         nodes = {node.id: node for node in app.layout._traverse() if hasattr(node, "id")}
         self.assertEqual(nodes["market-forecast-method"].value, "PPP")
-        self.assertEqual([item["value"] for item in nodes["market-forecast-method"].options], ["PPP", "EPA"])
+        self.assertEqual([item["value"] for item in nodes["market-forecast-method"].options], ["PPP", "EPA", "ELO"])
         key = next(key for key in app.callback_map if "saved-market-sections.children" in key)
         config = app.callback_map[key]
         client = app.server.test_client()

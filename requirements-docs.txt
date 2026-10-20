@@ -1,0 +1,4 @@
+# Optional tooling for rebuilding and visually verifying model PDF manuals.
+reportlab>=4.4,<6
+pypdf>=5,<7
+PyMuPDF>=1.25,<2
