@@ -22,6 +22,8 @@ from .schedule import FANDUEL_LINKS, SCHEDULE_LINKS, ScheduleService
 from .odds_api import DOCUMENTATION as ODDS_DOCUMENTATION, OddsApiService
 from .nfl_markets import NflMarketService
 from .nba_markets import NBA_CATEGORIES, NBA_MARKETS, NbaMarketService
+from .ncaaf_markets import NCAAF_MARKETS, NcaafMarketService
+from .whp_service import WHPMarketService
 from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
 from .display_time import eastern_datetime, format_eastern
 from .usage_log import ApiUsageLog, SPORTS as USAGE_SPORTS, usage_summary
@@ -35,12 +37,12 @@ ALL_TEAMS = "__all__"
 
 
 def market_game_id(location_hash):
-    match = re.fullmatch(r"#(?:nfl|nba)-game-(\d+)", location_hash or "")
+    match = re.fullmatch(r"#(?:nfl|nba|ncaaf)-game-(\d+)", location_hash or "")
     return match[1] if match else None
 
 
 def market_game_sport(location_hash):
-    return location_hash[1:4].upper() if market_game_id(location_hash) else None
+    return location_hash[1:].split("-game-", 1)[0].upper() if market_game_id(location_hash) else None
 
 
 def supported_dataset(dataset):
@@ -146,9 +148,9 @@ def career_figure(career, sport, metric, name):
 
 
 def game_card(game, sport, snapshot=None):
-    live = sport in {"NFL", "NBA"}
+    live = sport in {"NFL", "NBA", "NCAAF"}
     prefix = sport.lower()
-    credits = 17 if sport == "NFL" else len(NBA_MARKETS)
+    credits = len(NBA_MARKETS) if sport == "NBA" else 17
     def team_row(side, label):
         team = game[side]
         badge = logo_badge(team["name"], team["abbreviation"], sport)
@@ -237,7 +239,8 @@ def usage_figures(summary):
 
 def create_app(service=None, career_service=None, schedule_service=None, odds_service=None, nfl_market_service=None,
                api_usage_log=None, ppp_service=None, epa_service=None, nba_market_service=None, nba_ppp_service=None,
-               nba_epa_service=None, elo_service=None, nba_elo_service=None):
+               nba_epa_service=None, elo_service=None, nba_elo_service=None, ncaaf_market_service=None,
+               whp_service=None):
     service = service or DataService()
     career_service = career_service or CareerService(service.path.with_name("career.sqlite3"))
     schedule_service = schedule_service or ScheduleService(service.path.with_name("schedules.sqlite3"))
@@ -248,6 +251,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     nba_epa_service = nba_epa_service or NBAEPAMarketService()
     elo_service = elo_service or ELOMarketService()
     nba_elo_service = nba_elo_service or NBAELOMarketService()
+    whp_service = whp_service or WHPMarketService()
     data_directory = Path(__file__).resolve().parent.parent / "data"
     nfl_market_service = nfl_market_service or NflMarketService(odds_service, service.path.with_name("nfl_markets.sqlite3"),
                                                               data_directory / "market_data", usage_log=api_usage_log)
@@ -256,7 +260,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                      ApiUsageLog(data_directory / "API Log" / "api_credit_usage.csv"))
     nba_market_service = nba_market_service or NbaMarketService(odds_service, service.path.with_name("nba_markets.sqlite3"),
                                                               data_directory / "market_data", usage_log=api_usage_log)
-    market_services = {"NFL": nfl_market_service, "NBA": nba_market_service}
+    ncaaf_market_service = ncaaf_market_service or NcaafMarketService(odds_service, service.path.with_name("ncaaf_markets.sqlite3"),
+                                                                  data_directory / "market_data", usage_log=api_usage_log)
+    market_services = {"NFL": nfl_market_service, "NBA": nba_market_service, "NCAAF": ncaaf_market_service}
     app = Dash(__name__, assets_folder=str(Path(__file__).parent / "assets"),
                title="Sports Analytics", update_title="Loading…")
 
@@ -277,6 +283,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         dcc.Location(id="market-url", refresh=False), dcc.Store(id="market-schedule", data=[]),
         dcc.Store(id="market-detail-context"), dcc.Store(id="market-refresh-signal"),
         dcc.Store(id="market-applied-criteria"),
+        dcc.Store(id="player-history-signal"),
         dcc.Interval(id="market-timer", interval=5 * 60 * 1000, disabled=True),
         dcc.Interval(id="odds-timer", interval=5 * 60 * 1000, disabled=True),
         html.Header([
@@ -395,7 +402,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                       options=[{"label": "Next 7 days", "value": 7}, {"label": "Next 14 days", "value": 14}])),
                                 html.Button("Refresh upcoming games", id="market-refresh", n_clicks=0, className="export-button"),
                             ], className="market-controls"),
-                            html.P("Schedule data: ESPN · Times in EDT (UTC−4). Use Pull Live Markets to save a FanDuel snapshot: NFL up to 17 credits; NBA up to 13 credits. NCAAF shows schedules only.",
+                            html.P("Schedule data: ESPN · Times in EDT (UTC−4). Pull Live Markets saves a FanDuel snapshot: NFL/NCAAF up to 17 credits; NBA up to 13. College prop availability varies by event and jurisdiction.",
                                    className="market-source-note"),
                             dcc.Loading(html.Div([
                                 html.Div(id="market-status", role="status", **{"aria-live": "polite"}, className="load-status"),
@@ -411,15 +418,15 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                           value=5, min=-100, max=100, step="any")),
                                     html.Button("Apply Criteria", id="market-apply-criteria", n_clicks=0, className="apply-criteria-button"),
                                 ], className="criteria-controls"),
-                                html.Div("Applies to all calculated markets: alternate spreads and alternate totals (Over and Under), using the selected forecast method. Rows must exceed both thresholds. Edge is measured in percentage points.",
+                                html.Div("Applies to all calculated selections in the displayed category, including WHP player props. Rows must exceed both thresholds. Edge is measured in percentage points.",
                                          id="market-criteria-status", role="status", **{"aria-live": "polite"}, className="criteria-status"),
                             ], className="panel market-criteria"),
                             html.Div([
                             html.Div([
-                                html.A("← Back to upcoming games", href="#nfl-games", className="back-to-games"),
+                                html.A("← Back to upcoming games", id="market-back-link", href="#nfl-games", className="back-to-games"),
                                 html.Div([
                                     html.Button("Pull Live Markets", id="market-detail-pull", n_clicks=0, className="pull-markets-button"),
-                                    html.Small("FanDuel only · Up to 17 credits per new pull"),
+                                    html.Small("FanDuel only · Up to 17 credits per new pull", id="market-detail-credit"),
                                 ], className="detail-pull-control"),
                             ], className="detail-page-actions"),
                             html.Div(id="market-detail-pull-status", role="status", **{"aria-live": "polite"}),
@@ -433,6 +440,14 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                            options=[{"label": "PPP", "value": "PPP"}, {"label": "EPA", "value": "EPA"},
                                                     {"label": "ELO / Power Rating", "value": "ELO"}],
                                            clearable=False)), className="forecast-method-control"),
+                            html.Div([
+                                field("Player forecast method", dcc.Dropdown(id="player-forecast-method", value="WHP",
+                                      options=[{"label": "Weighted Historical Performance (WHP)", "value": "WHP"}], clearable=False)),
+                                html.Button("Prepare player history", id="player-history-prepare", n_clicks=0, className="export-button"),
+                                dcc.Checklist(id="player-history-refresh", options=[{"label": "Refresh saved source data", "value": "refresh"}], value=[]),
+                                html.Div(id="player-history-status", role="status", className="load-status"),
+                                html.P("Player tabs use WHP; Game Lines use the forecast method above. Prepare reuses saved NBA/NFL logs or downloads missing seasons. NCAAF uses CFBD_API_KEY. This button never pulls odds. Estimates are conditional on a recorded appearance; injuries and projected lineups are not modeled.", className="market-source-note"),
+                            ], className="panel player-forecast-controls"),
                             dcc.Tabs(id="market-category", value="Game", children=[], className="market-category-tabs"),
                             dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),
                             ], className="sportsbook-view"),
@@ -538,9 +553,18 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             raise PreventUpdate
         return market_game_sport(location_hash), "market"
 
+    @app.callback(Output("market-back-link", "href"), Output("market-detail-credit", "children"),
+                  Input("market-url", "hash"))
+    def market_detail_labels(location_hash):
+        sport = market_game_sport(location_hash) or "NFL"
+        credits = len(NBA_MARKETS) if sport == "NBA" else len(NCAAF_MARKETS) if sport == "NCAAF" else 17
+        return f"#{sport.lower()}-games", f"FanDuel only · Up to {credits} credits per new pull"
+
     @app.callback(Output("market-forecast-method", "options"), Output("market-forecast-method", "value"),
                   Input("market-url", "hash"), State("market-forecast-method", "value"))
     def forecast_methods(location_hash, previous):
+        if market_game_sport(location_hash) == "NCAAF":
+            return [{"label": "Game forecasts unavailable · use WHP in player tabs", "value": "PPP", "disabled": True}], "PPP"
         options = [{"label": "PPP", "value": "PPP"},
                    {"label": "EPA", "value": "EPA"},
                    {"label": "ELO / Power Rating", "value": "ELO"}]
@@ -622,20 +646,38 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     @app.callback(Output("market-applied-criteria", "data"), Output("market-criteria-status", "children"),
                   Output("market-category", "value", allow_duplicate=True),
                   Input("market-apply-criteria", "n_clicks"), State("market-probability-threshold", "value"),
-                  State("market-edge-threshold", "value"), prevent_initial_call=True)
-    def apply_market_criteria(clicks, probability, edge):
+                  State("market-edge-threshold", "value"), State("market-category", "value"), prevent_initial_call=True)
+    def apply_market_criteria(clicks, probability, edge, category):
         if not clicks:
             raise PreventUpdate
         if (not all(isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
                     for value in (probability, edge)) or not 0 <= probability <= 100 or not -100 <= edge <= 100):
             return no_update, "Enter an Estimated Probability from 0 to 100 and an Edge from -100 to 100. Previous criteria remain applied.", no_update
         return {"probability": probability / 100, "edge": edge / 100}, (
-            f"Applied to all calculated markets (alternate spreads and alternate totals): estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Game Lines shows the match count and highlighted selections for the selected method."), "Game"
+            f"Applied to all calculated selections: estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Player tabs use WHP; Game Lines use the selected game forecast."), category or "Game"
+
+    @app.callback(Output("player-history-signal", "data"), Output("player-history-status", "children"),
+                  Input("player-history-prepare", "n_clicks"), State("market-snapshot", "value"),
+                  State("market-url", "hash"), State("player-history-refresh", "value"),
+                  prevent_initial_call=True, running=[(Output("player-history-prepare", "disabled"), True, False)])
+    def prepare_player_history(clicks, selection, location_hash, refresh):
+        if not clicks:
+            raise PreventUpdate
+        snapshot = saved_snapshot(location_hash, selection)
+        if not snapshot:
+            return no_update, "Save a market snapshot first, then prepare player history."
+        snapshot = {**snapshot, "sport": market_game_sport(location_hash)}
+        try:
+            message = whp_service.prepare(snapshot, refresh="refresh" in (refresh or []))
+        except (DataSourceError, OSError, ValueError) as exc:
+            return no_update, f"Player history preparation unavailable: {exc}"
+        return {"sport": snapshot["sport"], "game_id": snapshot["game_id"], "attempt": clicks}, message
 
     @app.callback(Output("saved-market-sections", "children"), Input("market-category", "value"),
                   Input("market-snapshot", "value"), Input("market-url", "hash"), Input("market-applied-criteria", "data"),
-                  Input("market-forecast-method", "value"))
-    def show_saved_markets(category, selection, location_hash, criteria, method):
+                  Input("market-forecast-method", "value"), Input("player-history-signal", "data"),
+                  Input("player-forecast-method", "value"))
+    def show_saved_markets(category, selection, location_hash, criteria, method, _history, _player_method):
         method = method or "PPP"
         if method not in ("PPP", "EPA", "ELO"):
             raise PreventUpdate
@@ -645,9 +687,18 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if not snapshot["rows"]:
             return html.P("The saved response contains no FanDuel selections.", className="saved-market-empty")
         forecast, model_error = None, None
+        snapshot = {**snapshot, "sport": market_game_sport(location_hash)}
+        if category != "Game":
+            try:
+                forecast = whp_service.forecast(snapshot)
+            except (DataSourceError, OSError, ValueError) as exc:
+                model_error = str(exc)
+            return market_sections(snapshot, category, forecast, model_error, criteria, "WHP")
         if category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
             try:
-                if market_game_sport(location_hash) == "NBA":
+                if market_game_sport(location_hash) == "NCAAF":
+                    model_error = "NCAAF game-outcome forecasts are not connected. Open a player-prop tab for WHP."
+                elif market_game_sport(location_hash) == "NBA":
                     # Copies old CSV metadata so rendering always uses the correct sport.
                     snapshot = {**snapshot, "sport": "NBA"}
                     forecast = {"PPP": nba_ppp_service, "EPA": nba_epa_service, "ELO": nba_elo_service}[method].forecast(snapshot)

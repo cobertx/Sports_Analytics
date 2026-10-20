@@ -17,6 +17,7 @@ data/modeling/nba/team_games_*.csv
 data/modeling/nba/team_games_*.manifest.json
 data/modeling/nba/forecasts/
 data/modeling/nba/epa/
+data/modeling/player_stats/whp/
 tmp/
 *.log
 dist/

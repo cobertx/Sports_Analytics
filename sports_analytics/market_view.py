@@ -120,6 +120,8 @@ def selection_text(row):
 
 
 def _market_probability(row, forecast):
+    if forecast is not None and hasattr(forecast, "selection"):
+        return forecast.selection(row)
     if forecast is None or row["line"] is None:
         return None
     if row["market_key"] == "alternate_totals":
@@ -152,7 +154,7 @@ def _line_values(row, forecast):
         implied = None
     try:
         estimate = _market_probability(row, forecast)
-    except PPPError:
+    except ValueError:
         estimate = None
     probability = estimate.probability if estimate else None
     edge = probability - implied if probability is not None and implied is not None else None
@@ -240,6 +242,8 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=N
         methodology = ("ELO uses sequential neutral ratings, opponent-adjusted ridge power margins and a separate positive offense/defense "
                        "scoring/pace model for totals. Elo calibration and the margin blend are fitted on chronological forecast records. "
                        "This is a normal research baseline; roster, weather and explicit drive/possession/overtime simulation are not modeled.")
+    if snapshot.get("sport") == "NCAAF":
+        methodology = "College game-outcome models are not connected. WHP player estimates appear in the player-prop tabs."
     children = [html.Div(status, className="load-status ppp-status", role="status"),
                 html.P(f"Market probabilities include the bookmaker margin. {method} probabilities and fair odds exclude pushes; hover a model value to see its win, loss and push probabilities. "
                        + methodology,
@@ -268,17 +272,17 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
     for row in snapshot["rows"]:
         if row["group"] != category:
             continue
-        player = row["subject"] if row["market_key"] in MARKET_NAMES else ""
+        player = row["subject"] if row["market_key"].startswith("player_") else ""
         groups.setdefault((row["market_key"], player), []).append(row)
     sections = []
     evaluated = 0
     matched_counts = {"alternate_spreads": 0, "alternate_totals": 0}
     for index, ((key, player), rows) in enumerate(groups.items()):
-        title = f"{player} - {MARKET_NAMES[key][0]}" if player else rows[0]["market"]
+        title = f"{player} - {MARKET_NAMES.get(key, (rows[0]['market'], ''))[0]}" if player else rows[0]["market"]
         rows = sorted(rows, key=lambda row: (row["subject"].casefold() if not player else "",
                                             0 if row["selection"] == "Over" else 1,
                                             row["line"] if row["line"] is not None else 0))
-        comparison = key in {"alternate_spreads", "alternate_totals"}
+        comparison = key in {"alternate_spreads", "alternate_totals"} or (method == "WHP" and key.startswith("player_"))
         values = {id(row): _line_values(row, forecast) for row in rows} if comparison else {}
         matches = {identity: criteria_match(estimate.probability if estimate else None, edge, criteria)
                    for identity, (_, estimate, edge) in values.items()}
@@ -288,7 +292,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         no_match = bool(comparison and criteria and group_evaluated and not match_count)
         if comparison:
             evaluated += group_evaluated
-            matched_counts[key] += match_count
+            matched_counts[key] = matched_counts.get(key, 0) + match_count
         def outcome(row):
             initials = "".join(part[0] for part in row["subject"].split()[:2])
             price = f"{row['odds']:+g}" if row["odds"] is not None else "—"
@@ -296,6 +300,8 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 implied, estimate, edge = values[id(row)]
                 detail = (f"Win {probability_text(estimate.win)} · Loss {probability_text(estimate.loss)} · "
                           f"Push {probability_text(estimate.push)}; refunds excluded from fair-price probability") if estimate else model_error or f"{method} unavailable"
+                if forecast is not None and hasattr(forecast, "detail"):
+                    detail += " " + forecast.detail(row)
                 fair = f"{estimate.odds:+.0f}" if estimate and estimate.odds is not None else "—"
                 return html.Div([
                     html.Span(selection_text(row), className="market-selection"),
@@ -328,15 +334,23 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         ], key=f"{snapshot.get('game_id', snapshot.get('event_id', ''))}:{snapshot.get('pulled_at', '')}:{key}:{player}",
            open=index < 2, className="sportsbook-market" + (
             " market-criteria-group" if match_count else " market-criteria-no-match" if no_match else "")))
-    if category == "Game" and isinstance(criteria, dict) and criteria:
+    if (category == "Game" or method == "WHP") and isinstance(criteria, dict) and criteria:
         matched = sum(matched_counts.values())
         message = (f"{matched} qualifying selections: {matched_counts['alternate_spreads']} spreads and {matched_counts['alternate_totals']} totals."
                    if matched else f"No markets match these criteria. {evaluated} spread/total selections evaluated."
                    if evaluated else "Criteria could not be evaluated: model estimates or market prices are unavailable.")
+        if method == "WHP":
+            message = (f"{matched} qualifying WHP player selections; {evaluated} evaluated." if matched else
+                       f"No markets match these criteria. {evaluated} WHP player selections evaluated." if evaluated else
+                       "Criteria could not be evaluated: player history or market prices are unavailable.")
         sections.insert(0, html.Div([html.Strong(message),
             html.Span(f" {method} probability > {100*criteria.get('probability',0):g}% and Edge > {100*criteria.get('edge',0):g} pp. Both thresholds must be exceeded.")],
             className="criteria-evaluation" + (" criteria-evaluation-no-match" if evaluated and not matched else ""),
             role="status", **{"aria-live": "polite"}))
+    if method == "WHP":
+        sections.insert(0, html.P(model_error or
+            "WHP uses saved player appearances, recency weighting and walk-forward predictive dispersion. Hover a model value for sample size, mean, uncertainty and availability. Fair probabilities exclude pushes; market implied probabilities include the bookmaker margin. First/last scorer and props without sufficient history remain unavailable.",
+            className="ppp-comparison-note"))
     if category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
         sections.append(ppp_comparison(snapshot, forecast, model_error, method, criteria))
     return sections or [html.P("No saved selections in this category.", className="saved-market-empty")]
