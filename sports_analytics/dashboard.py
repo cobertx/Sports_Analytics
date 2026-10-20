@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from uuid import uuid4
 
-from dash import Dash, Input, MATCH, Output, State, ctx, dash_table, dcc, html, no_update
+from dash import ALL, Dash, Input, MATCH, Output, State, ctx, dash_table, dcc, html, no_update
 from dash.exceptions import PreventUpdate
 from flask import abort, send_from_directory
 import pandas as pd
@@ -16,6 +16,11 @@ import plotly.graph_objects as go
 from .data import DataSourceError, PLAYER_SPORTS, Query, SOURCES
 from .career import CareerService
 from .forecast import rolling_baseline
+from .backtesting_view import (backtesting_route,find_model,navigation as backtesting_navigation,
+                               page as backtesting_page)
+from .backtesting_service import BacktestingService
+from .backtesting_results import layout as backtesting_results_layout,render as render_backtesting_results,empty as empty_backtesting_results
+from .backtesting_results import evaluated_records
 from .metrics import metric_label, preferred_metric, relevant_metrics, statistic_categories, statistic_category
 from .service import DataService
 from .schedule import FANDUEL_LINKS, SCHEDULE_LINKS, ScheduleService
@@ -27,6 +32,11 @@ from .whp_service import WHPMarketService
 from .usage_opportunity_service import UsageOpportunityMarketService
 from .opponent_adjusted_service import OpponentAdjustedMarketService
 from .pace_game_environment_service import PaceGameEnvironmentMarketService
+from .parlay import build_leg,clean_state,quote_key,toggle_leg
+from .parlay_view import slip_layout,slip_contents,odds as parlay_odds
+from .ncaaf_model_data import NcaafModelData
+from .ncaaf_forecast_service import NCAAFMarketForecastService
+from .market_view import _market_probability,selection_text
 from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, NCAAF_LOGO_DIRECTORY, NCAAF_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
 from .display_time import eastern_datetime, format_eastern
 from .usage_log import ApiUsageLog, SPORTS as USAGE_SPORTS, usage_summary
@@ -243,8 +253,10 @@ def usage_figures(summary):
 def create_app(service=None, career_service=None, schedule_service=None, odds_service=None, nfl_market_service=None,
                api_usage_log=None, ppp_service=None, epa_service=None, nba_market_service=None, nba_ppp_service=None,
                nba_epa_service=None, elo_service=None, nba_elo_service=None, ncaaf_market_service=None,
-               whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None):
+               whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None,
+               ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None):
     service = service or DataService()
+    backtesting_service=backtesting_service or BacktestingService(data=service)
     career_service = career_service or CareerService(service.path.with_name("career.sqlite3"))
     schedule_service = schedule_service or ScheduleService(service.path.with_name("schedules.sqlite3"))
     odds_service = odds_service or OddsApiService()
@@ -258,6 +270,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     usage_opportunity_service = usage_opportunity_service or UsageOpportunityMarketService()
     opponent_adjusted_service = opponent_adjusted_service or OpponentAdjustedMarketService()
     pace_game_environment_service = pace_game_environment_service or PaceGameEnvironmentMarketService()
+    ncaaf_model_data = ncaaf_model_data or NcaafModelData()
+    ncaaf_forecast_services = ncaaf_forecast_services or {
+        method:NCAAFMarketForecastService(method,data=ncaaf_model_data) for method in ['PPP','EPA','ELO']}
     data_directory = Path(__file__).resolve().parent.parent / "data"
     nfl_market_service = nfl_market_service or NflMarketService(odds_service, service.path.with_name("nfl_markets.sqlite3"),
                                                               data_directory / "market_data", usage_log=api_usage_log)
@@ -290,12 +305,20 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             abort(404)
         return send_from_directory(NCAAF_LOGO_DIRECTORY, filename, mimetype="image/png")
 
+    @app.server.get('/backtesting/docs/<group>/<model_key>')
+    def backtesting_documentation(group,model_key):
+        model=find_model('NBA',(group,model_key))
+        if model is None or not (model.directory/'README.md').is_file():abort(404)
+        return send_from_directory(model.directory,'README.md',as_attachment=True,
+                                   download_name=f'{model.folder}_README.md')
+
     app.layout = html.Div([
         dcc.Store(id="dataset"), dcc.Download(id="download"),
         dcc.Location(id="market-url", refresh=False), dcc.Store(id="market-schedule", data=[]),
         dcc.Store(id="market-detail-context"), dcc.Store(id="market-refresh-signal"),
         dcc.Store(id="market-applied-criteria"),
         dcc.Store(id="market-forecast-history"),
+        dcc.Store(id="parlay-store",storage_type="session",data={"version":1,"legs":[],"collapsed":False}),
         dcc.Interval(id="market-timer", interval=5 * 60 * 1000, disabled=True),
         dcc.Interval(id="odds-timer", interval=5 * 60 * 1000, disabled=True),
         html.Header([
@@ -316,38 +339,42 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     dcc.RadioItems(id="workspace-page", value="historical", options=[
                         {"label": "Historical Data", "value": "historical"},
                         {"label": "FanDuel Market", "value": "market"},
+                        {"label": html.Span([html.Span('↺',className='navigation-icon',**{'aria-hidden':'true'}),
+                                               'Backtesting']), "value": "backtesting"},
                     ], className="page-navigation"),
+                    html.Div(id='backtesting-navigation',className='backtesting-navigation',style={'display':'none'}),
                 ], className="page-toolbar", **{"aria-label": "Sport pages"}),
                 html.Div([
                     html.Div([
-                        html.Aside([
-                            html.Div("BUILD YOUR DATASET", className="eyebrow"),
-                            html.H2("Historical scope"),
-                            field("Season starting year", dcc.Dropdown(id="season", options=list(range(date.today().year, 1998, -1)),
-                                                                       value=date.today().year - 1, clearable=False),
-                                  "NBA: 2024 means 2024–25. Football: 2024 means the 2024 season."),
-                            field("Statistics", dcc.RadioItems(id="entity-type", options=[{"label": "Teams", "value": "team"},
-                                                                                         {"label": "Players", "value": "player"}],
-                                                               value="team", inline=True, className="radio-group")),
-                            field("Season phase", dcc.Dropdown(id="season-type", options=[{"label": "Regular season", "value": "regular"},
-                                                                                          {"label": "Postseason", "value": "postseason"}],
-                                                               value="regular", clearable=False)),
+                        html.Section([
+                            html.Div([html.Div("BUILD YOUR DATASET", className="eyebrow"),
+                                      html.H2("Historical scope")], className="dataset-builder-heading"),
                             html.Div([
-                                field("College team", dcc.Input(id="college-team", type="text", value="Michigan", placeholder="e.g. Michigan", debounce=True),
-                                      "NCAAF requires a school name or a week. Use the source's school name."),
-                            ], id="college-fields", style={"display": "none"}),
-                            html.Div([field("Week (optional)", dcc.Input(id="week", type="number", min=0, max=25, step=1,
-                                                                         placeholder="All weeks", debounce=True))],
-                                     id="week-fields", style={"display": "none"}),
-                            html.Button("Load historical data →", id="load", n_clicks=0, className="primary-button"),
-                            html.Button("Refresh from source", id="refresh", n_clicks=0, className="secondary-button"),
-                            html.Div(id="source-info", className="source-info"),
-                            html.Div([html.Div("A FOUNDATION FOR FORECASTING", className="eyebrow"),
-                                      html.P("Start with an auditable rolling average. Compare future models against this baseline using past games only.")],
-                                     className="research-note"),
-                        ], className="sidebar panel"),
+                                field("Season starting year", dcc.Dropdown(id="season", options=list(range(date.today().year, 1998, -1)),
+                                                                           value=date.today().year - 1, clearable=False),
+                                      "NBA: 2024 means 2024–25. Football: 2024 means the 2024 season."),
+                                field("Statistics", dcc.RadioItems(id="entity-type", options=[{"label": "Teams", "value": "team"},
+                                                                                             {"label": "Players", "value": "player"}],
+                                                                   value="team", inline=True, className="radio-group")),
+                                field("Season phase", dcc.Dropdown(id="season-type", options=[{"label": "Regular season", "value": "regular"},
+                                                                                              {"label": "Postseason", "value": "postseason"}],
+                                                                   value="regular", clearable=False)),
+                                html.Div([
+                                    field("College team", dcc.Input(id="college-team", type="text", value="Michigan", placeholder="e.g. Michigan", debounce=True),
+                                          "NCAAF requires a school name or a week. Use the source's school name."),
+                                ], id="college-fields", className="dataset-scope-field", style={"display": "none"}),
+                                html.Div([field("Week (optional)", dcc.Input(id="week", type="number", min=0, max=25, step=1,
+                                                                             placeholder="All weeks", debounce=True))],
+                                         id="week-fields", className="dataset-scope-field", style={"display": "none"}),
+                                html.Div([
+                                    html.Button("Load historical data →", id="load", n_clicks=0, className="primary-button"),
+                                    html.Button("Refresh from source", id="refresh", n_clicks=0, className="secondary-button"),
+                                ], className="dataset-actions"),
+                            ], className="dataset-controls"),
+                        ], className="dataset-builder panel"),
                         html.Section([
                             html.Div(id="load-status", role="status", **{"aria-live": "polite"}, className="load-status"),
+                            dcc.Loading(html.Div(id="ncaaf-history-status",role="status",className="chart-note"),color="#57dbc4"),
                             dcc.Loading(html.Div([
                                 html.Div(id="dataset-summary", className="dataset-summary"),
                                 html.Div([
@@ -472,6 +499,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                             ], className="sportsbook-view"),
                         ], id="market-game-detail", className="market-detail-view", style={"display": "none"}),
                     ], id="market-page", className="market-page", style={"display": "none"}),
+                    html.Section([html.Div(id='backtesting-content'),backtesting_results_layout()],
+                                 id='backtesting-page',className='backtesting-page',style={'display':'none'}),
                 ], className="page-content"),
             ], id="sport-pages", className="page-shell"),
             html.Section([
@@ -544,7 +573,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 ], className="panel odds-setup"),
             ], id="odds-api-page", style={"display": "none"}),
             html.Footer("NBA / NFL / NCAAF · Displayed times in EDT (UTC−4)")
-        ])
+        ]),
+        slip_layout(),
     ], className="app-shell")
 
     @app.callback(Output("historical-page", "style"), Output("market-page", "style"),
@@ -552,22 +582,105 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Output("page-eyebrow", "children"), Output("page-title", "children"),
                   Output("page-description", "children"),
                   Output("sport-pages", "style"), Output("odds-api-page", "style"), Output("odds-timer", "disabled"),
+                  Output('backtesting-page','style'),
                   Input("workspace-page", "value"), Input("sport", "value"))
     def navigate(page, sport):
         odds = sport == "ODDS_API"
         market = page == "market" and not odds
+        backtesting = page == 'backtesting' and not odds
         intro = ("THE ODDS API", "Your monthly credits at a glance.",
                  "Monitor your account's credit usage and connection status.") if odds else (
+                'THE BACKTESTING LAB','Explore your forecasting models.',
+                f'Game Outcome and Player Stats evaluation methods for {sport}.') if backtesting else (
                 "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
                 "The next game starts here." if market else "From past performance to the next game.",
                 "Explore upcoming NBA, NFL, and college football matchups." if market else
                 "Explore team statistics across three leagues and player statistics for NBA and NFL.")
-        return ({"display": "none" if market or odds else "grid"}, {"display": "block" if market else "none"},
+        return ({"display": "none" if market or odds or backtesting else "grid"}, {"display": "block" if market else "none"},
                 f"{sport} · Upcoming games", FANDUEL_LINKS.get(sport, FANDUEL_LINKS["NBA"]), not market,
-                *intro, {"display": "none" if odds else "grid"}, {"display": "block" if odds else "none"}, not odds)
+                *intro, {"display": "none" if odds else "grid"}, {"display": "block" if odds else "none"}, not odds,
+                {'display':'block' if backtesting else 'none'})
+
+    @app.callback(Output('backtesting-navigation','children'),Output('backtesting-navigation','style'),
+                  Output('backtesting-content','children'),Output('backtest-evaluation-panel','style'),
+                  Input('workspace-page','value'),Input('sport','value'),
+                  Input('market-url','hash'))
+    def show_backtesting(page,sport,location_hash):
+        if page!='backtesting' or sport not in SOURCES:
+            return no_update,{'display':'none'},no_update,{'display':'none'}
+        model=find_model(sport,backtesting_route(location_hash))
+        return (backtesting_navigation(sport,location_hash),{'display':'block'},backtesting_page(sport,location_hash),
+                {'display':'block' if model else 'none'})
+
+    @app.callback(Output('backtest-context','data'),Output('backtest-entity','options'),Output('backtest-entity','value'),
+                  Output('backtest-entity-label','children'),Output('backtest-statistic-field','style'),
+                  Output('backtest-line-field','style'),Output('backtest-target-field','style'),
+                  Output('backtest-input-status','children'),Input('sport','value'),Input('market-url','hash'),
+                  Input('workspace-page','value'),State('backtest-entity','value'))
+    def configure_backtest(sport,location_hash,page,previous):
+        model=find_model(sport,backtesting_route(location_hash))
+        hidden={'display':'none'}
+        if page!='backtesting' or model is None:
+            return None,[],None,'Team',hidden,hidden,hidden,''
+        context=dict(sport=sport,group=model.group,model=model.key)
+        player=model.group=='player-stats'
+        try:
+            options,_,_=backtesting_service.options(sport,model.group,model.key,previous)
+            chosen=previous if previous in {o['value'] for o in options} else options[0]['value'] if options else None
+            note='Saved inputs only. Missing history is reported; source and odds APIs are not called.'
+        except (DataSourceError,OSError,ValueError,TypeError) as exc:
+            options=[];chosen=None;note=str(exc)
+        return (context,options,chosen,'Player' if player else 'Team',{'display':'block' if player else 'none'},
+                {'display':'block' if player else 'none'},{'display':'none' if player else 'block'},note)
+
+    @app.callback(Output('backtest-statistic','options'),Output('backtest-statistic','value'),
+                  Input('backtest-context','data'),Input('backtest-entity','value'),State('backtest-statistic','value'))
+    def backtest_statistics(context,entity,previous):
+        if not context or context['group']!='player-stats' or entity is None:return [],None
+        try:
+            _,options,_=backtesting_service.options(context['sport'],context['group'],context['model'],entity)
+        except (DataSourceError,OSError,ValueError,TypeError):return [],None
+        return options,previous if previous in {o['value'] for o in options} else options[0]['value'] if options else None
+
+    @app.callback(Output('backtest-result','data'),Output('backtest-run-status','children'),
+                  Input('backtest-run','n_clicks'),Input('backtest-context','data'),
+                  State('backtest-entity','value'),State('backtest-statistic','value'),
+                  State('backtest-dates','start_date'),State('backtest-dates','end_date'),State('backtest-limit','value'),
+                  State('backtest-tolerance','value'),State('backtest-line','value'),
+                  running=[(Output('backtest-run','disabled'),True,False),
+                           (Output('backtest-run','children'),'Running backtest…','Run backtest')])
+    def run_backtest(clicks,context,entity,market,start,end,limit,tolerance,line):
+        if not context:return None,''
+        if ctx.triggered_id!='backtest-run':
+            saved=backtesting_service.latest(context['sport'],context['group'],context['model'])
+            return saved,'Loaded the latest saved run. Use Run backtest to apply the current controls.' if saved else 'Choose a scope and run a chronological backtest.'
+        if not clicks:raise PreventUpdate
+        if entity is None:return None,'Choose a team or player with saved history first.'
+        try:
+            result=backtesting_service.run(context['sport'],context['group'],context['model'],entity,market,
+                start,end,limit,tolerance,line if context['group']=='player-stats' else None)
+        except (DataSourceError,OSError,ValueError,TypeError) as exc:return None,str(exc)
+        return result,f'Completed {len(result["records"])} evaluated games; {len(result["skipped"])} skipped. Results saved locally.'
+
+    @app.callback(Output('backtest-results','children'),Output('backtest-export','disabled'),
+                  Input('backtest-result','data'),Input('backtest-context','data'),Input('backtest-target','value'))
+    def show_backtest_results(result,context,target):
+        if (not result or not context or any(result.get('context',{}).get(k)!=context[k] for k in ['sport','group','model'])):
+            return empty_backtesting_results(),True
+        return render_backtesting_results(result,target if target in {'margin','total'} else 'margin'),False
+
+    @app.callback(Output('backtest-download','data'),Input('backtest-export','n_clicks'),
+                  State('backtest-result','data'),State('backtest-context','data'),State('backtest-target','value'),prevent_initial_call=True)
+    def export_backtest(clicks,result,context,target):
+        if not clicks or not result or not context or any(result['context'].get(k)!=context[k] for k in ['sport','group','model']):
+            raise PreventUpdate
+        return dcc.send_data_frame(pd.DataFrame(evaluated_records(result,target if target in {'margin','total'} else 'margin')).to_csv,
+            f'{context["sport"].lower()}_{context["model"]}_backtesting.csv',index=False)
 
     @app.callback(Output("sport", "value"), Output("workspace-page", "value"), Input("market-url", "hash"))
     def restore_game_route(location_hash):
+        if location_hash=='#backtesting' or backtesting_route(location_hash):
+            return no_update,'backtesting'
         if not market_game_id(location_hash):
             raise PreventUpdate
         return market_game_sport(location_hash), "market"
@@ -582,8 +695,6 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     @app.callback(Output("market-forecast-method", "options"), Output("market-forecast-method", "value"),
                   Input("market-url", "hash"), State("market-forecast-method", "value"))
     def forecast_methods(location_hash, previous):
-        if market_game_sport(location_hash) == "NCAAF":
-            return [{"label": "Game forecasts unavailable · use WHP in player tabs", "value": "PPP", "disabled": True}], "PPP"
         options = [{"label": "PPP", "value": "PPP"},
                    {"label": "EPA", "value": "EPA"},
                    {"label": "ELO / Power Rating", "value": "ELO"}]
@@ -647,6 +758,85 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         return next((item for item in market_services[market_game_sport(location_hash)].history(game_id)
                      if item.get("csv_file", item["pulled_at"]) == selection), None)
 
+    @app.callback(Output('parlay-store','data'),Output('parlay-notice','children'),
+                  Input({'type':'parlay-add','key':ALL},'n_clicks'),
+                  Input({'type':'parlay-remove','key':ALL},'n_clicks'),
+                  Input('parlay-clear','n_clicks'),Input('parlay-toggle','n_clicks'),
+                  State({'type':'parlay-add','key':ALL},'id'),State({'type':'parlay-remove','key':ALL},'id'),
+                  State('market-url','hash'),State('market-snapshot','value'),State('parlay-store','data'),
+                  prevent_initial_call=True)
+    def update_parlay(add_clicks,remove_clicks,clear_clicks,toggle_clicks,add_ids,remove_ids,
+                      location_hash,selection,stored):
+        triggered=ctx.triggered_id
+        state=clean_state(stored)
+        if triggered=='parlay-clear' and clear_clicks:
+            return dict(version=1,legs=[],collapsed=False),'Selections cleared.'
+        if triggered=='parlay-toggle' and toggle_clicks:
+            state['collapsed']=not state['collapsed']
+            return state,no_update
+        if not isinstance(triggered,dict):raise PreventUpdate
+        kind,key=triggered.get('type'),triggered.get('key')
+        ids,counts=(add_ids,add_clicks) if kind=='parlay-add' else (remove_ids,remove_clicks)
+        if not any(identity==triggered and count for identity,count in zip(ids or [],counts or [])):
+            raise PreventUpdate
+        if kind=='parlay-remove':
+            state['legs']=[leg for leg in state['legs'] if leg['key']!=key]
+            return state,'Selection removed.'
+        if kind!='parlay-add':raise PreventUpdate
+        snapshot=saved_snapshot(location_hash,selection)
+        if not snapshot:return no_update,'That saved snapshot is no longer selected. Click the displayed quote again.'
+        snapshot={**snapshot,'sport':market_game_sport(location_hash)}
+        match=next(((index,row) for index,row in enumerate(snapshot['rows']) if quote_key(snapshot,row,index)==key),None)
+        if match is None:return no_update,'The displayed snapshot changed. Click a quote in the current snapshot.'
+        index,row=match
+        # Exact same quote toggles without fetching/refitting its default model.
+        previous=next((leg for leg in state['legs'] if leg['quote_key']==key),None)
+        if previous:return toggle_leg(state,previous)
+        estimate,error,latest=None,None,None
+        try:
+            if row['market_key'].startswith('player_'):
+                if snapshot['sport']=='NCAAF':
+                    ncaaf_model_data.prepare([snapshot['home_team'],snapshot['away_team']],snapshot['commence_time'])
+                    ncaaf_model_data.prepare_players(snapshot,[row])
+                forecast=whp_service.forecast({**snapshot,'rows':[row]})
+                estimate=forecast.selection(row)
+                if estimate is None:error=forecast.detail(row)
+                fitted=forecast.forecasts.get((row['subject'],row['market_key'].removesuffix('_alternate')))
+                latest=fitted.diagnostics.get('last_game_date') if fitted else None
+            elif row['market_key'] in {'alternate_spreads','alternate_totals'} and snapshot['sport'] in {'NBA','NFL','NCAAF'}:
+                forecast={'NBA':nba_ppp_service,'NFL':ppp_service,'NCAAF':ncaaf_forecast_services['PPP']}[snapshot['sport']].forecast(snapshot)
+                estimate=_market_probability(row,forecast)
+                latest=forecast.diagnostics.get('last_game_date')
+            else:error='PPP is unavailable for this sport/market.'
+        except (DataSourceError,OSError,ValueError) as exc:
+            error=str(exc)
+        if estimate is None and not error:error='Default-model estimate unavailable for this selection.'
+        try:
+            leg=build_leg(snapshot,row,index,selection_text(row),estimate,error,latest)
+        except (TypeError,ValueError) as exc:return no_update,str(exc)
+        return toggle_leg(state,leg)
+
+    @app.callback(Output('parlay-body','children'),Output('parlay-drawer','className'),Output('parlay-drawer','style'),
+                  Output('parlay-count','children'),Output('parlay-mini','children'),Output('parlay-toggle','aria-expanded'),
+                  Input('parlay-store','data'),Input('workspace-page','value'),Input('sport','value'))
+    def render_parlay(stored,page,sport):
+        state=clean_state(stored)
+        body,summary=slip_contents(state['legs'])
+        count=summary['legs']
+        return (body,'parlay-drawer'+(' is-collapsed' if state['collapsed'] else '')+(' is-empty' if not count else ''),
+                {'display':'block' if count and page=='market' and sport!='ODDS_API' else 'none'},f'{count} '+('leg' if count==1 else 'legs'),
+                ('Est. ' if summary.get('same_game') else '')+parlay_odds(summary.get('market_odds')),
+                'false' if state['collapsed'] else 'true')
+
+    @app.callback(Output({'type':'parlay-add','key':ALL},'className'),
+                  Output({'type':'parlay-add','key':ALL},'aria-pressed'),
+                  Input('parlay-store','data'),Input({'type':'parlay-add','key':ALL},'id'))
+    def selected_parlay_prices(stored,identities):
+        selected={leg['quote_key'] for leg in clean_state(stored)['legs']}
+        flags=[identity['key'] in selected for identity in identities]
+        return (['market-price market-price-button'+(' is-selected' if flag else '') for flag in flags],
+                ['true' if flag else 'false' for flag in flags])
+
     @app.callback(Output("market-category", "children"), Output("market-category", "value"), Output("market-snapshot-status", "children"),
                   Input("market-snapshot", "value"), Input("market-url", "hash"), State("market-category", "value"))
     def snapshot_categories(selection, location_hash, previous):
@@ -678,13 +868,13 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     @app.callback(Output("player-forecast-method", "options"), Output("player-forecast-method", "value"),
                   Input("market-url", "hash"), State("player-forecast-method", "value"))
     def player_forecast_methods(location_hash, previous):
-        supported = market_game_sport(location_hash) in {"NBA", "NFL"}
+        supported = market_game_sport(location_hash) in {"NBA", "NFL", "NCAAF"}
         options = [{"label": "Weighted Historical Performance (WHP)", "value": "WHP"},
-                   {"label": "Usage & Opportunity (UO)" if supported else "Usage & Opportunity (NBA/NFL only)",
+                   {"label": "Usage & Opportunity (UO)",
                     "value": "UO", "disabled": not supported},
-                   {"label": "Opponent-Adjusted Matchup (OAM)" if supported else "Opponent-Adjusted Matchup (NBA/NFL only)",
+                   {"label": "Opponent-Adjusted Matchup (OAM)",
                     "value": "OAM", "disabled": not supported},
-                   {"label": "Pace & Game Environment (PGE)" if supported else "Pace & Game Environment (NBA/NFL only)",
+                   {"label": "Pace & Game Environment (PGE)",
                     "value": "PGE", "disabled": not supported}]
         return options, previous if previous == "WHP" or previous in {"UO", "OAM", "PGE"} and supported else "WHP"
 
@@ -697,8 +887,6 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         def label(kind, method, prefix):
             if not selection:
                 return prefix + "No saved snapshot selected"
-            if kind == "game" and market_game_sport(location_hash) == "NCAAF":
-                return prefix + "Not available for NCAAF"
             record = current.get(kind, {}).get(method)
             if record is None:
                 return prefix + "Not calculated yet"
@@ -738,12 +926,19 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             if player_method not in {"WHP", "UO", "OAM", "PGE"}:
                 raise PreventUpdate
             try:
+                if snapshot['sport']=='NCAAF':
+                    names=[snapshot['home_team'],snapshot['away_team']]
+                    ncaaf_model_data.prepare(names,snapshot['commence_time'])
+                    if player_method!='WHP':
+                        ncaaf_model_data.prepare_player_inputs(names,snapshot['commence_time'])
                 if player_method in {"UO", "OAM", "PGE"}:
                     # Simulate the full saved game once, so changing a player tab
                     # retains common team volumes and correlated prop outcomes.
                     forecast = {"UO": usage_opportunity_service, "OAM": opponent_adjusted_service,
                                 "PGE": pace_game_environment_service}[player_method].forecast(snapshot)
                 else:
+                    if snapshot['sport']=='NCAAF':
+                        ncaaf_model_data.prepare_players(snapshot,[row for row in snapshot['rows'] if row['group']==category])
                     forecast = whp_service.forecast({**snapshot, "rows": [row for row in snapshot["rows"] if row["group"] == category]})
             except (DataSourceError, OSError, ValueError) as exc:
                 model_error = str(exc)
@@ -756,7 +951,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
             try:
                 if market_game_sport(location_hash) == "NCAAF":
-                    model_error = "NCAAF game-outcome forecasts are not connected. Open a player-prop tab for WHP."
+                    forecast = ncaaf_forecast_services[method].forecast(snapshot)
                 elif market_game_sport(location_hash) == "NBA":
                     # Copies old CSV metadata so rendering always uses the correct sport.
                     snapshot = {**snapshot, "sport": "NBA"}
@@ -877,19 +1072,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                               className="panel market-empty")
         return blocks, status, schedule.games
 
-    @app.callback(Output("college-fields", "style"), Output("week-fields", "style"),
-                  Output("source-info", "children"), Input("sport", "value"))
+    @app.callback(Output("college-fields", "style"), Output("week-fields", "style"), Input("sport", "value"))
     def source_details(sport):
         if sport not in SOURCES:
             raise PreventUpdate
-        name, url = SOURCES[sport]
-        notes = {"NBA": "NBA Stats game logs and SportsDataverse historical box-score archives. No API key.",
-                 "NFL": "Weekly nflverse team and player box scores. No API key. Coverage varies by statistic.",
-                 "NCAAF": "FBS game box scores. Requires CFBD_API_KEY. API quotas and historical coverage depend on your access."}
         return ({"display": "block" if sport == "NCAAF" else "none"},
-                {"display": "block" if sport != "NBA" else "none"},
-                [html.Div("DATA SOURCE", className="eyebrow"), html.A(name + " ↗", href=url, target="_blank", rel="noreferrer"),
-                 html.P(notes[sport]), html.Small("Cached locally for 24 hours. Refresh bypasses the cache.")])
+                {"display": "block" if sport != "NBA" else "none"})
 
     @app.callback(Output("entity-type", "options"), Output("entity-type", "value"),
                   Input("sport", "value"), State("entity-type", "value"))
@@ -923,11 +1111,26 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         except (DataSourceError, ValueError, TypeError) as exc:
             return None, str(exc), "No dataset loaded", True
         summary = (f"{sport} · {season} · {phase} · {len(result.frame):,} appearances · "
-                   f"{result.frame['entity_id'].nunique():,} {kind}s · {result.source}")
+                   f"{result.frame['entity_id'].nunique():,} {kind}s")
         message = f"{result.status.capitalize()} · Retrieved {format_eastern(result.fetched_at)}."
         if result.notice:
             message += f" Showing previously saved data. {result.notice}"
         return {"key": result.key, "sport": sport, "season": season, "kind": kind, "phase": phase}, message, summary, False
+
+    @app.callback(Output('ncaaf-history-status','children'),Input('dataset','data'),Input('entity','value'),
+                  Input('refresh','n_clicks'),State('workspace-page','value'))
+    def prepare_college_selection(dataset,entity,_refresh,page):
+        if page!='historical' or not dataset or dataset.get('sport')!='NCAAF':return ''
+        if not entity:return 'Choose a college school to prepare reusable team/player forecasting CSVs.'
+        try:
+            frame=service.read(dataset['key']).frame
+            selected=frame[frame.entity_id.eq(str(entity))]
+            if selected.empty:return ''
+            school=str(selected.iloc[-1].entity_name)
+            return ncaaf_model_data.prepare_team(school,f"{int(dataset['season'])}-12-31T00:00:00+00:00",
+                                                 refresh=ctx.triggered_id=='refresh')
+        except (DataSourceError,OSError,ValueError) as exc:
+            return f'Historical statistics remain available; forecast preparation needs attention: {exc}'
 
     @app.callback(Output("entity", "options"), Output("entity", "value"),
                   Output("entity", "disabled"), Output("entity", "placeholder"),

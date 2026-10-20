@@ -18,7 +18,7 @@ from .model_comparison import compare_models
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--sport',required=True,choices=['NBA','NFL'])
+    parser.add_argument('--sport',required=True,choices=['NBA','NFL','NCAAF'])
     parser.add_argument('--prepare',action='store_true')
     parser.add_argument('--refresh',action='store_true')
     parser.add_argument('--start',help='Timezone-aware matchup start for preparation')

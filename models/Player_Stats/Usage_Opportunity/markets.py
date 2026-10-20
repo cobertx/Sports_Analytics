@@ -3,10 +3,10 @@ from models.Player_Stats.Weighted_Historical_Performance.markets import stat_spe
 
 
 def market_spec(sport, market_key):
-    if sport not in {'NBA', 'NFL'}:
+    if sport not in {'NBA', 'NFL', 'NCAAF'}:
         return None
     key = market_key.removesuffix('_alternate')
-    if sport == 'NFL' and (key.endswith('_tds') or key in {'player_anytime_td', 'player_1st_td', 'player_last_td'}):
+    if sport in {'NFL', 'NCAAF'} and (key.endswith('_tds') or key in {'player_anytime_td', 'player_1st_td', 'player_last_td'}):
         return None  # Explicit red-zone/scorer-order data is not connected.
     return stat_spec(sport, market_key)
 

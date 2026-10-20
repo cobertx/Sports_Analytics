@@ -1,0 +1,82 @@
+.navigation-icon { display: inline-block; margin-right: 7px; font-size: 17px; line-height: 1; vertical-align: -1px; }
+.backtesting-navigation { margin: 2px 0 0 12px; padding-left: 9px; border-left: 1px solid var(--line); }
+.backtesting-nav-group { margin-bottom: 5px; }
+.backtesting-nav-group > summary { position: relative; list-style: none; padding: 10px 15px 10px 5px; color: #c7d3e4; font-size: 12px; font-weight: 600; cursor: pointer; }
+.backtesting-nav-group > summary::-webkit-details-marker { display: none; }
+.backtesting-nav-group > summary::after { content: '›'; position: absolute; right: 3px; top: 6px; font-size: 20px; color: var(--muted); transition: transform .15s; }
+.backtesting-nav-group[open] > summary::after { transform: rotate(90deg); }
+.backtesting-nav-group > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.backtesting-nav-group > summary:hover { color: var(--accent); }
+.backtesting-model-links { display: grid; gap: 3px; padding: 0 0 7px 6px; }
+.backtesting-model-link { display: block; padding: 7px 8px; border-radius: 5px; font-size: 11px; line-height: 1.5; text-decoration: none; color: var(--muted); overflow-wrap: anywhere; }
+.backtesting-model-link:hover { background: #172b3b; color: var(--text); }
+.backtesting-model-link.active { background: #102e32; color: var(--accent); font-weight: 600; }
+.backtesting-page { min-width: 0; }
+.backtesting-heading { padding: 24px; margin-bottom: 24px; }
+.backtesting-heading h2 { font-size: 24px; margin: 10px 0; line-height: 1.3; }
+.backtesting-heading p { max-width: 850px; }
+.backtesting-model-group { margin: 0 0 28px; }
+.backtesting-model-group > h3 { font-size: 15px; margin: 0 0 14px; }
+.backtesting-model-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.backtesting-model-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 22px; color: var(--text); text-decoration: none; transition: border-color .15s; }
+.backtesting-model-card:hover { border-color: var(--accent); }
+.backtesting-model-card > strong { line-height: 1.5; }
+.backtesting-model-card > p { font-size: 12px; margin: 0 0 10px; }
+.backtesting-card-action { color: var(--accent); font-size: 12px; margin-top: auto; }
+.backtesting-documentation { display: inline-block; margin-top: 12px; text-decoration: none; }
+.backtesting-info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 22px; }
+.backtesting-info { padding: 22px; min-width: 0; }
+.backtesting-info h3, .backtesting-settings-panel h3 { font-size: 15px; margin: 0; }
+.backtesting-info p { font-size: 12px; }
+.backtesting-settings-scroll { overflow-x: auto; padding: 0 22px 22px; }
+.backtesting-settings { width: 100%; border-collapse: collapse; font-size: 12px; }
+.backtesting-settings th, .backtesting-settings td { text-align: left; padding: 12px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.backtesting-settings thead { background: #17253a; color: var(--text); }
+.backtesting-settings tbody th { font-weight: 500; color: #c7d3e4; width: 70%; }
+.backtesting-settings td { color: var(--accent); }
+.backtesting-model-notes { margin: 0 0 22px; }
+.backtesting-model-notes > summary { color: var(--muted); padding: 10px 0; font-size: 12px; cursor: pointer; }
+.backtest-setup { padding: 22px; margin-bottom: 22px; }
+.backtest-setup > p { font-size: 12px; }
+.backtest-controls { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; margin-top: 20px; }
+.backtest-controls .field { margin: 0; }
+.backtest-controls input { width: 100%; }
+.backtest-controls .DateRangePickerInput { display: flex; align-items: center; flex-wrap: wrap; border-radius: 6px; }
+.backtest-controls .DateInput { width: 105px; }
+.backtest-controls .DateInput_input { font-size: 12px; padding: 10px 8px; color: #000; }
+.backtest-controls .DateInput .DateInput_input { background: #f3f6fb; color: #000; border: 0; }
+.backtest-controls .DateInput .DateInput_input::placeholder { color: #586577; opacity: 1; }
+#backtest-dates input { background: #f3f6fb !important; color: #000 !important; }
+#backtest-dates input::placeholder { color: #586577 !important; opacity: 1; }
+.backtest-controls .field input.dash-datepicker-input { background: #f3f6fb !important; color: #000 !important; }
+.backtest-controls .field input.dash-datepicker-input::placeholder { color: #586577 !important; opacity: 1; }
+.backtest-controls .field input[type=number] { background: #f3f6fb; color: #000; }
+.backtest-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+.backtest-target { max-width: 320px; margin-top: 20px; }
+.backtest-target .field { margin: 0; }
+.backtest-status,.backtest-applied { color: var(--muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.backtest-applied { padding: 0 2px 12px; }
+.backtest-kpis { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; margin: 18px 0; }
+.backtest-kpis .kpi strong { font-size: 27px; }
+.backtest-empty { padding: 0 18px; overflow: hidden; }
+.backtest-chart-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; margin-top: 20px; }
+.backtest-chart { overflow: hidden; min-width: 0; }
+.backtest-chart:last-child { grid-column: 1/-1; }
+.backtest-table { margin-top: 22px; overflow: hidden; }
+.backtest-skipped { padding: 18px 22px; margin-top: 18px; color: var(--muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.backtest-skipped > summary { cursor: pointer; color: var(--text); }
+@media (max-width: 1100px) { .backtest-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); } .backtest-controls { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 700px) { .backtest-controls,.backtest-chart-grid { grid-template-columns: minmax(0,1fr); } }
+@media (max-width: 420px) { .backtest-kpis { grid-template-columns: minmax(0,1fr); } }
+@media (max-width: 700px) {
+  .backtesting-info-grid { grid-template-columns: 1fr; }
+  .backtesting-navigation { margin: 10px 0 12px; padding-left: 0; border-left: 0; display: grid; }
+  .backtesting-nav-group > summary { padding-left: 12px; }
+  .backtesting-model-links { padding-left: 20px; }
+}
+@media (max-width: 400px) {
+  .backtesting-model-grid { grid-template-columns: minmax(0, 1fr); }
+  .backtesting-heading { padding: 20px; }
+  .backtesting-heading h2 { font-size: 21px; }
+  .navigation-icon { margin-right: 4px; }
+}

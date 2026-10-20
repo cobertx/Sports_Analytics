@@ -43,7 +43,7 @@ class ELOConfig:
     def __post_init__(self):
         positive = (self.half_life_days, self.k_factor, self.elo_scale,
                     self.power_ridge, self.scoring_ridge, self.logistic_ridge)
-        if (self.sport not in {"NFL", "NBA"} or
+        if (self.sport not in {"NFL", "NBA", "NCAAF"} or
                 not all(math.isfinite(x) and x > 0 for x in positive) or
                 not math.isfinite(self.home_elo) or not 0 <= self.season_carry <= 1 or
                 any(not isinstance(x, int) or isinstance(x, bool) for x in (
@@ -317,7 +317,7 @@ class ELOModel:
     def predict(self, observations, home_team, away_team, as_of, neutral=False):
         history = self._history(observations, as_of)
         errors = []
-        grouping = [history.season, history.week] if self.config.sport == "NFL" else history.event_date
+        grouping = [history.season, history.week] if self.config.sport in {"NFL", "NCAAF"} else history.event_date
         # Only the latest eligible calibration pairs are needed. Evaluate folds
         # newest-first, while each fit still sees strictly earlier information.
         for _, held in reversed(list(history.groupby(grouping, sort=True))):

@@ -92,6 +92,9 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .player-marker { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #38454b; border-radius: 50%; background: #101618; color: #98c5e4; font-size: 9px; flex-shrink: 0; }
 .market-selection { flex: 1; color: #d0dfed; font-size: 12px; line-height: 1.5; }
 .market-price { display: grid; place-items: center; width: 64px; min-height: 43px; padding: 8px 4px; border: 1px solid #73b9ec; border-radius: 3px; color: var(--odds-blue); font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.market-price-button { background: transparent; }
+.market-price-button:hover { background: #11334d; border-color: #20a4ff; }
+.market-price-button.is-selected { color: #fff; background: #087cce; border-color: #59baff; box-shadow: 0 0 0 1px #59baff; }
 .market-line-comparison { display: grid; grid-template-columns: minmax(180px, 1fr) 82px repeat(3, minmax(102px, .5fr)) minmax(92px, .5fr); gap: 12px; min-width: 760px; }
 .market-comparison-heading { padding: 12px; color: #8fa7bd; font-size: 11px; border-bottom: 1px solid #373b3d; }
 .market-probability, .ppp-probability, .ppp-fair-odds, .market-edge { font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -157,10 +160,16 @@ p { color: var(--muted); line-height: 1.65; margin: 8px 0; }
 .sport-tabs { border-bottom: 1px solid var(--line) !important; margin-bottom: 24px; }
 .sport-tab { background: transparent !important; color: var(--muted) !important; border: none !important; border-bottom: 2px solid transparent !important; padding: 18px !important; font-size: 13px; font-weight: 600; }
 .sport-tab.selected { color: var(--accent) !important; border-bottom-color: var(--accent) !important; background: #10242b !important; }
-.workspace { display: grid; grid-template-columns: 265px minmax(0, 1fr); align-items: start; gap: 24px; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 24px; }
 .panel { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-.sidebar { padding: 24px 20px; }
-.sidebar h2 { margin: 10px 0 24px; }
+.dataset-builder { padding: 22px; min-width: 0; }
+.dataset-builder-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; margin-bottom: 20px; }
+.dataset-controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 18px; }
+.dataset-controls > .field, .dataset-scope-field { flex: 1 1 160px; min-width: 0; }
+.dataset-controls .field { margin-bottom: 0; }
+.dataset-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; flex: 1 1 315px; padding-top: 22px; }
+.dataset-actions button { white-space: nowrap; padding: 12px 10px; }
+.dataset-actions .secondary-button { margin-top: 0; }
 .field { margin-bottom: 20px; min-width: 0; }
 .field label { display: block; margin-bottom: 8px; font-size: 12px; color: #c7d3e4; font-weight: 600; }
 .field small { display: block; color: #8295af; font-size: 11px; line-height: 1.55; margin-top: 8px; }
@@ -173,11 +182,6 @@ p { color: var(--muted); line-height: 1.65; margin: 8px 0; }
 .primary-button:hover { background: #7ce6d3; }
 .secondary-button { margin-top: 10px; background: transparent; border: 1px solid #33445c; color: #b8c8dc; }
 .secondary-button:hover { border-color: #6b8bab; }
-.source-info, .research-note { border-top: 1px solid var(--line); padding-top: 22px; margin-top: 24px; font-size: 12px; }
-.source-info a { color: var(--accent); display: inline-block; margin-top: 9px; text-decoration: none; }
-.source-info small { color: #8295af; line-height: 1.6; }
-.research-note { font-size: 11px; }
-.research-note .eyebrow { font-size: 9px; letter-spacing: .9px; }
 .analysis { min-width: 0; }
 .load-status { border: 1px solid #294047; background: #102329; color: #aec6cc; border-radius: 8px; padding: 13px 16px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .dataset-summary { color: var(--muted); font-size: 11px; padding: 13px 2px 20px; }
@@ -206,8 +210,6 @@ footer { color: #64758d; font-size: 10px; margin-top: 30px; border-top: 1px soli
 .dash-dropdown-content { background: #111d2e; color: #e7edf6; --Dash-Text-Strong: #e7edf6; --Dash-Fill-Inverse-Strong: #111d2e; }
 .dash-table-container .dash-spreadsheet-container input { color: #c7d3e4 !important; }
 .dash-table-container button { background: #17253a; color: #c7d3e4; border-color: #33445c; }
-@media (min-width: 1300px) { .workspace { grid-template-columns: 285px minmax(0, 1fr); } }
-@media (max-width: 1150px) { .page-shell { grid-template-columns: 165px minmax(0, 1fr); gap: 16px; } .workspace { grid-template-columns: 220px minmax(0, 1fr); gap: 16px; } .game-grid { grid-template-columns: 1fr; } }
-@media (max-width: 900px) { .workspace { grid-template-columns: 1fr; } .sidebar { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; } .sidebar > .eyebrow, .sidebar > h2, .source-info, .research-note { grid-column: 1 / -1; } .sidebar > h2 { margin-bottom: 20px; } }
+@media (max-width: 1150px) { .page-shell { grid-template-columns: 165px minmax(0, 1fr); gap: 16px; } .workspace { gap: 16px; } .game-grid { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .page-shell { grid-template-columns: 1fr; } .page-toolbar { position: static; } .page-navigation { display: flex; gap: 6px; } .page-navigation label { flex: 1; margin: 0; } .market-heading { align-items: start; flex-direction: column; } .market-controls { flex-wrap: wrap; } }
-@media (max-width: 600px) { main { padding: 25px 16px 18px; } header { padding: 16px; } .sport-tab { font-size: 11px; padding: 14px 5px !important; } .sidebar { display: block; } .analysis-filters { grid-template-columns: 1fr; gap: 0; } .kpi-grid { grid-template-columns: 1fr; gap: 10px; } .kpi { padding: 16px; } .kpi strong { font-size: 25px; } .panel-heading .eyebrow { display: none; } }
+@media (max-width: 600px) { main { padding: 25px 16px 18px; } header { padding: 16px; } .sport-tab { font-size: 11px; padding: 14px 5px !important; } .dataset-builder { padding: 18px; } .dataset-actions { padding-top: 0; flex-basis: 100%; } .analysis-filters { grid-template-columns: 1fr; gap: 0; } .kpi-grid { grid-template-columns: 1fr; gap: 10px; } .kpi { padding: 16px; } .kpi strong { font-size: 25px; } .panel-heading .eyebrow { display: none; } }

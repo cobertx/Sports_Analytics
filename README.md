@@ -8,7 +8,29 @@ and [EPA guide](models/Game_Outcome/EPA/EPA_Implementation_Guide.pdf), plus the
 windows, minimum game counts, new-season carryover, formulas, calibration and
 saved-model behavior. The source research PDFs are retained separately.
 
-Each sport has two pages in the left toolbar: **Historical Data** contains the historical filters, charts, career histories, and game log; **FanDuel Market** shows upcoming game cards for the selected sport. Switching pages preserves the historical controls.
+Each sport has three pages in the left toolbar: **Historical Data** contains the historical filters, charts, career histories, and game log; **FanDuel Market** shows upcoming game cards; **Backtesting** opens a model overview and nested navigation. Switching pages preserves the historical controls.
+
+Under **Backtesting**, expand **Game Outcome** for PPP, EPA and ELO / Power Rating,
+or **Player Stats** for Weighted Historical Performance, Usage & Opportunity,
+Opponent-Adjusted Matchup and Pace & Game Environment. Each model has a separate
+page for the selected sport with its evaluation approach, required inputs,
+saved market snapshot count, current settings read from the model, and a model
+documentation download. Selecting a different sport updates the current model
+page and its settings. Links and browser back/forward navigation are supported.
+Each methodology page also includes **Run backtest**, team/player and statistic
+filters, an optional evaluation date range, game count and error tolerance.
+Player pages accept an optional fixed reference line for Over probability scores.
+Runs use saved inputs, fixed model defaults and earlier available observations
+at each game’s cutoff; opening a page reloads its latest saved report.
+
+Results include event accuracy with a Wilson interval, MAE, RMSE, bias, sample
+error variance/SD, within-tolerance accuracy, 90% predictive interval coverage,
+Brier score, log loss and a prior-data baseline. Five charts show predictions
+versus actual outcomes, agreement, residuals, rolling MAE and calibration.
+Game pages switch between home margin and total points. A detailed table,
+skipped-game reasons and CSV export support inspection. Reports and model replay
+caches stay in ignored `data/backtesting/`; source or odds APIs are never called
+by a run. See [backtesting details](docs/BACKTESTING.md).
 
 The separate **Odds API** tab connects to your [The Odds API](https://the-odds-api.com/) account and shows monthly credit usage as a donut chart, with used, unused, and total credits. Add `ODDS_API_KEY=your_api_key_here` to the ignored `.env` file and restart `python index.py`. The key stays on the server and is never placed in browser components or stored in the usage cache.
 
@@ -33,18 +55,21 @@ Existing NBA/NFL player logs are reused. Missing histories can be prepared with
 the sport, start and team arguments documented in the WHP guide; NCAAF requires
 `CFBD_API_KEY`. No history preparation controls appear in the game view.
 
-WHP uses up to 20 NBA, 16 NFL or 12 NCAAF appearances across the previous and
-current seasons, with independently replayed forecast errors for dispersion.
+WHP uses up to 20 NBA, 16 NFL or 12 NCAAF appearances with independently replayed
+forecast errors for dispersion. NBA/NFL look up the current and previous season;
+NCAAF now looks up the current and two previous seasons, including targeted transfers.
 Missing targets, insufficient samples, ambiguous players and first/last scorer
 definitions remain unavailable with a reason. Anytime/total scorer TDs require
 an authoritative all-scoring `touchdowns` target; passing TDs are not scorer TDs.
 Criteria applies to calculated player selections and preserves the current tab.
-The separate PPP/EPA/ELO selector continues to control NBA/NFL Game Lines.
+The separate PPP/EPA/ELO selector controls NBA/NFL/NCAAF Game Lines.
 
 NCAAF uses the same 17 football market keys as NFL and the existing CSV/credit
 audit pipeline. College coverage depends on the selected event and FanDuel.
-Only **Pull Live Markets** makes a paid odds request. College game-outcome
-forecasts remain unavailable. WHP forecasts and comparison audits are saved in
+Only **Pull Live Markets** makes a paid odds request. College PPP/EPA/ELO reuse
+school-scoped CSVs under `data/modeling/ncaaf`, prepared when a school is chosen
+in Historical Data. See [NCAAF data and forecasts](docs/NCAAF_FORECASTS.md).
+WHP forecasts and comparison audits are saved in
 `data/modeling/player_stats/whp`; historical source observations stay in the
 existing cache except for dedicated college sources and optional imports.
 
@@ -92,7 +117,7 @@ chronological Elo/margin reconciliation. ELO has independent frozen estimates;
 selection updates probability, fair odds, Edge, highlights and all four charts
 without pulling odds. PPP remains the default. See [the ELO documentation](models/Game_Outcome/ELO/README.md)
 for exact lookbacks, offseason carry, initial parameters and normal-baseline
-limitations. NCAAF does not have this forecast enabled.
+limitations. NCAAF has its own college-only ELO model and calibration.
 
 The NBA model uses the existing NBA Stats/SportsDataverse box-score adapters, estimated shared possessions, the EPA note's section 6.2 additive PPP baseline and section 6.3 shared pace, with chronological score-error calibration. Observations and frozen estimates live under `data/modeling/nba`. First estimates may download public statistics; this consumes no Odds API credits. See [model details](models/Game_Outcome/PPP/README.md#8-nba-specific-ppp-implementation) for definitions and limitations.
 
@@ -121,6 +146,16 @@ Saved CSVs are loaded on the next visit without an API request, including when t
 Only the button initiates a paid request. Opening pages, refreshing schedules, switching snapshots/categories, and expanding saved markets do not pull odds. The clicked button is disabled while loading; identical click identifiers are deduplicated across app restarts. A failed or timed-out paid request is not automatically retried, since its charge may already have been applied. Another deliberate click requests a fresh snapshot. Unmatched or ambiguous games are rejected before any paid request.
 
 Schedules load only while FanDuel Market is selected, refresh every five minutes, and are cached by sport/day in `data/cache/schedules.sqlite3`. **Refresh upcoming games** bypasses the cache. Source failures are shown explicitly, including dates with missing coverage or saved schedules. Historical filters do not restrict the upcoming schedule. NCAAF schedules cover FBS teams and do not require `CFBD_API_KEY`; the key is still required for NCAAF historical imports.
+
+## Parlay analysis slip
+
+In any saved FanDuel game, click **Market odds** to add/remove a leg in the
+bottom-docked parlay slip. Each leg shows market implied probability, default
+PPP/WHP probability and fair odds. The footer shows leg count and combined
+market/calculated odds and probabilities. Collapse, individual removal, Clear
+all and browser-session persistence are included. Same-game combinations are
+explicitly labeled independent-leg estimates, not a FanDuel SGP quote.
+See [pricing, push handling and limitations](docs/PARLAY.md).
 
 ## Run locally
 
@@ -171,7 +206,8 @@ team workload, player participation/share scenarios and efficiency to show **UO
 probability**, **UO fair odds** and **Edge**. Apply Criteria uses the selected
 method. Hover a forecast for workload, predictive intervals, simulation error,
 last source date and EV. Reading a snapshot never pulls odds or downloads source
-history. NCAAF retains WHP; UO is disabled there.
+history for NBA/NFL. NCAAF supports UO through its college adapter and prepares
+missing CFBD inputs on first use; later views reuse saved CSVs.
 
 The implementation, exact NBA/NFL lookbacks, season carryover, supported markets,
 input requirements and limitations are documented in
@@ -208,7 +244,10 @@ and `OAM_Implementation_Guide.pdf` for exact windows, sample requirements, prior
 season carryover, components, optional pregame lineup scenarios and historical
 WHP/UO/OAM comparison. The engine uses the existing NBA/nflverse box scores;
 unconnected tactical, tracking, route and live personnel feeds are not inferred.
-NCAAF OAM and NFL touchdown/order forecasts remain unavailable.
+NCAAF now supports OAM and PGE as well as UO and WHP. See
+[college player methods](docs/NCAAF_PLAYER_METHODS.md) for college-specific
+inputs, lookbacks and coverage. Opportunity-model touchdown/order forecasts
+remain unavailable without the required source inputs.
 
 ```powershell
 python -m models.Player_Stats.Opponent_Adjusted_Matchup --sport NBA --prepare --start "2026-10-25T23:00:00Z"

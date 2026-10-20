@@ -23,6 +23,7 @@ coverage.xml
 
 # Local source caches, account logs, downloaded data and fitted estimates
 data/cache/
+data/backtesting/
 market_data/*.csv
 data/market_data/*.csv
 data/API Log/*.csv
@@ -37,6 +38,11 @@ data/modeling/nba/team_games_*.manifest.json
 data/modeling/nba/forecasts/
 data/modeling/nba/epa/
 data/modeling/nba/raw/
+data/modeling/ncaaf/*.csv
+data/modeling/ncaaf/*.json
+data/modeling/ncaaf/raw/
+data/modeling/ncaaf/forecasts/
+data/modeling/ncaaf/transfers/
 data/modeling/player_stats/whp/
 data/modeling/player_stats/usage_opportunity/
 data/modeling/player_stats/opponent_adjusted_matchup/

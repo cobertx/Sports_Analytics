@@ -13,6 +13,7 @@ from models.Game_Outcome.PPP.PPP import PPPError, implied_probability
 from .display_time import eastern_datetime, format_eastern
 from .nfl_markets import NFL_TEAM_CODES
 from .nba_markets import NBA_TEAM_CODES
+from .parlay import quote_key
 
 NFL_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NFL" / "Team Logos"
 NFL_LOGO_FILES = {path.stem.casefold(): path.name for path in NFL_LOGO_DIRECTORY.glob("*.png")}
@@ -129,7 +130,7 @@ def _market_probability(row, forecast):
     if row["market_key"] == "alternate_totals":
         return forecast.total(row["line"], row["selection"])
     if row["market_key"] == "alternate_spreads":
-        team = {**NFL_TEAM_CODES, **NBA_TEAM_CODES}.get(row["subject"])
+        team = forecast.diagnostics.get('team_aliases',{}).get(row['subject']) or {**NFL_TEAM_CODES, **NBA_TEAM_CODES}.get(row["subject"])
         return forecast.spread(team, row["line"])
     return None
 
@@ -245,7 +246,9 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=N
                        "scoring/pace model for totals. Elo calibration and the margin blend are fitted on chronological forecast records. "
                        "This is a normal research baseline; roster, weather and explicit drive/possession/overtime simulation are not modeled.")
     if snapshot.get("sport") == "NCAAF":
-        methodology = "College game-outcome models are not connected. WHP player estimates appear in the player-prop tabs."
+        methodology = (f"NCAAF {method} uses selected-school CFBD CSV history and college-only chronological score-error calibration. "
+                       "PPP models total scoring per play; EPA uses signed provider PPA with a fitted scoring bridge; ELO combines ratings/power with scoring. "
+                       "This scoped cohort is not a full FBS conference model; roster and explicit overtime adjustments are not connected.")
     children = [html.Div(status, className="load-status ppp-status", role="status"),
                 html.P(f"Market probabilities include the bookmaker margin. {method} probabilities and fair odds exclude pushes; hover a model value to see its win, loss and push probabilities. "
                        + methodology,
@@ -272,6 +275,7 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=N
 def market_sections(snapshot, category, forecast=None, model_error=None, criteria=None, method="PPP"):
     player_method = method in {"WHP", "UO", "OAM", "PGE"}
     groups = OrderedDict()
+    row_indices = {id(row):index for index,row in enumerate(snapshot['rows'])}
     for row in snapshot["rows"]:
         if row["group"] != category:
             continue
@@ -299,6 +303,14 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         def outcome(row):
             initials = "".join(part[0] for part in row["subject"].split()[:2])
             price = f"{row['odds']:+g}" if row["odds"] is not None else "—"
+            try:
+                valid_price = implied_probability(row['odds']) is not None
+            except (TypeError,ValueError):
+                valid_price = False
+            price_button = html.Button(price,id={'type':'parlay-add','key':quote_key(snapshot,row,row_indices[id(row)])},
+                n_clicks=0,className='market-price market-price-button',disabled=not valid_price,
+                title='Add or remove this saved selection in the parlay slip',
+                **{'aria-label':f"Add {selection_text(row)} at {price} to parlay",'aria-pressed':'false'})
             if comparison:
                 implied, estimate, edge = values[id(row)]
                 detail = (f"Win {probability_text(estimate.win)} · Loss {probability_text(estimate.loss)} · "
@@ -308,7 +320,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 fair = f"{estimate.odds:+.0f}" if estimate and estimate.odds is not None else "—"
                 return html.Div([
                     html.Span(selection_text(row), className="market-selection"),
-                    html.Span(price, className="market-price", title="American odds from this saved snapshot"),
+                    price_button,
                     html.Span(probability_text(implied), className="market-probability", title="Raw break-even probability; includes bookmaker margin"),
                     html.Span(probability_text(estimate.probability) if estimate else "—", className="ppp-probability", title=detail),
                     html.Span(fair, className="ppp-fair-odds", title=detail),
@@ -318,7 +330,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
             return html.Div([
                 html.Span(initials, className="player-marker", **{"aria-hidden": "true"}),
                 html.Span(selection_text(row), className="market-selection"),
-                html.Span(price, className="market-price", title=f"American odds · {row['selection']} {row['line'] if row['line'] is not None else ''} · Updated {format_eastern(row['updated']) if row['updated'] != 'Not reported' else row['updated']}"),
+                price_button,
             ], className="market-outcome")
         sections.append(html.Details([
             html.Summary([html.Strong(title),

@@ -36,6 +36,10 @@ class UsageHistoryRepository:
         self.root = Path(root or ROOT)
 
     def load(self, sport, start, teams):
+        if sport == 'NCAAF':
+            from sports_analytics.ncaaf_model_data import NcaafModelData,seasons_for_start
+            data=NcaafModelData(directory=self.players.college_directory)
+            return self.players.load(sport,start,teams),data.player_team_frames(seasons_for_start(start))
         if sport not in {'NBA', 'NFL'}:
             raise DataSourceError('Usage & Opportunity is currently available for NBA and NFL only.')
         players = self.players.load(sport, start, teams)
@@ -57,6 +61,12 @@ class UsageHistoryRepository:
         return players, team_data
 
     def prepare(self, sport, start, teams=(), refresh=False):
+        if sport == 'NCAAF':
+            from sports_analytics.ncaaf_model_data import NcaafModelData
+            data=NcaafModelData(directory=self.players.college_directory)
+            _,notices=data.prepare(teams,start,refresh)
+            data.prepare_player_inputs(teams,start,refresh)
+            return ' '.join(notices)
         if sport not in {'NBA', 'NFL'}:
             raise DataSourceError('Usage & Opportunity preparation supports NBA and NFL only.')
         notices = [self.players.prepare(sport, start, teams, refresh)]

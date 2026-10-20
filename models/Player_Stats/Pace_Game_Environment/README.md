@@ -5,6 +5,11 @@ This package implements an NBA/NFL public-data baseline for the supplied
 unchanged beside the code. `PGE_Implementation_Guide.pdf`, generated from this
 README, explains the implementation, rather than duplicating the research PDF.
 
+NCAAF is also supported through a full-game college pace adapter. See the
+[college implementation supplement](../../../docs/NCAAF_PLAYER_METHODS.md)
+for CFBD inputs, paired college scripts and unseparated overtime. The NBA/NFL
+guide below and its existing PDF describe those sports.
+
 In a saved NBA or NFL FanDuel game, select **Pace & Game Environment (PGE)** in
 **Player Forecast Method**. Supported player selections show PGE probability,
 PGE fair odds and Edge. Game Outcome Forecast Method remains independent.
@@ -70,8 +75,8 @@ player per-game outcome is never multiplied by another pace adjustment.
 PGE is a separate selection from UO and OAM. It does not silently compose OAM's
 defensive efficiency adjustments. Existing UO/OAM functions accept optional
 environment hooks; their own services pass no environment, preserving their
-existing calculation paths. NCAAF requires its own clock/scheme/prior treatment
-and remains disabled for PGE. College WHP remains available.
+existing calculation paths. College PGE uses a separate full-game box-score
+adapter; it does not claim a college clock or scheme simulator.
 
 ## 2. Input preparation and point-in-time controls
 
@@ -311,6 +316,7 @@ checks establish implementation consistency, not predictive superiority.
 This baseline uses estimated possessions and public boxes/PBP. It does not
 implement player tracking, actual route participation, active injury scenarios,
 live weather, a clock/drive simulator, tactical matchup effects, a fully reconciled
-shot-by-shot NBA rebound/assist process, betting execution, or a college model.
+shot-by-shot NBA rebound/assist process or betting execution. The college
+extension is documented separately in the supplement linked above.
 Overtime and blowout behavior are empirical historical mixtures; rare tails and
 new rotations require further validation on untouched chronological periods.

@@ -62,6 +62,11 @@ class OpponentAdjustedMarketService:
 
     def forecast(self,snapshot):
         sport=snapshot['sport']
+        if sport=='NCAAF':
+            if self.scenarios:
+                raise DataSourceError('College lineup scenarios are not connected; omit the scenario file.')
+            from models.Player_Stats.Usage_Opportunity.ncaaf_model import CollegePlayerMarketService
+            return CollegePlayerMarketService('OAM',self.repository,self.config).forecast(snapshot)
         if sport not in {'NBA','NFL'}:
             raise DataSourceError('Opponent-adjusted matchup is currently available for NBA and NFL only.')
         config=self.config or MatchupConfig.for_sport(sport)

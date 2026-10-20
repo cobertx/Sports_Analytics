@@ -1,0 +1,60 @@
+.app-shell > main { padding-bottom: calc(20px + var(--parlay-space, 0px)); }
+.parlay-drawer { position: fixed; z-index: 1100; bottom: 0; left: 50%; transform: translateX(-50%); width: min(1140px, calc(100% - 32px)); background: #171b20; color: #e8eef5; border: 1px solid #318bd0; border-bottom: 0; border-radius: 11px 11px 0 0; box-shadow: 0 -10px 50px #0009; overflow: hidden; }
+.parlay-topbar { display: flex; align-items: center; background: #075fae; min-height: 54px; padding-right: 18px; }
+.parlay-toggle { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; align-self: stretch; text-align: left; border: 0; padding: 14px 20px; background: transparent; color: #fff; }
+.parlay-heading { font-size: 16px; font-weight: 800; letter-spacing: .04em; }
+.parlay-count { border: 1px solid #80b9e8; border-radius: 4px; padding: 3px 8px; font-size: 12px; white-space: nowrap; }
+.parlay-mini { margin-left: auto; font-weight: 750; font-size: 15px; }
+.parlay-chevron { font-size: 22px; line-height: 1; transition: transform .15s; }
+.parlay-clear { color: #fff; border: 0; border-left: 1px solid #fff4; padding: 4px 0 4px 18px; background: transparent; font-size: 12px; white-space: nowrap; }
+.parlay-clear:hover { text-decoration: underline; }
+.parlay-body { display: flex; flex-direction: column; max-height: calc(70dvh - 80px); }
+.parlay-leg-list { overflow-y: auto; min-height: 0; }
+.parlay-game { margin: 0; padding: 0 16px; }
+.parlay-game-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 13px 0 10px; color: #c5d4e4; font-size: 12px; border-bottom: 1px solid #3b4653; }
+.parlay-sport { font-size: 10px; letter-spacing: .06em; font-weight: 750; color: #8acbff; }
+.parlay-sgp { font-size: 10px; margin-left: auto; padding: 3px 6px; border: 1px solid #557181; border-radius: 3px; color: #aad5f5; }
+.parlay-leg { display: grid; grid-template-columns: 24px minmax(210px, 1fr) repeat(4, minmax(100px, .4fr)); gap: 14px; align-items: center; padding: 14px 0; border-bottom: 1px solid #303944; }
+.parlay-remove { align-self: start; border: 0; background: transparent; color: #a1b3c6; font-size: 24px; line-height: 24px; padding: 0; }
+.parlay-remove:hover { color: #fff; background: #3a4857; border-radius: 3px; }
+.parlay-selection-info { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.parlay-selection-info > strong { font-size: 13px; }
+.parlay-market-name { font-size: 11px; color: #b4c3d2; }
+.parlay-leg-source { font-size: 10px; color: #94a5b6; line-height: 1.4; }
+.parlay-metric { display: flex; flex-direction: column; gap: 7px; align-items: flex-start; min-width: 0; }
+.parlay-metric-label { font-size: 10px; line-height: 1.3; font-weight: 500; color: #a5b7c9; }
+.parlay-metric-value { font-size: 14px; font-variant-numeric: tabular-nums; }
+.parlay-market-odds { color: #48acff; }
+.parlay-model-value { color: #64dec6; }
+.parlay-footer { flex-shrink: 0; border-top: 1px solid #3f5367; padding: 15px 20px 12px; background: #111a24; }
+.parlay-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 15px; margin-bottom: 12px; }
+.parlay-totals .parlay-metric-value { font-size: 21px; }
+.parlay-totals .parlay-metric-label { font-size: 11px; }
+.parlay-assumption, .parlay-footnote, .parlay-conflict { font-size: 11px; line-height: 1.45; margin: 6px 0 0; color: #b4c7d9; }
+.parlay-conflict { color: #ffafaa; font-weight: 650; }
+.parlay-footnote { font-size: 10px; color: #91a5b9; }
+.parlay-notice { font-size: 11px; color: #a2b9ce; padding: 6px 18px; border-bottom: 1px solid #303944; }
+.parlay-notice:empty { display: none; }
+.parlay-drawer.is-collapsed .parlay-body, .parlay-drawer.is-collapsed .parlay-notice { display: none; }
+.parlay-drawer.is-collapsed .parlay-chevron { transform: rotate(180deg); }
+@media (max-width: 900px) {
+  .parlay-leg { grid-template-columns: 24px repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .parlay-selection-info { grid-column: 2 / -1; }
+  .parlay-leg > .parlay-metric:nth-child(3) { grid-column: 2; }
+  .parlay-body { display: block; overflow-y: auto; }
+  .parlay-leg-list { overflow: visible; }
+}
+@media (max-width: 540px) {
+  .parlay-drawer { width: calc(100% - 12px); }
+  .parlay-topbar { padding-right: 12px; }
+  .parlay-toggle { padding: 12px; gap: 8px; }
+  .parlay-heading { font-size: 14px; }
+  .parlay-mini { font-size: 12px; }
+  .parlay-game { padding: 0 12px; }
+  .parlay-leg { grid-template-columns: 20px 1fr 1fr; gap: 12px; }
+  .parlay-leg > .parlay-metric:nth-child(3), .parlay-leg > .parlay-metric:nth-child(5) { grid-column: 2; }
+  .parlay-leg > .parlay-metric:nth-child(4), .parlay-leg > .parlay-metric:nth-child(6) { grid-column: 3; }
+  .parlay-totals { grid-template-columns: 1fr 1fr; gap: 15px; }
+  .parlay-footer { padding: 14px 16px; }
+  .parlay-totals .parlay-metric-value { font-size: 19px; }
+}

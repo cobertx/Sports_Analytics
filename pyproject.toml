@@ -16,7 +16,7 @@ dependencies = {file = ["requirements/requirements.txt"]}
 include = ["sports_analytics*", "models*"]
 
 [tool.setuptools.package-data]
-sports_analytics = ["assets/*.css"]
+sports_analytics = ["assets/*.css", "assets/*.js"]
 "models" = ["*.md"]
 "models.Game_Outcome" = ["*.md"]
 "models.Player_Stats" = ["*.md"]

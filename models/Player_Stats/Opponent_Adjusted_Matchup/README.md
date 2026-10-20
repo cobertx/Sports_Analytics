@@ -5,6 +5,11 @@ This package implements an NBA/NFL box-score version of the supplied
 reference and separate `OAM_Implementation_Guide.pdf` accompany the code. This
 guide describes what is implemented, rather than repeating the source roadmap.
 
+NCAAF is also supported through a separate college component adapter. See the
+[college implementation supplement](../../../docs/NCAAF_PLAYER_METHODS.md)
+for CFBD inputs, cohort priors and college-specific limits. The NBA/NFL guide
+below and its existing PDF describe those sports.
+
 The shared UO engine also accepts an optional environment used by the separate
 Pace & Game Environment strategy. OAM supplies only its component-adjustment
 context, with no environment, so its own volume and role calculations retain
@@ -46,7 +51,7 @@ uses the latest known club across all saved clubs; opportunity ratios then use
 same-current-club appearances only. A recent trade can therefore leave a player
 unavailable until the minimum same-club history exists. The shared identity rule
 rejects player histories older than 450 days. No rookie production or transfer
-role is fabricated. NCAAF is not enabled in this implementation.
+role is fabricated. College uses the separate adapter and settings in the supplement.
 
 ## 1. Data and chronological boundaries
 
@@ -236,7 +241,7 @@ so a WR-specific scenario should explicitly target the WR component.
 Choose Opponent-Adjusted Matchup in Player Forecast Method for NBA/NFL saved
 FanDuel games. The table shows OAM probability, OAM fair odds and the corresponding
 Edge; Apply Criteria uses these selected-model values. WHP remains the default.
-NCAAF disables OAM while retaining its existing WHP forecasts.
+NCAAF enables OAM through the college adapter; WHP remains its default.
 
 The empirical distribution preserves integer win/loss/push mass. Fair probability
 is win/(win+loss), excluding refunds; fair odds use that probability. Edge is this

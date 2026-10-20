@@ -34,4 +34,7 @@ class UsageOpportunityConfig:
         if sport == 'NFL':
             return cls(role_window=16, role_half_life=3, efficiency_window=32,
                        efficiency_half_life=8, team_window=16, minimum_games=3)
-        raise UsageOpportunityError('Usage & Opportunity currently supports NBA and NFL only.')
+        if sport == 'NCAAF':
+            return cls(role_window=12, role_half_life=3, efficiency_window=24,
+                       efficiency_half_life=6, team_window=16, minimum_games=3)
+        raise UsageOpportunityError('Usage & Opportunity supports NBA, NFL and NCAAF.')

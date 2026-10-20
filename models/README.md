@@ -116,6 +116,6 @@ Dash orchestration stays in `sports_analytics/ppp_service.py`, `nba_ppp_service.
 
 Model inputs, frozen forecasts and the NBA EPV readiness report retain their existing `data/modeling/nfl` and `data/modeling/nba` locations. Saved market CSVs remain in `data/market_data`. Moving Python files does not change fitted algorithms, snapshot cutoffs, archive identities or market pulls.
 
-The complete READMEs distinguish formula checks, fitted calibration and untouched-future validation. These approaches are research baselines rather than the complete production simulators described in the PDFs. NCAAF supports WHP player forecasts when CFBD/canonical history is available; college game-outcome forecasts remain unavailable.
+The complete READMEs distinguish formula checks, fitted calibration and untouched-future validation. These approaches are research baselines rather than the complete production simulators described in the PDFs. NCAAF now has separate PPP, provider-PPA EPA and ELO game-outcome modules, plus WHP player forecasts. Their scoped CSVs, transfer history and settings are documented in [NCAAF forecasts](../docs/NCAAF_FORECASTS.md); the existing NFL/NBA PDF guides describe those sports' implementations.
 
 Run shared offline verification with `python scripts/check_project.py`. Local tests, if present, can be run separately with `python -m unittest discover -s tests -q`; test folders are not published to the repository.

@@ -63,6 +63,9 @@ class UsageOpportunityMarketService:
 
     def forecast(self, snapshot):
         sport = snapshot['sport']
+        if sport == 'NCAAF':
+            from .ncaaf_model import CollegePlayerMarketService
+            return CollegePlayerMarketService('UO',self.repository,self.config).forecast(snapshot)
         config = self.config or UsageOpportunityConfig.for_sport(sport)
         if sport not in {'NBA', 'NFL'}:
             raise DataSourceError('Usage & Opportunity is currently available for NBA and NFL only.')

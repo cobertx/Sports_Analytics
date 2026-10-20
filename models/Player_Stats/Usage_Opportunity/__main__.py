@@ -1,4 +1,4 @@
-"""Prepare NBA/NFL history, price saved quotes or replay a pregame archive."""
+"""Prepare NBA/NFL/NCAAF history, price saved quotes or replay a pregame archive."""
 import argparse
 from dataclasses import replace
 import json
@@ -15,7 +15,7 @@ from .backtesting import walk_forward_backtest
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--sport', required=True, choices=['NBA','NFL'])
+    parser.add_argument('--sport', required=True, choices=['NBA','NFL','NCAAF'])
     parser.add_argument('--prepare', action='store_true')
     parser.add_argument('--refresh', action='store_true')
     parser.add_argument('--start', help='Matchup start, including timezone; required for --prepare')

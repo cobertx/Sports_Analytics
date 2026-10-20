@@ -5,6 +5,11 @@ This folder implements an NBA/NFL box-score version of the supplied
 unchanged; this guide describes the actual code, assumptions and limits. The
 separate `UO_Implementation_Guide.pdf` is generated from this file.
 
+NCAAF now has a separate college adapter for UO, OAM and PGE. The NBA/NFL
+guide below and its existing PDF describe those sports. See the
+[college implementation supplement](../../../docs/NCAAF_PLAYER_METHODS.md)
+for CFBD inputs, NCAA play counts, reception shares and college lookbacks.
+
 The shared simulation functions accept an optional component-adjustment context
 used by the separate Opponent-Adjusted Matchup model. Plain UO supplies no such
 context, so its calculations and forecast assumptions remain unchanged. Optional
@@ -272,8 +277,9 @@ These establish calculation and integration correctness, not predictive quality.
 ## 9. Boundaries and future inputs
 
 The implemented scope is NBA/NFL team-volume and player-role box-score modeling.
-NCAAF is disabled for UO; WHP college forecasting remains available. The PDF's
-college scheme effects and NCAA sack convention require a separate future adapter.
+NCAAF uses the separate `ncaaf_model.py` adapter described in the college
+supplement. College scheme effects remain unconnected; NCAA sacks are correctly
+included in rushing attempts.
 NBA tracking chances, NFL routes/snaps and red-zone events, roster/injury scenarios,
 learned opponent/script coefficients and fitted probability calibration remain
 future inputs. A dedicated analytics/scenario page suggested by the source is

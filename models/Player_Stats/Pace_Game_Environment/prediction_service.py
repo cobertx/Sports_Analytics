@@ -45,7 +45,8 @@ class PaceMarketForecast(UsageMarketForecast):
                 f'game volume {e["mean_total_volume"]:.2f} {unit}; opportunity: {opportunity}; '
                 f'{d["training_games"]} role games; {fitted.simulations:,} simulations; '
                 f'latest input {d["last_game_date"]}. '
-                + (f'EV/$1 {comparison["expected_net_per_dollar"]:+.3f}. ' if price else '')
+                + (f'EV/$1 {comparison["expected_net_per_dollar"]:+.3f}. '
+                   if comparison['expected_net_per_dollar'] is not None else '')
                 + d['limitations'])
 
 
@@ -60,6 +61,9 @@ class PaceGameEnvironmentMarketService:
 
     def forecast(self, snapshot):
         sport = snapshot['sport']
+        if sport == 'NCAAF':
+            from models.Player_Stats.Usage_Opportunity.ncaaf_model import CollegePlayerMarketService
+            return CollegePlayerMarketService('PGE',self.repository,self.config).forecast(snapshot)
         config = self.config or PaceConfig.for_sport(sport)
         if sport not in {'NBA', 'NFL'}:
             raise DataSourceError('Pace & Game Environment is currently available for NBA and NFL only.')

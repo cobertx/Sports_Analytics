@@ -124,8 +124,12 @@ def cfbd_player_rows(games, boxes, team):
 
 
 class PlayerHistoryRepository:
-    def __init__(self, root=None, data=None, client=None, schedule_path=None):
+    def __init__(self, root=None, data=None, client=None, schedule_path=None,college_directory=None):
         self.root = Path(root or ROOT)
+        # An explicitly isolated repository must not read the user's global
+        # college CSVs. Callers can still share a deliberate CSV directory.
+        self.college_directory=(college_directory if college_directory is not None else
+                                Path(root)/'college_csv' if root is not None else None)
         self.data = data or DataService()
         self.client = client or HttpClient()
         self.schedule_path = Path(schedule_path or Path(__file__).resolve().parents[3] / "data/modeling/nfl/raw/games.csv")
@@ -209,7 +213,12 @@ class PlayerHistoryRepository:
     def load(self, sport, start, teams=()):
         """Read-only: no automatic download, refresh, or CFBD request."""
         frames = []
-        for year in seasons_for(sport, start):
+        years=seasons_for(sport,start)
+        if sport=='NCAAF':
+            from sports_analytics.ncaaf_model_data import NcaafModelData,seasons_for_start
+            college=NcaafModelData(directory=self.college_directory)
+            years=seasons_for_start(start)
+        for year in years:
             if sport in {"NBA", "NFL"}:
                 for phase in ["regular", "postseason"]:
                     query = Query(sport, year, "player", phase)
@@ -219,11 +228,28 @@ class PlayerHistoryRepository:
             else:
                 for team in teams:
                     path = self._path(year, team)
-                    if path.exists():
+                    csv_path=None
+                    if (college.directory/'schools.json').exists():
+                        try:csv_path=college.player_path(year,college.resolve_school(team))
+                        except DataSourceError:pass
+                    if csv_path is not None and csv_path.exists():
+                        frame=pd.read_csv(csv_path,dtype={'entity_id':str,'game_id':str})
+                        frame['market_team']=team
+                        frames.append(frame)
+                    elif path.exists():
                         payload = json.loads(path.read_text(encoding="utf-8"))
                         frame = pd.DataFrame(payload["rows"])
                         frame["market_team"] = team
                         frames.append(frame)
+        if sport=='NCAAF' and frames:
+            known_ids=set(pd.concat(frames,ignore_index=True).entity_id.astype(str))
+            for entity_id in known_ids:
+                token=re.sub(r'[^0-9a-zA-Z_-]','',entity_id)
+                transfer=college.directory/'transfers'/f'{token}_{years[-1]}.csv'
+                if transfer.exists():
+                    frame=pd.read_csv(transfer,dtype={'game_id':str,'entity_id':str})
+                    frame=frame[frame.entity_id.eq(entity_id)&pd.to_numeric(frame.season,errors='coerce').isin(years)]
+                    frames.append(frame)
         # Optional canonical imports cover authoritative total scoring TDs and
         # corrected participation records. See INPUT_SCHEMA.md.
         path = self.root / "imports" / f"{sport.lower()}.csv"
@@ -234,7 +260,7 @@ class PlayerHistoryRepository:
             else:
                 dates = pd.to_datetime(imported["event_date"], utc=True, errors="coerce", format="mixed")
                 season = dates.dt.year - dates.dt.month.lt(10 if sport == "NBA" else 3).astype(int)
-            imported = imported[season.isin(seasons_for(sport, start))]
+            imported = imported[season.isin(years)]
             frames.append(imported)
         if not frames:
             raise DataSourceError("No saved player history. Click Prepare player history; this does not pull odds.")

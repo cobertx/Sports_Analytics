@@ -61,11 +61,17 @@ def main():
         "models.Player_Stats.Weighted_Historical_Performance.prediction_service",
         "models.Player_Stats.Usage_Opportunity", "models.Player_Stats.Usage_Opportunity.backtesting",
         "sports_analytics.usage_opportunity_service",
+        "models.Player_Stats.Usage_Opportunity.ncaaf_model",
         "models.Player_Stats.Opponent_Adjusted_Matchup", "models.Player_Stats.Opponent_Adjusted_Matchup.backtesting",
         "sports_analytics.opponent_adjusted_service",
         "models.Player_Stats.Pace_Game_Environment", "models.Player_Stats.Pace_Game_Environment.backtesting",
         "sports_analytics.pace_game_environment_service",
+        "sports_analytics.parlay", "sports_analytics.parlay_view",
+        "sports_analytics.ncaaf_model_data", "sports_analytics.ncaaf_forecast_service",
+        "models.Game_Outcome.PPP.NCAAF_PPP", "models.Game_Outcome.EPA.NCAAF_EPA", "models.Game_Outcome.ELO.NCAAF_ELO",
         "sports_analytics.dashboard", "sports_analytics.nfl_markets", "sports_analytics.nba_markets",
+        "sports_analytics.backtesting_view",
+        "sports_analytics.backtesting_service", "sports_analytics.backtesting_results",
         "sports_analytics.ncaaf_markets", "sports_analytics.whp_service",
     ]
     with patch("requests.sessions.Session.request", side_effect=RuntimeError("CI must not make external requests")) as requests:
@@ -78,6 +84,7 @@ def main():
         from models.Player_Stats.Usage_Opportunity.efficiency_model import beta_posterior
         from models.Player_Stats.Opponent_Adjusted_Matchup.schedule_strength import shrunk_factor
         from models.Player_Stats.Pace_Game_Environment import PaceForecast
+        from sports_analytics.parlay import decimal_odds,american_from_decimal
 
         value = WeightedHistoricalPerformance(half_life=3, window=10).predict(
             [17, 22, 19, 25, 21, 28, 23, 31, 26, 29])["weighted_mean"]
@@ -91,7 +98,30 @@ def main():
                 "Opponent-adjusted small-sample shrinkage example failed.")
         pace = PaceForecast.from_samples([0,1,2,2]).market(1)
         require((pace.win,pace.loss,pace.push)==(.5,.25,.25),"PGE push-aware empirical pricing failed.")
+        require(abs(american_from_decimal(decimal_odds(-110)**2)-264.4628099173554)<1e-8,
+                'Parlay decimal-odds multiplication failed.')
         app = create_app()
+        from sports_analytics.backtesting_view import available_models,model_config,backtesting_route,find_model
+        from sports_analytics.backtesting_service import diagnostics
+        errors=diagnostics([dict(actual=a,predicted=p,lower=0,upper=10,probability=None,event_actual=None)
+                            for a,p in [(2,1),(4,5),(6,8)]],1)
+        require(abs(errors['mae']-4/3)<1e-12 and abs(errors['error_variance']-7/3)<1e-12,
+                'Backtesting MAE/sample variance smoke check failed.')
+        for sport in ['NBA','NFL','NCAAF']:
+            for model in available_models(sport):
+                require(find_model(sport,backtesting_route(model.href))==model and bool(model_config(model,sport)),
+                        f'Backtesting model route/settings failed: {sport} {model.key}')
+        college_methods=next(m['callback'].__wrapped__ for m in app.callback_map.values()
+                             if m.get('callback') and m['callback'].__wrapped__.__name__=='forecast_methods')
+        options,method=college_methods('#ncaaf-game-123','EPA')
+        require(method=='EPA' and {r['value'] for r in options}=={'PPP','EPA','ELO'} and
+                not any(r.get('disabled') for r in options),'College game-outcome methods must be enabled.')
+        player_methods=next(m['callback'].__wrapped__ for m in app.callback_map.values()
+                            if m.get('callback') and m['callback'].__wrapped__.__name__=='player_forecast_methods')
+        for selected in ['WHP','UO','OAM','PGE']:
+            options,method=player_methods('#ncaaf-game-123',selected)
+            require(method==selected and {r['value'] for r in options}=={'WHP','UO','OAM','PGE'} and
+                    not any(r.get('disabled') for r in options),'College player methods must be selectable.')
         with app.server.test_client() as client:
             for route in ("/", "/_dash-layout", "/_dash-dependencies"):
                 require(client.get(route).status_code == 200, f"Dashboard route failed: {route}")
