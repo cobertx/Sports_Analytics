@@ -11,6 +11,19 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .page-shell { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 22px; align-items: start; }
 .page-content { min-width: 0; }
 .page-toolbar { position: sticky; top: 20px; }
+.sport-page-link { display: flex; align-items: center; margin: 0 0 4px; padding: 10px 12px; border-radius: 6px; font-size: 13px; color: var(--muted); text-decoration: none; }
+.sport-page-link:hover { background: #172b3b; }
+.sport-page-link.active { background: #102e32; color: var(--accent); font-weight: 650; }
+.historical-navigation { margin: 2px 0 7px 12px; padding-left: 9px; border-left: 1px solid var(--line); }
+@media (max-width: 700px) {
+  .page-toolbar { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+  .sport-page-link { grid-row: 1; justify-content: center; text-align: center; font-size: 12px; padding: 10px 6px; }
+  #historical-page-link { grid-column: 1; }
+  #market-page-link { grid-column: 2; }
+  #backtesting-page-link { grid-column: 3; }
+  #historical-navigation,#backtesting-navigation { grid-column: 1/-1; }
+  .historical-navigation { grid-template-columns: repeat(2,minmax(0,1fr)); margin: 0; padding: 0; border-left: 0; }
+}
 .page-navigation label { display: flex; align-items: center; position: relative; margin: 0 0 4px; padding: 10px 12px; border: 0; border-radius: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
 .page-navigation input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 /* Dash 4 wraps the radio input in a span; let the label own the whole row. */

@@ -6,6 +6,7 @@ No source data, credentials, fitted caches or external requests are required.
 
 import argparse
 import importlib
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -71,7 +72,9 @@ def main():
         "models.Game_Outcome.PPP.NCAAF_PPP", "models.Game_Outcome.EPA.NCAAF_EPA", "models.Game_Outcome.ELO.NCAAF_ELO",
         "sports_analytics.dashboard", "sports_analytics.nfl_markets", "sports_analytics.nba_markets",
         "sports_analytics.backtesting_view",
+        "sports_analytics.historical_view",
         "sports_analytics.backtesting_service", "sports_analytics.backtesting_results",
+        "sports_analytics.backtesting_monitor",
         "sports_analytics.ncaaf_markets", "sports_analytics.whp_service",
     ]
     with patch("requests.sessions.Session.request", side_effect=RuntimeError("CI must not make external requests")) as requests:
@@ -101,16 +104,53 @@ def main():
         require(abs(american_from_decimal(decimal_odds(-110)**2)-264.4628099173554)<1e-8,
                 'Parlay decimal-odds multiplication failed.')
         app = create_app()
+        from sports_analytics.historical_view import historical_route,statistics_kind,navigation as historical_navigation
+        require(historical_route('#historical-player')=='player' and historical_route('#historical-team')=='team' and
+                historical_route('#historical-player-extra') is None,'Historical page routes failed.')
+        require(len(historical_navigation('NBA','team'))==2 and len(historical_navigation('NFL','player'))==2 and
+                len(historical_navigation('NCAAF','player'))==1 and statistics_kind('NCAAF','player')=='team',
+                'Historical team/player page availability failed.')
         from sports_analytics.backtesting_view import available_models,model_config,backtesting_route,find_model
-        from sports_analytics.backtesting_service import diagnostics
+        from sports_analytics.backtesting_service import (diagnostics,default_evaluation_games,season_phases,estimation_history,
+            default_lookback,parse_lookback,PREDICTIVE_Z)
+        from sports_analytics.backtesting_results import figure,error_distribution,per_game_axis
+        import pandas as pd
+        import numpy as np
+        require([default_evaluation_games(s) for s in ['NBA','NFL','NCAAF']]==[1000,250,1000] and
+                [default_evaluation_games(s,'single') for s in ['NBA','NFL','NCAAF']]==[82,34,24],
+                'Backtesting sport/scope sample defaults failed.')
+        phases=season_phases(pd.DataFrame({'game_id':['0022500001','0042500001','0052500001','unknown']}),'NBA')
+        require(phases.season_type.tolist()==['regular','postseason','postseason','unknown'],
+                'Backtesting postseason/unknown-phase classification failed.')
+        history=pd.DataFrame({'game_id':['a','b','c'],'team':['A']*3,
+            'event_date':pd.to_datetime(['2025-01-01','2025-01-02','2025-01-03'],utc=True),
+            'available_at':pd.to_datetime(['2025-01-02','2025-01-03','2025-01-04'],utc=True)})
+        require(estimation_history(history,pd.Timestamp('2025-01-04',tz='UTC'),1).game_id.tolist()==['b'],
+                'Backtesting lookback/strict availability boundary failed.')
         errors=diagnostics([dict(actual=a,predicted=p,lower=0,upper=10,probability=None,event_actual=None)
                             for a,p in [(2,1),(4,5),(6,8)]],1)
         require(abs(errors['mae']-4/3)<1e-12 and abs(errors['error_variance']-7/3)<1e-12,
                 'Backtesting MAE/sample variance smoke check failed.')
+        require(abs(PREDICTIVE_Z-1.281551565545)<1e-10 and errors['coverage_80']==1,
+                'Backtesting central 80% interval check failed.')
+        calibration=diagnostics([dict(actual=0,predicted=0,probability=p,event_actual=y)
+                                 for p,y in [(0,0),(.021,1),(.041,0),(1,1)]],1)
+        require(len(calibration['reliability'])==4 and sum(b['n'] for b in calibration['reliability'])==4,
+                'Backtesting 2% calibration bins / endpoints check failed.')
+        distribution=figure('Errors');error_distribution(distribution,[-2,0,1,1,3])
+        require(len(distribution.data[0].x)>=20 and sum(distribution.data[0].y)==5 and
+                len(distribution.data[1].x)==384 and np.isfinite(distribution.data[1].y).all() and
+                (np.asarray(distribution.data[1].y)>=0).all(),'Backtesting histogram/smoothed distribution failed.')
+        same_day=pd.DataFrame({'date':['2025-01-01T00:00:00Z']*3,'label':['A','B','C'],'game_id':['a','b','c']})
+        positions,_=per_game_axis(figure('Games'),same_day)
+        require(len(set(positions))==3,'Backtesting must retain distinct positions for same-date games.')
         for sport in ['NBA','NFL','NCAAF']:
             for model in available_models(sport):
                 require(find_model(sport,backtesting_route(model.href))==model and bool(model_config(model,sport)),
                         f'Backtesting model route/settings failed: {sport} {model.key}')
+                label,_=default_lookback(sport,model.group,model.key)
+                require(label.endswith('(Model Default)') and parse_lookback(label,sport,model.group,model.key) is None,
+                        f'Backtesting model-default lookback failed: {sport} {model.key}')
         college_methods=next(m['callback'].__wrapped__ for m in app.callback_map.values()
                              if m.get('callback') and m['callback'].__wrapped__.__name__=='forecast_methods')
         options,method=college_methods('#ncaaf-game-123','EPA')
@@ -125,6 +165,17 @@ def main():
         with app.server.test_client() as client:
             for route in ("/", "/_dash-layout", "/_dash-dependencies"):
                 require(client.get(route).status_code == 200, f"Dashboard route failed: {route}")
+            layout_json=json.dumps(client.get('/_dash-layout').get_json())
+            require(all(f'"id": "{name}"' in layout_json for name in
+                ['backtest-lookback-note','backtest-available','backtest-progress','backtest-progress-label','backtest-poll']),
+                'Backtesting defaults/availability/progress components must exist in the stable layout.')
+            require(all(f'"id": "{name}"' in layout_json for name in
+                ['backtest-monitor','backtest-monitor-toggle','backtest-monitor-body','backtest-monitor-timer',
+                 'backtest-monitor-jobs','backtest-monitor-collapsed']),
+                'Global backtest monitor must remain mounted across pages.')
+            require(all(f'"id": "{name}"' in layout_json for name in
+                ['historical-navigation','historical-page-link','market-page-link','backtesting-page-link']),
+                'Sport sidebar page links must exist in the stable layout.')
             for sport, directory, count in (("NBA", NBA_LOGO_DIRECTORY, 30), ("NFL", NFL_LOGO_DIRECTORY, 32),
                                             ("NCAAF", NCAAF_LOGO_DIRECTORY, 100)):
                 require(directory.parent.parent == ROOT / "images", f"{sport} logo path must use images/.")

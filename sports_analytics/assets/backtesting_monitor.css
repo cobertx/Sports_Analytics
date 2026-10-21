@@ -1,0 +1,25 @@
+.backtest-monitor { position: fixed; z-index: 1101; bottom: calc(12px + var(--parlay-space,0px)); left: max(12px,calc((100vw - min(100vw,1600px))/2 + 4vw)); width: 190px; background: var(--panel); border: 1px solid #326b67; border-radius: 9px; box-shadow: 0 4px 22px #0006; overflow: hidden; }
+.backtest-monitor-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 42px; padding: 10px 12px; background: #102e32; color: var(--text); border: 0; text-align: left; }
+.backtest-monitor-toggle:hover { background: #183d40; }
+.backtest-monitor-heading { font-size: 12px; font-weight: 700; }
+.backtest-monitor-count { display: inline-grid; place-items: center; min-width: 21px; padding: 2px 5px; border: 1px solid #326b67; border-radius: 5px; color: var(--accent); font-size: 11px; }
+.backtest-monitor-chevron { margin-left: auto; color: var(--accent); font-size: 19px; transition: transform .15s; }
+.backtest-monitor.is-collapsed .backtest-monitor-chevron { transform: rotate(180deg); }
+.backtest-monitor.is-collapsed .backtest-monitor-body { display: none; }
+.backtest-monitor-body { max-height: max(60px,min(260px,calc(100dvh - var(--parlay-space,0px) - 100px))); overflow-y: auto; overscroll-behavior: contain; }
+.backtest-monitor-empty { margin: 0; padding: 14px 12px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.backtest-job-list { padding: 0; margin: 0; list-style: none; }
+.backtest-job { padding: 12px; border-top: 1px solid var(--line); }
+.backtest-job-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; }
+.backtest-job-heading strong { color: var(--text); }
+.backtest-job-percent { color: var(--accent); font-size: 12px; font-weight: 700; }
+.backtest-job-scope { font-size: 12px; margin: 8px 0 4px; overflow-wrap: anywhere; }
+.backtest-job-detail,.backtest-job-message { display: block; color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.backtest-job progress { display: block; width: 100%; height: 7px; margin: 9px 0 6px; border: 0; border-radius: 6px; overflow: hidden; accent-color: var(--accent); }
+.backtest-job progress::-webkit-progress-bar { background: #243249; border-radius: 6px; }
+.backtest-job progress::-webkit-progress-value { background: #57dbc4; border-radius: 6px; transition: width .3s; }
+@media (max-width: 700px) {
+  .backtest-monitor { left: 12px; width: min(300px,calc(100vw - 24px)); }
+  .backtest-monitor.is-collapsed { width: 190px; }
+  body .app-shell > main { padding-bottom: calc(20px + var(--parlay-space,0px) + var(--backtest-monitor-space,0px)); }
+}

@@ -105,6 +105,7 @@ def cfbd_player_rows(games, boxes, team):
                                 "entity_name": athlete["name"], "team": side["team"],
                                 "opponent": game["awayTeam"] if home else game["homeTeam"],
                                 "event_date": game["startDate"], "season": game.get("season"),
+                                "season_type": game.get("seasonType", "unknown"),
                                 "position": {"passing": "QB", "rushing": "RB", "receiving": "WR"}.get(cat),
                                 "participation_status": "observed box-score participant"})
                             text = str(athlete["stat"]).replace(",", "").strip()

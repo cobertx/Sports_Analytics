@@ -8,7 +8,7 @@ and [EPA guide](models/Game_Outcome/EPA/EPA_Implementation_Guide.pdf), plus the
 windows, minimum game counts, new-season carryover, formulas, calibration and
 saved-model behavior. The source research PDFs are retained separately.
 
-Each sport has three pages in the left toolbar: **Historical Data** contains the historical filters, charts, career histories, and game log; **FanDuel Market** shows upcoming game cards; **Backtesting** opens a model overview and nested navigation. Switching pages preserves the historical controls.
+Each sport has three sections in the left toolbar. **Historical Data** opens nested **Team Statistics** and **Player Statistics** pages for NBA/NFL (NCAAF has Team Statistics only), replacing the team/player radio selector. These pages contain the historical filters, charts, career histories, and game log. **FanDuel Market** shows upcoming game cards; **Backtesting** opens a model overview and nested model pages. Switching pages preserves the historical controls. Historical subpages use `#historical-team` and `#historical-player`, apply to the selected sport tab, and support browser back/forward navigation.
 
 Under **Backtesting**, expand **Game Outcome** for PPP, EPA and ELO / Power Rating,
 or **Player Stats** for Weighted Historical Performance, Usage & Opportunity,

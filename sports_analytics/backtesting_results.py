@@ -4,28 +4,39 @@ from dash import dcc,html,dash_table
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from .backtesting_service import diagnostics
-from .display_time import format_eastern
+from .backtesting_service import diagnostics,PREDICTIVE_INTERVAL,evaluated_records
+from .display_time import format_eastern,EASTERN
 
 
 def field(label,control,note=None):
-    return html.Div([html.Label(label),control,*([html.Small(note)] if note else [])],className='field')
+    return html.Div([html.Label(label),control,*([html.Small(note)] if note is not None else [])],className='field')
 
 
 def layout():
     return html.Section([
-        dcc.Store(id='backtest-context'),dcc.Store(id='backtest-result'),dcc.Download(id='backtest-download'),
+        dcc.Store(id='backtest-context'),dcc.Store(id='backtest-result'),dcc.Store(id='backtest-job'),
+        dcc.Interval(id='backtest-poll',interval=750,disabled=True),dcc.Download(id='backtest-download'),
         html.Div([
             html.H2('Backtesting results'),
-            html.P('Replay completed games with the selected model. Forecasts use earlier available data; model settings stay fixed.'),
+            html.P('Replay completed games using only earlier available data. Choose the evaluation sample and estimation history separately.'),
             html.Div([
                 field(html.Span('Team',id='backtest-entity-label'),dcc.Dropdown(id='backtest-entity',options=[],clearable=False)),
                 html.Div(field('Statistic',dcc.Dropdown(id='backtest-statistic',options=[],clearable=False)),id='backtest-statistic-field'),
-                field('Evaluation dates (EDT)',dcc.DatePickerRange(id='backtest-dates',display_format='MM/DD/YYYY',
-                    start_date_placeholder_text='Any start',end_date_placeholder_text='Any end',clearable=True)),
-                field('Recent evaluation games',dcc.Dropdown(id='backtest-limit',value=20,clearable=False,
-                    options=[dict(label=str(n),value=n) for n in [5,10,20,50,100]]),
-                    'Earlier saved games still train the model.'),
+                html.Div([
+                    field('Evaluation start (EDT)',dcc.DatePickerSingle(id='backtest-start',display_format='MM/DD/YYYY',
+                        placeholder='MM/DD/YYYY',clearable=True,first_day_of_week=0)),
+                    field('Evaluation end (EDT)',dcc.DatePickerSingle(id='backtest-end',display_format='MM/DD/YYYY',
+                        placeholder='MM/DD/YYYY',clearable=True,first_day_of_week=0)),
+                    html.Small('Optional; leave blank for any date.',className='backtest-date-note'),
+                ],className='backtest-date-fields'),
+                field('Backtest Data Games',dcc.Input(id='backtest-limit',type='number',value=1000,min=1,max=10000,step=1),
+                    html.Span('Checking available games…',id='backtest-available')),
+                field('Include playoff / postseason games',dcc.Dropdown(id='backtest-playoffs',value='exclude',clearable=False,
+                    options=[dict(label='No — regular season only',value='exclude'),dict(label='Yes — regular season + postseason',value='include')]),
+                    'Applies to evaluation and estimation history. College postseason includes bowls.'),
+                field('Lookback Training Data Games (optional)',dcc.Input(id='backtest-lookback',type='text',debounce=True,
+                    value='All available (Model Default)',placeholder='Model Default or whole number'),
+                    html.Span(id='backtest-lookback-note')),
                 field('Error tolerance',dcc.Input(id='backtest-tolerance',type='number',value=5,min=0,step='any'),
                     'Accuracy within ± this many statistic units.'),
                 html.Div(field('Reference line (optional)',dcc.Input(id='backtest-line',type='number',step='any'),
@@ -33,7 +44,10 @@ def layout():
             ],className='backtest-controls'),
             html.Div(id='backtest-input-status',className='backtest-status',role='status'),
             html.Div([html.Button('Run backtest',id='backtest-run',n_clicks=0,className='apply-criteria-button'),
-                html.Button('Export results',id='backtest-export',n_clicks=0,disabled=True,className='export-button')],
+                html.Button('Export results',id='backtest-export',n_clicks=0,disabled=True,className='export-button'),
+                html.Div([html.Progress(id='backtest-progress',value=0,max=100),
+                    html.Span('Ready',id='backtest-progress-label',role='status',**{'aria-live':'polite'})],
+                    className='backtest-progress')],
                 className='backtest-actions'),
             html.P(id='backtest-run-status',className='backtest-status',role='status',**{'aria-live':'polite'}),
             html.Div(field('Chart target',dcc.Dropdown(id='backtest-target',value='margin',clearable=False,
@@ -67,21 +81,84 @@ def empty():
         dcc.Graph(figure=chart,config={'displaylogo':False})],className='panel backtest-empty')
 
 
-def evaluated_records(result,target='margin'):
-    records=[dict(r) for r in result['records']];context=result['context']
-    game=context['group']=='game-outcome'
-    if game:
-        for row in records:
-            row.update(actual=row['actual_'+target],predicted=row['predicted_'+target],baseline=row['baseline_'+target],
-                lower=row['predicted_'+target]-1.64485362695*row[target+'_sd'],
-                upper=row['predicted_'+target]+1.64485362695*row[target+'_sd'])
-    return records
+def per_game_axis(fig,data):
+    """Keep every evaluated game distinct, including games on the same date."""
+    x=np.arange(1,len(data)+1)
+    ticks=np.unique(np.linspace(0,len(data)-1,min(7,len(data)),dtype=int))
+    fig.update_xaxes(tickmode='array',tickvals=x[ticks],
+        ticktext=[format_eastern(data.iloc[i].date)[:10]+f'<br>#{i+1}' for i in ticks],
+        title='Evaluated game (date)')
+    return x,[[format_eastern(r.date),r.label,str(r.game_id)] for r in data.itertuples()]
+
+
+def error_distribution(fig,errors):
+    """Exact histogram counts with a Gaussian-kernel descriptive overlay."""
+    errors=np.asarray(errors,float)
+    count=max(20,min(100,math.ceil(3*math.sqrt(len(errors)))))
+    counts,edges=np.histogram(errors,bins=count)
+    centers=(edges[:-1]+edges[1:])/2
+    fig.add_trace(go.Bar(x=centers,y=counts,width=np.diff(edges)*.92,name='Forecast error',marker_color='#8197ff',
+        customdata=np.column_stack([edges[:-1],edges[1:]]),
+        hovertemplate='Error bin %{customdata[0]:.2f} to %{customdata[1]:.2f}<br>Games: %{y}<extra></extra>'))
+    width=float(edges[1]-edges[0])
+    sd=float(errors.std(ddof=1)) if len(errors)>1 else 0.
+    iqr=float(np.subtract(*np.percentile(errors,[75,25])))/1.349
+    scale=min(sd,iqr) if iqr>0 else sd
+    bandwidth=max(2*width,.9*scale*len(errors)**(-.2))
+    grid=np.linspace(edges[0]-3*bandwidth,edges[-1]+3*bandwidth,384)
+    kernel=np.zeros_like(grid)
+    # Chunking bounds memory even for 10,000-game backtests. Multiplying
+    # density by N * bin width keeps the curve on the histogram count scale.
+    for offset in range(0,len(errors),512):
+        z=(grid[:,None]-errors[None,offset:offset+512])/bandwidth
+        kernel+=np.exp(-.5*z*z).sum(axis=1)
+    smooth=kernel*width/(bandwidth*math.sqrt(2*math.pi))
+    fig.add_trace(go.Scatter(x=grid,y=smooth,mode='lines',name='Smoothed distribution',
+        line=dict(color='#57dbc4',width=2.5),
+        hovertemplate='Error: %{x:.2f}<br>Smoothed games per bin: %{y:.2f}<extra></extra>'))
+    fig.add_vline(x=0,line_dash='dash',line_color='#f6c667')
+    fig.update_yaxes(rangemode='tozero',dtick=1 if max(counts)<10 else None)
+
+
+def historical_accuracy(fig,data,context):
+    """Daily and trailing-game coverage of the actual central 80% intervals."""
+    ordered=data.copy()
+    level=ordered['interval_level'] if 'interval_level' in ordered else pd.Series(PREDICTIVE_INTERVAL,index=ordered.index)
+    valid=np.isclose(level,PREDICTIVE_INTERVAL)&np.isfinite(ordered[['actual','lower','upper']].to_numpy(float)).all(axis=1)
+    ordered=ordered[valid].copy()
+    if ordered.empty:
+        fig.add_annotation(text='Rerun this backtest to calculate<br>80% predictive interval accuracy.',showarrow=False,
+            x=.5,y=.5,xref='paper',yref='paper')
+        fig.update_yaxes(range=[-.05,1.05],tickformat='.0%',title='80% interval accuracy')
+        return
+    ordered['event_time']=pd.to_datetime(ordered.date,utc=True)
+    ordered=ordered.sort_values('event_time',kind='stable').reset_index(drop=True)
+    ordered['success']=ordered.actual.ge(ordered.lower)&ordered.actual.le(ordered.upper)
+    ordered['day']=ordered.event_time.dt.tz_convert(EASTERN).dt.strftime('%Y-%m-%d')
+    x,hover=per_game_axis(fig,ordered)
+    ordered['position']=x
+    daily=ordered.groupby('day',sort=True).agg(accuracy=('success','mean'),games=('success','size'),position=('position','max'))
+    fig.add_trace(go.Scatter(x=daily.position,y=daily.accuracy,mode='lines+markers',name='Daily average',
+        line=dict(color='#57dbc4',width=2),marker=dict(size=4),
+        customdata=[[pd.Timestamp(day).strftime('%m/%d/%Y'),int(row.games)] for day,row in daily.iterrows()],
+        hovertemplate='%{customdata[0]} EDT<br>Games on date: %{customdata[1]}<br>Accuracy: %{y:.1%}<extra>Daily average</extra>'))
+    for window,color in [(10,'#8197ff'),(20,'#f6c667'),(50,'#ef96d0')]:
+        sample=ordered.success.rolling(window,min_periods=1)
+        fig.add_trace(go.Scatter(x=x,y=sample.mean(),name=f'Last {window} games',mode='lines',line=dict(color=color,width=2),
+            customdata=[[*h,int(n)] for h,n in zip(hover,sample.count())],
+            hovertemplate='%{customdata[0]}<br>%{customdata[1]}<br>Games in window: %{customdata[3]}<br>Accuracy: %{y:.1%}<extra>%{fullData.name}</extra>'))
+    fig.update_layout(margin=dict(t=85))
+    fig.add_annotation(text='Success: inside 80% interval (inclusive)<br>Early windows use available games',showarrow=False,
+        x=0,y=1.1,xref='paper',yref='paper',xanchor='left',font=dict(size=11))
+    fig.update_yaxes(range=[-.05,1.05],tickformat='.0%',title='Accuracy')
 
 
 def render(result,target='margin'):
     records=evaluated_records(result,target);context=result['context'];game=context['group']=='game-outcome'
     metrics=diagnostics(records,context['tolerance']);data=pd.DataFrame(records)
     data['error']=data.predicted-data.actual
+    data['plot_date']=pd.to_datetime(data.date,utc=True).dt.tz_convert(EASTERN).dt.strftime('%Y-%m-%dT%H:%M:%S')
+    interval_label=f'{100*records[0]["interval_level"]:.0f}%'
     values=lambda key,suffix='':f'{metrics[key]:.2f}{suffix}' if metrics.get(key) is not None else '—'
     percent=lambda key:f'{100*metrics[key]:.1f}%' if metrics.get(key) is not None else '—'
     accuracy_note=('Home-winner classification; tied results excluded.' if game else
@@ -100,18 +177,26 @@ def render(result,target='margin'):
         card('BIAS',values('bias'),'Predicted − actual; positive means overprediction.'),
         card('ERROR VARIANCE',values('error_variance'),f'Sample variance (squared units); error SD {values("error_sd")}.'),
         card('WITHIN TOLERANCE',percent('within_tolerance'),f'Absolute error ≤ {context["tolerance"]:g} statistic units.'),
-        card('90% INTERVAL COVERAGE',percent('coverage_90'),'Actual results inside the model’s predictive interval.'),
+        card(interval_label+' INTERVAL COVERAGE',percent('interval_coverage'),'Actual results inside the model’s predictive interval.'),
         card('BRIER SCORE',values('brier'),'Event probability error; 0 is ideal. Pushes excluded.'),
         card('LOG LOSS',values('log_loss'),'Penalizes confident incorrect probabilities; lower is better.'),
         card('BASELINE MAE',values('baseline_mae'),'Prior league home margin/total mean.' if game else 'Prior five-appearance mean on the same evaluated games.'),
         card('PUSHES / TIES',str(metrics['pushes']),'Excluded from binary event accuracy and probability scoring.')]
     unit=('home margin (points)' if target=='margin' else 'total points') if game else context['market'].removeprefix('player_').replace('_',' ')
-    timeline=figure('Predicted vs. actual over time','Game date',unit)
-    timeline.add_trace(go.Scatter(x=data.date,y=data.lower,mode='lines',line=dict(width=0),showlegend=False,hoverinfo='skip'))
-    timeline.add_trace(go.Scatter(x=data.date,y=data.upper,mode='lines',line=dict(width=0),fill='tonexty',
-        fillcolor='rgba(87,219,196,.13)',name='90% predictive interval',hoverinfo='skip'))
-    timeline.add_trace(go.Scatter(x=data.date,y=data.predicted,name='Predicted',mode='lines+markers',line=dict(color='#57dbc4'),text=data.label))
-    timeline.add_trace(go.Scatter(x=data.date,y=data.actual,name='Actual',mode='lines+markers',line=dict(color='#8197ff'),text=data.label))
+    timeline=figure('Predicted vs. actual over time','Game date (EDT)',unit)
+    timeline.add_trace(go.Scatter(x=data.plot_date,y=data.lower,mode='lines',line=dict(width=0),showlegend=False,hoverinfo='skip'))
+    timeline.add_trace(go.Scatter(x=data.plot_date,y=data.upper,mode='lines',line=dict(width=0),fill='tonexty',
+        fillcolor='rgba(87,219,196,.13)',name=interval_label+' predictive interval',hoverinfo='skip'))
+    timeline.add_trace(go.Scatter(x=data.plot_date,y=data.predicted,name='Predicted',mode='lines+markers',line=dict(color='#57dbc4'),
+        marker=dict(size=3),text=data.label))
+    inside=data.actual.ge(data.lower)&data.actual.le(data.upper)
+    for mask,color,symbol,label in [(inside,'#8197ff','circle','Actual — inside interval'),
+                                    (~inside,'#ff7b87','x','Actual — outside interval')]:
+        timeline.add_trace(go.Scatter(x=data.loc[mask,'plot_date'],y=data.loc[mask,'actual'],name=label,mode='markers',
+            marker=dict(color=color,size=4,symbol=symbol),text=data.loc[mask,'label'],
+            customdata=data.loc[mask,['lower','upper']],
+            hovertemplate='%{text}<br>%{x}<br>Actual: %{y:.2f}<br>'+interval_label+
+                ' interval: [%{customdata[0]:.2f}, %{customdata[1]:.2f}]<extra>%{fullData.name}</extra>'))
     timeline.update_xaxes(tickformat='%m/%d/%Y')
     parity=figure('Prediction agreement','Actual '+unit,'Predicted '+unit)
     parity.add_trace(go.Scatter(x=data.actual,y=data.predicted,mode='markers',name='Evaluated game',
@@ -119,23 +204,30 @@ def render(result,target='margin'):
     extent=[float(min(data.actual.min(),data.predicted.min())),float(max(data.actual.max(),data.predicted.max()))]
     parity.add_trace(go.Scatter(x=extent,y=extent,mode='lines',name='Perfect forecast',line=dict(color='#a7b9cd',dash='dash')))
     residual=figure('Forecast error distribution','Predicted − actual','Games')
-    residual.add_trace(go.Histogram(x=data.error,name='Forecast error',marker_color='#8197ff',nbinsx=min(25,max(5,len(data)//2))))
-    residual.add_vline(x=0,line_dash='dash',line_color='#57dbc4')
+    error_distribution(residual,data.error)
     rolling=figure('Rolling absolute error','Game date','Mean absolute error (up to 5 games)')
-    rolling.add_trace(go.Scatter(x=data.date,y=data.error.abs().rolling(5,min_periods=1).mean(),
-        name='Model',mode='lines+markers',line=dict(color='#57dbc4')))
+    game_x,hover=per_game_axis(rolling,data)
+    rolling.add_trace(go.Scatter(x=game_x,y=data.error.abs().rolling(5,min_periods=1).mean(),
+        name='Model',mode='lines+markers',line=dict(color='#57dbc4',shape='spline',smoothing=.5),marker=dict(size=4),
+        customdata=hover,hovertemplate='%{customdata[0]}<br>%{customdata[1]}<br>Game %{customdata[2]}<br>MAE: %{y:.2f}<extra>Model</extra>'))
     baseline=(data.baseline-data.actual).abs().rolling(5,min_periods=1).mean()
-    rolling.add_trace(go.Scatter(x=data.date,y=baseline,name='Prior-data baseline',mode='lines',line=dict(color='#f6c667')))
-    rolling.update_xaxes(tickformat='%m/%d/%Y')
+    rolling.add_trace(go.Scatter(x=game_x,y=baseline,name='Prior-data baseline',mode='lines',
+        line=dict(color='#f6c667',shape='spline',smoothing=.5),customdata=hover,
+        hovertemplate='%{customdata[0]}<br>%{customdata[1]}<br>MAE: %{y:.2f}<extra>Prior-data baseline</extra>'))
+    rolling.update_yaxes(rangemode='tozero')
     calibration=figure('Probability calibration','Predicted event probability','Observed event frequency')
     calibration.add_trace(go.Scatter(x=[0,1],y=[0,1],mode='lines',name='Perfect calibration',line=dict(color='#a7b9cd',dash='dash')))
     bins=metrics.get('reliability',[])
     if bins:
         calibration.add_trace(go.Scatter(x=[r['predicted'] for r in bins],y=[r['observed'] for r in bins],
-            mode='lines+markers',name='Evaluated forecasts',text=[f'n={r["n"]}' for r in bins],
+            mode='lines+markers',name='Calibration (2% bins)',
+            text=[f'{r["lower"]:.0%}–{r["upper"]:.0%}; n={r["n"]}' for r in bins],
+            hovertemplate='%{text}<br>Mean forecast: %{x:.1%}<br>Observed: %{y:.1%}<extra></extra>',
             marker=dict(size=[7+min(15,math.sqrt(r['n'])) for r in bins],color='#57dbc4')))
     else:calibration.add_annotation(text='Enter a player reference line and rerun for probability calibration.',showarrow=False,x=.5,y=.5,xref='paper',yref='paper')
     calibration.update_xaxes(range=[0,1],tickformat='.0%');calibration.update_yaxes(range=[0,1],tickformat='.0%')
+    accuracy=figure('Historical accuracy by game','Game date','Accuracy')
+    historical_accuracy(accuracy,data,context)
     table=[]
     for r in records:
         table.append(dict(date=format_eastern(r['date']),game=r['label'],actual=round(r['actual'],3),
@@ -146,7 +238,11 @@ def render(result,target='margin'):
     return html.Div([
         html.P(f'Saved run: {format_eastern(result["created_at"])} · {context["sport"]} · '
             f'{context.get("entity_label",context["entity"])} · {records[0]["date"][:10]} to {records[-1]["date"][:10]} · '
-            f'Last {context["limit"]} eligible games. Run again to apply changed filters.',className='backtest-applied'),
+            f'Last {context["limit"]} eligible games · '
+            + ('Playoff setting: not recorded (older run)' if 'include_playoffs' not in context else
+               'Regular season + postseason' if context['include_playoffs'] else 'Regular season only')
+            + f' · Estimation history: {str(context["lookback"])+" prior games maximum per team/player" if context.get("lookback") is not None else "model defaults"}. '
+            + 'Run again to apply changed filters.',className='backtest-applied'),
         html.Div(cards,className='backtest-kpis'),
         html.P('Event metrics evaluate the home winner.' if game else
             ('Event metrics evaluate Over '+str(context['line'])+'.' if context['line'] is not None else 'Event metrics require an optional reference line.'),
@@ -154,12 +250,20 @@ def render(result,target='margin'):
         html.P('Probabilities are evaluated against outcomes, without assumed historical sportsbook prices. '
                'Availability lags and revised source files limit historical as-of fidelity. '
                'Accuracy intervals are descriptive; repeated players and teams can be correlated.',className='backtest-status'),
-        html.Div([html.Div(dcc.Graph(figure=fig,config={'displaylogo':False}),className='panel backtest-chart')
-                  for fig in [timeline,parity,residual,rolling,calibration]],className='backtest-chart-grid'),
+        *([html.P('This saved player run contains 90% intervals. Run backtest again to calculate the new 80% intervals.',
+            className='backtest-status')] if not game and records[0]['interval_level']!=PREDICTIVE_INTERVAL else []),
+        html.Div([
+            html.Div([dcc.Graph(figure=timeline,config={'displaylogo':False}),
+                html.Aside([html.Strong(f'{inside.mean():.1%}'),html.Span('Inside '+interval_label+' interval'),
+                    html.Small(f'{int(inside.sum()):,} of {len(data):,} actuals')],className='backtest-coverage')],
+                className='panel backtest-chart backtest-timeline'),
+            *[html.Div(dcc.Graph(figure=fig,config={'displaylogo':False}),className='panel backtest-chart')
+                for fig in [parity,residual,rolling,calibration,accuracy]],
+        ],className='backtest-chart-grid'),
         html.Section([html.Div(html.H3('Evaluated predictions'),className='panel-heading'),
             dash_table.DataTable(data=table,columns=[dict(name=label,id=key) for key,label in [
                 ('date','Game time (EDT)'),('game','Matchup / player'),('actual','Actual'),('predicted','Predicted'),
-                ('error','Error'),('lower','90% interval low'),('upper','90% interval high'),('probability','Event probability (%)'),
+                ('error','Error'),('lower',interval_label+' interval low'),('upper',interval_label+' interval high'),('probability','Event probability (%)'),
                 ('training_through','Latest training game')]],page_size=12,sort_action='native',filter_action='native',
                 style_table={'overflowX':'auto'},style_cell={'backgroundColor':'#111d2e','color':'#c7d3e4','border':'1px solid #243249',
                     'textAlign':'left','padding':'10px','fontFamily':'Segoe UI','fontSize':'12px'},

@@ -70,6 +70,7 @@ class NbaModelData:
                 try:
                     dataset = self.service.load(query, refresh=refresh)
                     prepared = aggregate_team_games(dataset.frame)
+                    prepared['season_type'] = phase
                 except (DataSourceError, ValueError) as exc:
                     notices.append(f"NBA {season} {phase} unavailable: {exc}")
                     continue
