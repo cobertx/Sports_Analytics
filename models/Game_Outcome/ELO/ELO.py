@@ -16,6 +16,7 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from models.replay import replay_memoized
 from models.Game_Outcome.PPP.PPP import PPPError, PPPForecast
 from models.Game_Outcome.PPP.NBA_PPP import NBAPPPForecast, NBAPPPModel
 
@@ -167,7 +168,11 @@ class ELOModel:
             for _, home, away, change in sorted(ready):
                 ratings[home] = ratings.get(home, 1500.) + change
                 ratings[away] = ratings.get(away, 1500.) - change
-        games = history[history.is_home.eq(1)].sort_values(["event_date", "game_id"])
+        # Prepared observations may contain hundreds of unrelated box/PBP
+        # columns. Construct tuples only for fields consumed by Elo updates.
+        columns = ["event_date", "game_id", "season", "team", "opponent", "neutral",
+                   "points", "points_allowed", "available_at"]
+        games = history.loc[history.is_home.eq(1), columns].sort_values(["event_date", "game_id"])
         for when, group in games.groupby("event_date", sort=True):
             publish(when)
             for season in sorted(group.season.unique()):
@@ -181,6 +186,7 @@ class ELOModel:
         transition(self._season(pd.Timestamp(cutoff)))
         return ratings
 
+    @replay_memoized
     def _fit(self, history, cutoff):
         if history.game_id.nunique() < self.config.minimum_training_games:
             raise ELOError("Not enough earlier league games for ELO/power fitting.")
@@ -314,6 +320,21 @@ class ELOModel:
                 "margin_mae": float(np.abs(residuals[:, 0]-residuals[:, 1]).mean()),
                 "total_mae": float(np.abs(residuals.sum(axis=1)).mean())}
 
+    @replay_memoized
+    def _validation_fold(self, training, held, cutoff):
+        fitted = self._fit(training, cutoff)
+        errors = []
+        for game_id, game in held.groupby("game_id", sort=True):
+            h, a = game[game.is_home.eq(1)].iloc[0], game[game.is_home.eq(0)].iloc[0]
+            try:
+                raw = self._raw(training, fitted, h.team, a.team, cutoff, bool(h.neutral))
+            except ELOError:
+                continue
+            errors.append({"game_id": game_id, "date": h.event_date.isoformat(),
+                           "home_score": float(h.points), "away_score": float(a.points),
+                           **{k: raw[k] for k in ("total", "power_margin", "od_margin", "elo_probability")}})
+        return errors
+
     def predict(self, observations, home_team, away_team, as_of, neutral=False):
         history = self._history(observations, as_of)
         errors = []
@@ -325,16 +346,7 @@ class ELOModel:
             training = history[history.available_at.lt(cutoff) & history.event_date.lt(cutoff)]
             if training.game_id.nunique() < self.config.minimum_training_games:
                 continue
-            fitted = self._fit(training, cutoff)
-            for game_id, game in held.groupby("game_id", sort=True):
-                h, a = game[game.is_home.eq(1)].iloc[0], game[game.is_home.eq(0)].iloc[0]
-                try:
-                    raw = self._raw(training, fitted, h.team, a.team, cutoff, bool(h.neutral))
-                except ELOError:
-                    continue
-                errors.append({"game_id": game_id, "date": h.event_date.isoformat(),
-                               "home_score": float(h.points), "away_score": float(a.points),
-                               **{k: raw[k] for k in ("total", "power_margin", "od_margin", "elo_probability")}})
+            errors.extend(self._validation_fold(training, held, cutoff))
             if len(errors) >= self.config.maximum_calibration_games:
                 break
         errors = sorted(errors, key=lambda row: (row["date"], row["game_id"]))[-self.config.maximum_calibration_games:]

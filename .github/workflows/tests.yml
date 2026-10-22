@@ -27,3 +27,20 @@ jobs:
         run: python -m compileall -q app.py index.py sports_analytics models scripts
       - name: Check project layout, imports and dashboard
         run: python scripts/check_project.py
+      - name: Check backtesting equivalence and cache isolation
+        run: python scripts/check_backtesting.py
+      - name: Check research settings and experiment replay
+        run: python scripts/check_research.py
+      - name: Check market links and relevant historical statistics
+        run: python scripts/check_market_history.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check market return navigation events
+        run: node scripts/check_market_navigation.js
+      - name: Check mispricing ranking and market filter controls
+        run: python scripts/check_mispricing.py
+      - name: Check research methodology comparisons and shared cohorts
+        run: python scripts/check_comparisons.py
+      - name: Check recorded in-game coordinates, indexing and navigation
+        run: python scripts/check_in_game.py

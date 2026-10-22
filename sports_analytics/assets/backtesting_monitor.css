@@ -1,4 +1,4 @@
-.backtest-monitor { position: fixed; z-index: 1101; bottom: calc(12px + var(--parlay-space,0px)); left: max(12px,calc((100vw - min(100vw,1600px))/2 + 4vw)); width: 190px; background: var(--panel); border: 1px solid #326b67; border-radius: 9px; box-shadow: 0 4px 22px #0006; overflow: hidden; }
+.backtest-monitor { position: fixed; z-index: 1101; bottom: calc(12px + var(--parlay-space,0px)); left: 0; width: 190px; background: var(--panel); border: 1px solid #326b67; border-radius: 0 9px 9px 0; box-shadow: 0 4px 22px #0006; overflow: hidden; }
 .backtest-monitor-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 42px; padding: 10px 12px; background: #102e32; color: var(--text); border: 0; text-align: left; }
 .backtest-monitor-toggle:hover { background: #183d40; }
 .backtest-monitor-heading { font-size: 12px; font-weight: 700; }
@@ -19,7 +19,7 @@
 .backtest-job progress::-webkit-progress-bar { background: #243249; border-radius: 6px; }
 .backtest-job progress::-webkit-progress-value { background: #57dbc4; border-radius: 6px; transition: width .3s; }
 @media (max-width: 700px) {
-  .backtest-monitor { left: 12px; width: min(300px,calc(100vw - 24px)); }
+  .backtest-monitor { width: min(300px,calc(100vw - 12px)); }
   .backtest-monitor.is-collapsed { width: 190px; }
   body .app-shell > main { padding-bottom: calc(20px + var(--parlay-space,0px) + var(--backtest-monitor-space,0px)); }
 }

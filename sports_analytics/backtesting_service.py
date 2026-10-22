@@ -7,17 +7,20 @@ from dataclasses import asdict,replace
 from datetime import datetime,timezone
 from hashlib import sha256
 from importlib import import_module
+from functools import lru_cache
 import json,math,threading,re,unicodedata
 from statistics import NormalDist
 from uuid import uuid4
 from pathlib import Path
 import numpy as np
 import pandas as pd
+from models.replay import replay_scope
 
 from .data import DataSourceError
 from .service import DataService
 from .ncaaf_model_data import NcaafModelData
 from .display_time import EASTERN
+from .research_config import configured,player_config
 from models.Player_Stats.Weighted_Historical_Performance.historical_data import model_frame,atomic_json
 from models.Player_Stats.Weighted_Historical_Performance.markets import NBA,FOOTBALL,stat_spec
 from models.Player_Stats.Usage_Opportunity.markets import market_spec
@@ -26,6 +29,50 @@ ROOT=Path(__file__).resolve().parents[1]
 PREDICTIVE_INTERVAL=.8
 PREDICTIVE_Z=NormalDist().inv_cdf((1+PREDICTIVE_INTERVAL)/2)
 CALIBRATION_BINS=50
+
+
+def valid_report_page(sport,group,key):
+    return (sport in {'NBA','NFL','NCAAF'} and group in {'game-outcome','player-stats'}
+            and key in ({'ppp','epa','elo'} if group=='game-outcome' else {'whp','uo','oam','pge'}))
+
+
+def read_report(path,sport,group,key):
+    """Read full JSON archives and older cache wrappers without refitting."""
+    try:
+        payload=json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(payload,dict):return None
+        result=payload.get('result',payload)
+        if not isinstance(result,dict) or not isinstance(result.get('context'),dict):return None
+        if not all(result['context'].get(k)==v for k,v in [('sport',sport),('group',group),('model',key)]):return None
+        if not isinstance(result.get('records'),list):return None
+        # Early reports used only the cache filename as their persistent ID.
+        run_id=result.get('run_id') or (path.stem if re.fullmatch(r'[0-9a-f]{64}',path.stem) else None)
+        if not isinstance(run_id,str) or not re.fullmatch(r'[0-9a-f]{64}',run_id):return None
+        return {**result,'run_id':run_id}
+    except (ValueError,OSError):return None
+
+
+@lru_cache(maxsize=256)
+def report_summary(path,size,modified,sport,group,key):
+    """Cache small summaries by file revision, never full prediction arrays."""
+    result=read_report(Path(path),sport,group,key)
+    if not result or not result['records']:return None
+    try:
+        created=pd.Timestamp(result['created_at'])
+        if pd.isna(created):return None
+        created=(created.tz_localize('UTC') if created.tzinfo is None else created).tz_convert('UTC')
+        context=result['context']
+        label=context.get('entity_label') or ('All teams' if context.get('entity')=='__all__' else context.get('entity','All teams'))
+        if group=='player-stats' and not context.get('entity_label') and isinstance(result['records'][0].get('label'),str):
+            label=result['records'][0]['label'].split(' · ')[0]
+        return dict(run_id=result['run_id'],created_at=created.isoformat(),
+            workspace=context.get('workspace','backtesting'),
+            entity_label=label,
+            market=context.get('market'),limit=context.get('limit') or len(result['records']),
+            lookback=context.get('lookback'),include_playoffs=context.get('include_playoffs'),line=context.get('line'),
+            start=context.get('start'),end=context.get('end'),evaluated=len(result['records']),
+            skipped=len(result.get('skipped',[])),attempted=result.get('attempted',len(result['records'])+len(result.get('skipped',[]))))
+    except (KeyError,TypeError,ValueError):return None
 
 
 def default_evaluation_games(sport,entity='__all__'):
@@ -48,6 +95,7 @@ def default_lookback(sport,group,key):
 def parse_lookback(value,sport,group,key):
     if value is None or value=='':return None
     if isinstance(value,str):
+        if value=='Model Default':return None
         if value==default_lookback(sport,group,key)[0]:return None
         if re.fullmatch(r'\d+',value.strip()):value=int(value.strip())
     if isinstance(value,bool) or not isinstance(value,int) or not 2<=value<=10000:
@@ -192,11 +240,10 @@ class BacktestingService:
         self.root=Path(root or ROOT/'data/backtesting')
         self.data=data or DataService()
         self.now=now or (lambda:pd.Timestamp.now(tz='UTC'))
-        self._lock=threading.RLock()
         self._jobs={};self._jobs_lock=threading.RLock()
 
     def start(self,*,display_label=None,**parameters):
-        """Run off the HTTP request thread so progress polling stays responsive."""
+        """Run independently of other jobs and the HTTP request thread."""
         signature=sha256(json.dumps(parameters,sort_keys=True).encode()).hexdigest()
         with self._jobs_lock:
             for job_id,job in self._jobs.items():
@@ -234,7 +281,7 @@ class BacktestingService:
                 total=job['total'],message=job['message'],display_label=job['display_label'],
                 parameters=dict(job['parameters'])) for job_id,job in self._jobs.items() if job['state']=='running']
 
-    def available_games(self,sport,group,key,entity,market=None,start=None,end=None,include_playoffs=False):
+    def available_games(self,sport,group,key,entity,market=None,start=None,end=None,include_playoffs=False,team_filter=None):
         lower,upper=evaluation_bounds(start,end,self.now())
         frame=(self.game_inputs(sport,key)[0] if group=='game-outcome' else self.player_inputs(sport))
         frame=season_phases(frame,sport)
@@ -242,9 +289,11 @@ class BacktestingService:
         if group=='game-outcome':return len(eligible_pairs(frame,entity,lower,upper,self.now()))
         spec=stat_spec(sport,market or '')
         if spec is None or not set(spec.fields)<=set(frame):return 0
-        selected=frame[frame.entity_id.eq(str(entity))]
+        selected=frame if entity=='__all__' else frame[frame.entity_id.eq(str(entity))]
+        if team_filter:selected=selected[selected.team.eq(team_filter)]
         complete=selected[list(spec.fields)].apply(pd.to_numeric,errors='coerce').notna().all(axis=1)
-        return int((complete&selected.event_date.ge(lower)&selected.event_date.lt(upper)).sum())
+        eligible=selected[complete&selected.event_date.ge(lower)&selected.event_date.lt(upper)]
+        return int(eligible.game_id.nunique()) if entity=='__all__' else len(eligible)
 
     def game_inputs(self,sport,key):
         directory=ROOT/'data/modeling'/sport.lower()
@@ -326,7 +375,7 @@ class BacktestingService:
         frame=self.player_inputs(sport)
         latest=frame.drop_duplicates('entity_id',keep='last').sort_values('entity_name')
         options=[dict(label=f'{r.entity_name} · {r.team}',value=r.entity_id) for r in latest.itertuples()]
-        selected=frame[frame.entity_id.eq(str(player or (options[0]['value'] if options else '')))]
+        selected=(frame if player=='__all__' else frame[frame.entity_id.eq(str(player or (options[0]['value'] if options else '')))])
         markets=[]
         for market,spec in (NBA if sport=='NBA' else FOOTBALL).items():
             if key!='whp' and market_spec(sport,market) is None:continue
@@ -343,7 +392,55 @@ class BacktestingService:
         service.repository.root=self.root/'model_cache'/key
         return service
 
+    def saved(self,sport,group,key,run_id):
+        """Restore one page's report by its opaque ID, including after restart."""
+        if (not valid_report_page(sport,group,key)
+                or not isinstance(run_id,str) or not re.fullmatch(r'[0-9a-f]{64}',run_id)):
+            return None
+        directory=self.root/sport.lower()/group/key
+        result=read_report(directory/(run_id+'.json'),sport,group,key)
+        if result and result['run_id']==run_id:return result
+        # The report archive is independently usable if its cache was removed.
+        for path in (directory/'runs').glob('*/report.json'):
+            try:
+                stat=path.stat()
+                summary=report_summary(str(path),stat.st_size,stat.st_mtime_ns,sport,group,key)
+            except OSError:continue
+            if summary and summary['run_id']==run_id:return read_report(path,sport,group,key)
+        return None
+
+    def history(self,sport,group,key):
+        """Newest-first completed simulations for exactly one sport and method."""
+        if not valid_report_page(sport,group,key):return []
+        directory=self.root/sport.lower()/group/key
+        paths=[p for p in sorted(directory.glob('*.json')) if re.fullmatch(r'[0-9a-f]{64}',p.stem)]
+        paths.extend(sorted((directory/'runs').glob('*/report.json')))
+        reports={}
+        for path in paths:
+            try:
+                stat=path.stat()
+                summary=report_summary(str(path),stat.st_size,stat.st_mtime_ns,sport,group,key)
+            except OSError:continue
+            if summary:reports.setdefault(summary['run_id'],dict(summary))
+        return sorted(reports.values(),key=lambda r:(r['created_at'],r['run_id']),reverse=True)
+
+    def ensure_exports(self,result):
+        """Materialize CSVs and an independent report for current/legacy runs."""
+        context=result['context'];sport,group,key=(context[k] for k in ['sport','group','model'])
+        run_id=result.get('run_id')
+        if not valid_report_page(sport,group,key) or not isinstance(run_id,str) or not re.fullmatch(r'[0-9a-f]{64}',run_id):
+            raise ValueError('Choose a saved simulation with a valid report ID.')
+        directory=self.root/sport.lower()/group/key/'runs'/(slug(context.get('entity_label',context.get('entity','all')))[:8]+'_'+run_id[:8])
+        result['saved_directory']=str(directory.relative_to(self.root))
+        from .nfl_model_data import atomic_text
+        for target in (['margin','total'] if group=='game-outcome' else ['player']):
+            path=directory/export_filename(result,target)
+            if not path.exists():atomic_text(path,pd.DataFrame(evaluated_records(result,target)).to_csv(index=False))
+        if not (directory/'report.json').exists():atomic_json(directory/'report.json',result)
+        return directory
+
     def latest(self,sport,group,key):
+        if not valid_report_page(sport,group,key):return None
         directory=self.root/sport.lower()/group/key
         paths=sorted(directory.glob('*.json'),key=lambda p:p.stat().st_mtime_ns,reverse=True)
         marker=directory/'last_run.json'
@@ -354,17 +451,20 @@ class BacktestingService:
                     paths.insert(0,directory/name)
             except (ValueError,KeyError,OSError,TypeError):pass
         for path in paths:
-            try:
-                result=json.loads(path.read_text(encoding='utf-8'))['result']
-                if all(result['context'][name]==value for name,value in [('sport',sport),('group',group),('model',key)]):
-                    return result
-            except (ValueError,KeyError,OSError):continue
+            result=read_report(path,sport,group,key)
+            if result:return result
+        history=self.history(sport,group,key)
+        if history:return self.saved(sport,group,key,history[0]['run_id'])
         return None
 
     def run(self,sport,group,key,entity='__all__',market=None,start=None,end=None,limit=None,tolerance=5,line=None,
-            include_playoffs=False,lookback=None,progress=None):
+            include_playoffs=False,lookback=None,progress=None,config_overrides=None,team_filter=None,workspace='backtesting'):
         if sport not in {'NBA','NFL','NCAAF'} or group not in {'game-outcome','player-stats'}:raise ValueError('Choose a valid sport and model.')
-        if group=='game-outcome':market=None;line=None
+        if workspace not in {'backtesting','research'}:raise ValueError('Choose a valid backtesting workspace.')
+        if team_filter is not None and not isinstance(team_filter,str):raise ValueError('Choose one saved team or all teams.')
+        if group=='game-outcome':
+            market=None;line=None
+            if team_filter:entity=team_filter;team_filter=None
         if limit is None:limit=default_evaluation_games(sport,entity)
         if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=10000:raise ValueError('Choose 1 to 10,000 whole evaluation games.')
         lookback=parse_lookback(lookback,sport,group,key)
@@ -372,76 +472,86 @@ class BacktestingService:
         if not isinstance(tolerance,(int,float)) or not math.isfinite(tolerance) or tolerance<0:raise ValueError('Tolerance must be a finite nonnegative number.')
         if line is not None and (not isinstance(line,(int,float)) or not math.isfinite(line)):raise ValueError('Reference line must be a finite number.')
         lower,upper=evaluation_bounds(start,end,self.now())
-        with self._lock:
-            if progress:progress(0,0,'Preparing saved inputs')
-            if group=='game-outcome':
-                model=game_model(sport,key);frame,dataset=self.game_inputs(sport,key)
-                frame=season_phases(frame,sport)
-                frame=frame[frame.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
-                # A complete pair must be known today, including both result lags.
-                games=eligible_pairs(frame,entity,lower,upper,self.now())[-limit:]
-                config=asdict(model.config)
-            else:
-                if key not in {'whp','uo','oam','pge'}:raise ValueError('Choose an available player model.')
-                frame=season_phases(self.player_inputs(sport),sport);dataset=None
-                frame=frame[frame.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
-                spec=stat_spec(sport,market or '')
-                if spec is None or (key!='whp' and market_spec(sport,market or '') is None):raise ValueError('Choose a supported player statistic.')
-                selected=frame[frame.entity_id.eq(str(entity))].copy()
-                if not set(spec.fields)<=set(selected):raise DataSourceError('The selected statistic is missing from saved player data.')
-                selected['value']=selected[list(spec.fields)].apply(pd.to_numeric,errors='coerce').sum(axis=1,min_count=len(spec.fields))
-                if spec.opportunity and spec.opportunity in selected:selected['opportunity']=selected[spec.opportunity]
-                games=[g for _,g in selected[selected.value.notna()&selected.event_date.ge(lower)&selected.event_date.lt(upper)].tail(limit).iterrows()]
-                from .backtesting_view import find_model,model_config
-                config=model_config(find_model(sport,(group,key)),sport)
-            if not games:raise DataSourceError('No completed saved games with verified season type match these filters. Load more historical data or adjust the dates/playoff selection.')
-            if progress:progress(0,len(games),'Checking saved runs')
-            signature=sha256(b''.join(p.read_bytes() for p in sorted([Path(__file__),*ROOT.joinpath('models').rglob('*.py'),
-                ROOT/'sports_analytics/ncaaf_model_data.py']))).hexdigest()
-            # Include all saved source revisions used by repositories, not only target rows.
-            sources=[p for folder in ['data/cache','data/modeling'] for p in (ROOT/folder).rglob('*')
-                     if p.is_file() and p.suffix in {'.csv','.sqlite3','.npz','.json'} and 'forecasts' not in p.parts]
-            source_state=[(str(p.relative_to(ROOT)),p.stat().st_size,p.stat().st_mtime_ns) for p in sorted(sources)]
-            identity=dict(sport=sport,group=group,model=key,entity=entity,market=market,start=start,end=end,limit=limit,
-                          tolerance=tolerance,line=line,include_playoffs=include_playoffs,lookback=lookback,
-                          interval_level=PREDICTIVE_INTERVAL,config=config,implementation=signature,
-                          inputs=sha256((frame.to_json(orient='table',date_format='iso',index=False)+json.dumps(source_state)).encode()).hexdigest())
-            identity['evaluation_games']=[str((g.iloc[0] if group=='game-outcome' else g).game_id) for g in games]
-            cache=self.root/sport.lower()/group/key/(sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
-            if cache.exists():
-                saved=json.loads(cache.read_text(encoding='utf-8'))
-                if saved.get('identity')==identity:
-                    atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
-                    if progress:progress(len(games),len(games),'Loaded saved results')
-                    return saved['result']
-            result=dict(context={k:identity[k] for k in ['sport','group','model','entity','market','start','end','limit','tolerance','line','include_playoffs','lookback','interval_level']},
-                records=[],skipped=[],created_at=datetime.now(timezone.utc).isoformat(),config=config,run_id=cache.stem)
-            result['context']['entity_label']=('All teams' if entity=='__all__' else str(entity)) if group=='game-outcome' else str(selected.iloc[-1].entity_name)
-            if group=='game-outcome':self._games(result,model,frame,dataset,games,progress)
-            else:self._players(result,sport,key,frame,selected,games,spec,market,line,progress)
-            if not result['records']:
-                reasons=list(dict.fromkeys(r['reason'] for r in result['skipped']))[:3]
-                raise DataSourceError('No out-of-sample predictions could be evaluated. '+' '.join(reasons))
-            result['attempted']=len(games)
-            result['metrics']=diagnostics(result['records'],tolerance)
-            if progress:progress(len(games),len(games),'Saving reports')
-            directory=cache.parent/'runs'/(slug(result['context']['entity_label'])[:8]+'_'+cache.stem[:8])
-            result['saved_directory']=str(directory.relative_to(self.root))
-            from .nfl_model_data import atomic_text
-            for target in (['margin','total'] if group=='game-outcome' else ['player']):
-                atomic_text(directory/export_filename(result,target),pd.DataFrame(evaluated_records(result,target)).to_csv(index=False))
-            atomic_json(directory/'report.json',result)
-            atomic_json(cache,dict(identity=identity,result=result))
-            atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
-            return result
+        if progress:progress(0,0,'Preparing saved inputs')
+        if group=='game-outcome':
+            model=game_model(sport,key);frame,dataset=self.game_inputs(sport,key)
+            model.config=configured(model.config,config_overrides)
+            frame=season_phases(frame,sport)
+            frame=frame[frame.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
+            # A complete pair must be known today, including both result lags.
+            games=eligible_pairs(frame,entity,lower,upper,self.now())[-limit:]
+            config=asdict(model.config)
+        else:
+            if key not in {'whp','uo','oam','pge'}:raise ValueError('Choose an available player model.')
+            frame=season_phases(self.player_inputs(sport),sport);dataset=None
+            frame=frame[frame.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
+            spec=stat_spec(sport,market or '')
+            if spec is None or (key!='whp' and market_spec(sport,market or '') is None):raise ValueError('Choose a supported player statistic.')
+            selected=(frame if entity=='__all__' else frame[frame.entity_id.eq(str(entity))]).copy()
+            if not set(spec.fields)<=set(selected):raise DataSourceError('The selected statistic is missing from saved player data.')
+            selected['value']=selected[list(spec.fields)].apply(pd.to_numeric,errors='coerce').sum(axis=1,min_count=len(spec.fields))
+            if spec.opportunity and spec.opportunity in selected:selected['opportunity']=selected[spec.opportunity]
+            candidates=selected[selected.value.notna()&selected.event_date.ge(lower)&selected.event_date.lt(upper)]
+            if team_filter:candidates=candidates[candidates.team.eq(team_filter)]
+            if entity=='__all__':
+                candidates=candidates.sort_values(['event_date','game_id','entity_id'])
+                ids=candidates.drop_duplicates('game_id',keep='last').tail(limit).game_id
+                candidates=candidates[candidates.game_id.isin(ids)]
+            else:candidates=candidates.tail(limit)
+            games=[g for _,g in candidates.iterrows()]
+            config=asdict(configured(player_config(sport,key),config_overrides))
+        if not games:raise DataSourceError('No completed saved games with verified season type match these filters. Load more historical data or adjust the dates/playoff selection.')
+        if progress:progress(0,len(games),'Checking saved runs')
+        signature=sha256(b''.join(p.read_bytes() for p in sorted([Path(__file__),*ROOT.joinpath('models').rglob('*.py'),
+            ROOT/'sports_analytics/ncaaf_model_data.py']))).hexdigest()
+        # Include all saved source revisions used by repositories, not only target rows.
+        sources=[p for folder in ['data/cache','data/modeling'] for p in (ROOT/folder).rglob('*')
+                 if p.is_file() and p.suffix in {'.csv','.sqlite3','.npz','.json'} and 'forecasts' not in p.parts]
+        source_state=[(str(p.relative_to(ROOT)),p.stat().st_size,p.stat().st_mtime_ns) for p in sorted(sources)]
+        identity=dict(sport=sport,group=group,model=key,entity=entity,market=market,start=start,end=end,limit=limit,
+                      tolerance=tolerance,line=line,include_playoffs=include_playoffs,lookback=lookback,
+                      interval_level=PREDICTIVE_INTERVAL,config=config,implementation=signature,
+                      inputs=sha256((frame.to_json(orient='table',date_format='iso',index=False)+json.dumps(source_state)).encode()).hexdigest())
+        if workspace=='research' or team_filter is not None:identity.update(workspace=workspace,team_filter=team_filter)
+        identity['evaluation_games']=[str((g.iloc[0] if group=='game-outcome' else g).game_id) for g in games]
+        cache=self.root/sport.lower()/group/key/(sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
+        if cache.exists():
+            saved=json.loads(cache.read_text(encoding='utf-8'))
+            if saved.get('identity')==identity:
+                result={**saved['result'],'run_id':cache.stem}
+                self.ensure_exports(result)
+                atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
+                if progress:progress(len(games),len(games),'Loaded saved results')
+                return result
+        result=dict(context={k:identity[k] for k in ['sport','group','model','entity','market','start','end','limit','tolerance','line','include_playoffs','lookback','interval_level']},
+            records=[],skipped=[],created_at=datetime.now(timezone.utc).isoformat(),config=config,run_id=cache.stem)
+        if workspace=='research' or team_filter is not None:result['context'].update(workspace=workspace,team_filter=team_filter)
+        result['context']['entity_label']=(('All teams' if entity=='__all__' else str(entity)) if group=='game-outcome' else
+            ('All players'+(' · '+team_filter if team_filter else '') if entity=='__all__' else str(selected.iloc[-1].entity_name)))
+        if group=='game-outcome':self._games(result,model,frame,dataset,games,progress)
+        else:self._players(result,sport,key,frame,selected,games,spec,market,line,progress)
+        if not result['records']:
+            reasons=list(dict.fromkeys(r['reason'] for r in result['skipped']))[:3]
+            raise DataSourceError('No out-of-sample predictions could be evaluated. '+' '.join(reasons))
+        result['attempted']=len(games)
+        result['metrics']=diagnostics(result['records'],tolerance)
+        if progress:progress(len(games),len(games),'Saving reports')
+        self.ensure_exports(result)
+        atomic_json(cache,dict(identity=identity,result=result))
+        atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
+        return result
 
+    @replay_scope
     def _games(self,result,model,frame,dataset,games,progress=None):
+        previous_cutoff=None
         for number,pair in enumerate(games,1):
             h=pair[pair.is_home.eq(1)].iloc[0];a=pair[pair.is_home.eq(0)].iloc[0]
             try:
                 cutoff=h.event_date
                 # Only model inputs and schedule identities go into predict.
-                prior=estimation_history(frame,cutoff,result['context']['lookback'],paired=True)
+                if cutoff!=previous_cutoff:
+                    prior=estimation_history(frame,cutoff,result['context']['lookback'],paired=True)
+                    previous_cutoff=cutoff
                 inputs=replace(dataset,games=prior) if dataset is not None else prior
                 forecast=model.predict(inputs,h.team,a.team,cutoff.isoformat(),bool(h.get('neutral',False)))
                 margin=float(h.points-a.points);total=float(h.points+a.points)
@@ -465,11 +575,20 @@ class BacktestingService:
             finally:
                 if progress:progress(number,len(games),f'Evaluated {number:,} of {len(games):,} games')
 
+    @replay_scope
     def _players(self,result,sport,key,frame,selected,games,spec,market,line,progress=None):
         from models.Player_Stats.Weighted_Historical_Performance.core import WHPConfig,WeightedHistoricalPerformance
         service=self.player_service(key) if key!='whp' else None
         team_games,_=self.game_inputs(sport,'ppp') if service else (None,None)
+        pairs={str(game_id):pair for game_id,pair in team_games.groupby('game_id')} if service else {}
+        whp=WeightedHistoricalPerformance(configured(WHPConfig.for_sport(sport),result['config'])) if key=='whp' else None
+        if service:service.config=configured(player_config(sport,key),result['config'])
         context=result['context'];lookback=context['lookback']
+        aggregate=context.get('entity')=='__all__'
+        subjects={}
+        if aggregate:
+            for row in games:subjects.setdefault(str(row.game_id),set()).add(row.entity_name)
+        joint_id=None;joint_forecast=None
         if service:
             load=service.repository.load
             phases=self.phase_map(sport)
@@ -490,19 +609,23 @@ class BacktestingService:
         for number,game in enumerate(games,1):
             try:
                 cutoff=game.event_date
-                past=estimation_history(selected[selected.value.notna()],cutoff,lookback,entity='entity_id')
+                own=selected[selected.entity_id.eq(str(game.entity_id))&selected.value.notna()]
+                past=estimation_history(own,cutoff,lookback,entity='entity_id')
                 if key=='whp':
-                    fitted=WeightedHistoricalPerformance(WHPConfig.for_sport(sport)).forecast(past,cutoff,nonnegative=spec.nonnegative,count=spec.count)
+                    fitted=whp.forecast(past,cutoff,nonnegative=spec.nonnegative,count=spec.count)
                 else:
-                    pair=team_games[team_games.game_id.astype(str).eq(str(game.game_id))]
-                    if len(pair)!=2:raise DataSourceError('No saved paired matchup teams for this player appearance.')
+                    pair=pairs.get(str(game.game_id))
+                    if pair is None or len(pair)!=2:raise DataSourceError('No saved paired matchup teams for this player appearance.')
                     h=pair[pair.is_home.eq(1)].iloc[0];a=pair[pair.is_home.eq(0)].iloc[0]
                     row=dict(subject=game.entity_name,market_key=market,market=market,line=line if line is not None else 0,
                              selection='Over',odds=None,group='Player Stats',updated='Not reported')
+                    rows=[dict(row,subject=name) for name in sorted(subjects[str(game.game_id)])] if aggregate else [row]
                     snapshot=dict(sport=sport,game_id=str(game.game_id),home_team=names.get(h.team,h.team),
                         away_team=names.get(a.team,a.team),pulled_at=(cutoff-pd.Timedelta(microseconds=1)).isoformat(),
-                        commence_time=cutoff.isoformat(),rows=[row])
-                    forecast=service.forecast(snapshot);fitted=forecast.forecasts.get((game.entity_name,market))
+                        commence_time=cutoff.isoformat(),rows=rows)
+                    if not aggregate or joint_id!=str(game.game_id):
+                        joint_forecast=service.forecast(snapshot);joint_id=str(game.game_id)
+                    forecast=joint_forecast;fitted=forecast.forecasts.get((game.entity_name,market))
                     if fitted is None:raise DataSourceError(forecast.errors.get((game.entity_name,market),'Required opportunity history is unavailable.'))
                 price=fitted.market(line,'Over') if line is not None else None
                 actual=float(game.value);mean=float(getattr(fitted,'mean'))
@@ -515,6 +638,7 @@ class BacktestingService:
                     event_actual=int(actual>line) if line is not None and actual!=line else None,
                     push=bool(line is not None and actual==line),latest_training=fitted.diagnostics.get('last_game_date')))
             except (ValueError,RuntimeError,OSError,IndexError,np.linalg.LinAlgError) as exc:
-                result['skipped'].append(dict(game_id=str(game.game_id),date=game.event_date.isoformat(),reason=str(exc)))
+                result['skipped'].append(dict(game_id=str(game.game_id),date=game.event_date.isoformat(),
+                    reason=(str(game.entity_name)+': ' if aggregate else '')+str(exc)))
             finally:
-                if progress:progress(number,len(games),f'Evaluated {number:,} of {len(games):,} games')
+                if progress:progress(number,len(games),f'Evaluated {number:,} of {len(games):,} '+('player appearances' if aggregate else 'games'))

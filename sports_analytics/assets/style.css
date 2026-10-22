@@ -104,6 +104,9 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .market-outcome { display: flex; align-items: center; gap: 10px; padding: 6px 12px; min-height: 49px; }
 .player-marker { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #38454b; border-radius: 50%; background: #101618; color: #98c5e4; font-size: 9px; flex-shrink: 0; }
 .market-selection { flex: 1; color: #d0dfed; font-size: 12px; line-height: 1.5; }
+.market-history-link { color: inherit; text-decoration: underline; text-decoration-color: #607f91; text-underline-offset: 3px; }
+.market-history-link:hover, .market-history-link:focus-visible { color: var(--accent); text-decoration-color: currentColor; }
+.sportsbook-market { scroll-margin-top: 20px; }
 .market-price { display: grid; place-items: center; width: 64px; min-height: 43px; padding: 8px 4px; border: 1px solid #73b9ec; border-radius: 3px; color: var(--odds-blue); font-size: 12px; font-weight: 700; flex-shrink: 0; }
 .market-price-button { background: transparent; }
 .market-price-button:hover { background: #11334d; border-color: #20a4ff; }
@@ -125,11 +128,26 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .ppp-comparison-grid .ppp-chart { min-width: 0; margin: 0; }
 @media (max-width: 1050px) { .ppp-comparison-grid { grid-template-columns: 1fr; } }
 .market-criteria { padding: 18px 20px; margin-bottom: 18px; }
-.criteria-controls { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(130px, 1fr) auto; align-items: end; gap: 16px; }
+.criteria-controls { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(130px, 1fr) auto auto; align-items: end; gap: 16px; }
 .criteria-controls .field { margin: 0; }
 .criteria-controls .field input { width: 100%; background: #f3f6fb; color: #000; }
 .apply-criteria-button { border: 1px solid #57dbc4; border-radius: 6px; padding: 11px 18px; background: #193b3c; color: #57dbc4; font-size: 12px; font-weight: 600; }
 .apply-criteria-button:hover { background: #24504f; }
+.quick-filter-button { background: #57dbc4; color: #0b2424; }
+.quick-filter-button:hover { background: #7be7d4; }
+.mispricing-results { margin-top: 24px; }
+.mispricing-results h3 { font-size: 15px; margin: 0 0 12px; }
+.mispricing-top, .mispricing-remaining { margin-top: 24px; min-width: 0; }
+.mispricing-table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
+.mispricing-top .mispricing-table-scroll { border-color: #57dbc4; }
+.mispricing-table { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 12px; }
+.mispricing-table th, .mispricing-table td { text-align: left; padding: 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.mispricing-table th { background: #17253a; color: #a7bfd3; font-weight: 600; }
+.mispricing-table td { color: #d0dfed; }
+.mispricing-table tbody tr:last-child td { border-bottom: 0; }
+.mispricing-table td.mispricing-edge { color: #57dbc4; font-weight: 700; }
+.mispricing-error { color: #f4bd86; font-size: 12px; line-height: 1.6; }
+@media (min-width: 601px) and (max-width: 1050px) { .criteria-controls { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 .criteria-status { color: #a7b9cd; font-size: 11px; line-height: 1.6; margin-top: 12px; }
 .criteria-evaluation { margin: 0 0 14px; padding: 12px 14px; border: 1px solid #f6c667; border-radius: 4px; background: #292719; color: #f7e5b5; font-size: 13px; line-height: 1.5; }
 .criteria-evaluation strong { display: block; }

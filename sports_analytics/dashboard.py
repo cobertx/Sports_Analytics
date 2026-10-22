@@ -22,7 +22,15 @@ from .backtesting_service import BacktestingService,default_evaluation_games,def
 from .backtesting_results import layout as backtesting_results_layout,render as render_backtesting_results,empty as empty_backtesting_results
 from .backtesting_results import evaluated_records
 from .backtesting_monitor import layout as backtesting_monitor_layout,contents as backtesting_monitor_contents
+from . import research_view
+from .comparison_view import layout as comparison_layout
+from .comparison_callbacks import register as register_comparison_callbacks
+from .in_game_data import InGameService
+from .in_game_view import layout as in_game_layout
+from .in_game_callbacks import register as register_in_game_callbacks
+from .research_config import form_parameters
 from .historical_view import historical_route,statistics_kind,navigation as historical_navigation
+from .historical_links import history_target,matches_dataset,target_entity,target_metric,market_metrics
 from .metrics import metric_label, preferred_metric, relevant_metrics, statistic_categories, statistic_category
 from .service import DataService
 from .schedule import FANDUEL_LINKS, SCHEDULE_LINKS, ScheduleService
@@ -40,6 +48,8 @@ from .ncaaf_model_data import NcaafModelData
 from .ncaaf_forecast_service import NCAAFMarketForecastService
 from .market_view import _market_probability,selection_text
 from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, NCAAF_LOGO_DIRECTORY, NCAAF_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
+from .market_navigation import remembered_market
+from .mispricing import FILTER_CATEGORY,criteria_values,filter_context,rank_markets,results as mispricing_results
 from .display_time import eastern_datetime, format_eastern
 from .usage_log import ApiUsageLog, SPORTS as USAGE_SPORTS, usage_summary
 from .ppp_service import PPPMarketService
@@ -61,7 +71,7 @@ def market_game_sport(location_hash):
 
 
 def supported_dataset(dataset):
-    return bool(dataset) and (dataset["kind"] == "team" or dataset["sport"] in PLAYER_SPORTS)
+    return bool(dataset) and (dataset["kind"] == "team" or dataset["sport"] in PLAYER_SPORTS or dataset.get('saved_players'))
 
 
 def filter_team(frame, kind, team):
@@ -256,8 +266,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                api_usage_log=None, ppp_service=None, epa_service=None, nba_market_service=None, nba_ppp_service=None,
                nba_epa_service=None, elo_service=None, nba_elo_service=None, ncaaf_market_service=None,
                whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None,
-               ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None):
+               ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None,in_game_service=None):
     service = service or DataService()
+    in_game_service = in_game_service or InGameService(data=service)
     backtesting_service=backtesting_service or BacktestingService(data=service)
     career_service = career_service or CareerService(service.path.with_name("career.sqlite3"))
     schedule_service = schedule_service or ScheduleService(service.path.with_name("schedules.sqlite3"))
@@ -288,6 +299,13 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     market_services = {"NFL": nfl_market_service, "NBA": nba_market_service, "NCAAF": ncaaf_market_service}
     app = Dash(__name__, assets_folder=str(Path(__file__).parent / "assets"),
                title="Sports Analytics", update_title="Loading…")
+
+    def historical_target(location_hash):
+        target=history_target(location_hash)
+        if target and target['sport']=='NCAAF' and target['kind']=='team':
+            try:target={**target,'name':ncaaf_model_data.resolve_school(target['name'])}
+            except (DataSourceError,OSError,ValueError):pass
+        return target
 
     @app.server.get("/images/nfl/team-logos/<filename>")
     def nfl_team_logo(filename):
@@ -321,6 +339,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         dcc.Location(id="market-url", refresh=False), dcc.Store(id="market-schedule", data=[]),
         dcc.Store(id="market-detail-context"), dcc.Store(id="market-refresh-signal"),
         dcc.Store(id="market-applied-criteria"),
+        dcc.Store(id='market-return',data={},storage_type='session'),
+        dcc.Store(id='mispricing-request'),
         dcc.Store(id="market-forecast-history"),
         dcc.Store(id="parlay-store",storage_type="session",data={"version":1,"legs":[],"collapsed":False}),
         dcc.Interval(id="market-timer", interval=5 * 60 * 1000, disabled=True),
@@ -337,6 +357,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 dcc.Tab(label="NFL · Pro Football", value="NFL", className="sport-tab", selected_className="sport-tab selected"),
                 dcc.Tab(label="NCAAF · College Football", value="NCAAF", className="sport-tab", selected_className="sport-tab selected"),
                 dcc.Tab(label="Odds API", value="ODDS_API", className="sport-tab", selected_className="sport-tab selected"),
+                dcc.Tab(label='Strategy & Research',value='RESEARCH',className='sport-tab',selected_className='sport-tab selected'),
             ], className="sport-tabs"),
             html.Div([
                 html.Nav([
@@ -346,6 +367,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     html.A([html.Span('↺',className='navigation-icon',**{'aria-hidden':'true'}),'Backtesting'],
                            id='backtesting-page-link',href='#backtesting',className='sport-page-link'),
                     html.Div(id='backtesting-navigation',className='backtesting-navigation',style={'display':'none'}),
+                    html.A('Visualized In-Game Data', id='in-game-page-link', href='#nba-in-game-data', className='sport-page-link'),
                 ], className="page-toolbar", **{"aria-label": "Sport pages"}),
                 html.Div([
                     html.Div([
@@ -374,6 +396,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                         ], className="dataset-builder panel"),
                         html.Section([
                             html.Div(id="load-status", role="status", **{"aria-live": "polite"}, className="load-status"),
+                            html.Div(id="historical-link-status", role="status", **{"aria-live": "polite"}, className="chart-note"),
                             dcc.Loading(html.Div(id="ncaaf-history-status",role="status",className="chart-note"),color="#57dbc4"),
                             dcc.Loading(html.Div([
                                 html.Div(id="dataset-summary", className="dataset-summary"),
@@ -449,17 +472,6 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                             ]), type="circle", color="#57dbc4"),
                         ], id="market-list"),
                         html.Div([
-                            html.Section([
-                                html.Div([
-                                    field("Estimated Probability (%)", dcc.Input(id="market-probability-threshold", type="number",
-                                          value=75, min=0, max=100, step="any")),
-                                    field("Edge (%)", dcc.Input(id="market-edge-threshold", type="number",
-                                          value=5, min=-100, max=100, step="any")),
-                                    html.Button("Apply Criteria", id="market-apply-criteria", n_clicks=0, className="apply-criteria-button"),
-                                ], className="criteria-controls"),
-                                html.Div("Applies to all calculated selections in the displayed category, including player props. Rows must exceed both thresholds. Edge is measured in percentage points.",
-                                         id="market-criteria-status", role="status", **{"aria-live": "polite"}, className="criteria-status"),
-                            ], className="panel market-criteria"),
                             html.Div([
                             html.Div([
                                 html.A("← Back to upcoming games", id="market-back-link", href="#nfl-games", className="back-to-games"),
@@ -475,6 +487,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                                                      placeholder="No saved snapshots")),
                                 html.Div(id="market-snapshot-status", role="status", className="snapshot-description"),
                             ], className="snapshot-controls"),
+                            dcc.Tabs(id="market-category", value="Game", children=[], className="market-category-tabs"),
+                            html.Section([
+                            html.H2('Mispricing Filter'),
+                            html.P('Choose forecast methods and thresholds for this game. Quick Filtering evaluates all saved categories and ranks qualifying selections by edge.',className='ppp-comparison-note'),
                             html.Div([
                               html.Div([
                                 field("Game Outcome Forecast Method", dcc.Dropdown(id="market-forecast-method", value="PPP",
@@ -494,13 +510,40 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                        className="forecast-history", role="status"),
                               ], className="forecast-method-control"),
                             ], className="forecast-methods"),
-                            dcc.Tabs(id="market-category", value="Game", children=[], className="market-category-tabs"),
+                            html.Div([
+                                field("Estimated Probability (%)", dcc.Input(id="market-probability-threshold", type="number",
+                                      value=75, min=0, max=100, step="any")),
+                                field("Edge (%)", dcc.Input(id="market-edge-threshold", type="number",
+                                      value=5, min=-100, max=100, step="any")),
+                                html.Button("Apply Criteria", id="market-apply-criteria", n_clicks=0, className="apply-criteria-button"),
+                                html.Button('Quick Filtering',id='market-quick-filter',n_clicks=0,className='apply-criteria-button quick-filter-button'),
+                            ], className="criteria-controls"),
+                            html.Div('Rows must exceed both thresholds. Edge is measured in percentage points. Quick Filtering applies the current thresholds and scans all saved categories.',
+                                     id="market-criteria-status", role="status", **{"aria-live": "polite"}, className="criteria-status"),
+                            dcc.Loading(html.Div(id='mispricing-results'),color='#57dbc4'),
+                            ],id='mispricing-filter-panel',className='panel market-criteria',style={'display':'none'}),
                             dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),
                             ], className="sportsbook-view"),
                         ], id="market-game-detail", className="market-detail-view", style={"display": "none"}),
                     ], id="market-page", className="market-page", style={"display": "none"}),
-                    html.Section([html.Div(id='backtesting-content'),backtesting_results_layout()],
+                    html.Section([html.Div(id='backtesting-content'),
+                        html.Section([
+                            dcc.Store(id='research-editor-context'),html.H3('Research experiment'),
+                            html.Div([
+                                field('Sport',dcc.Dropdown(id='research-sport',options=['NBA','NFL','NCAAF'],value='NBA',clearable=False)),
+                                html.Div(field('Evaluation team',dcc.Dropdown(id='research-team',options=[dict(label='All teams',value='__all__')],value='__all__',clearable=False)),id='research-team-field'),
+                            ],className='research-scope-controls'),
+                            html.Div([
+                            html.Div([html.H3('Model parameters'),html.Button('Reset sport defaults',id='research-reset',n_clicks=0,className='export-button')],className='research-parameter-heading'),
+                            html.P('Every configuration field is shown below. Values are validated together before a run starts. Model sport follows the sport selector. Saved results retain the exact effective parameters.',className='backtest-status'),
+                            html.Div(id='research-parameters',className='research-parameters'),
+                            html.P(id='research-parameter-note',className='backtest-status'),
+                            ],id='research-model-settings'),
+                        ],id='research-setup',className='panel research-setup',style={'display':'none'}),
+                        comparison_layout(),
+                        backtesting_results_layout()],
                                  id='backtesting-page',className='backtesting-page',style={'display':'none'}),
+                    in_game_layout(),
                 ], className="page-content"),
             ], id="sport-pages", className="page-shell"),
             html.Section([
@@ -587,18 +630,22 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Input("workspace-page", "value"), Input("sport", "value"),Input('entity-type','value'))
     def navigate(page, sport,kind='team'):
         odds = sport == "ODDS_API"
-        market = page == "market" and not odds
-        backtesting = page == 'backtesting' and not odds
-        intro = ("THE ODDS API", "Your monthly credits at a glance.",
+        research=sport=='RESEARCH'
+        market = page == "market" and not odds and not research
+        backtesting = research or (page == 'backtesting' and not odds)
+        in_game = page == 'in-game' and sport in {'NBA','NFL'}
+        intro = ('STRATEGY & RESEARCH','Study the method. Test your parameters.',
+                 'Explore forecasting strategies and run reproducible historical experiments across NBA, NFL and NCAAF.') if research else ("THE ODDS API", "Your monthly credits at a glance.",
                  "Monitor your account's credit usage and connection status.") if odds else (
                 'THE BACKTESTING LAB','Explore your forecasting models.',
                 f'Game Outcome and Player Stats evaluation methods for {sport}.') if backtesting else (
-                "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
-                "The next game starts here." if market else f'{sport} · {"Player" if statistics_kind(sport,kind)=="player" else "Team"} Statistics',
-                "Explore upcoming NBA, NFL, and college football matchups." if market else
-                'Explore historical player performances and career statistics.' if statistics_kind(sport,kind)=='player' else
+                "ON THE COURT / ON THE FIELD" if in_game else "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
+                f'{sport} · Visualized In-Game Data' if in_game else "The next game starts here." if market else f'{sport} · {"Player" if kind=="player" else "Team"} Statistics',
+                'See recorded shots and offensive plays on an interactive court or field.' if in_game else "Explore upcoming NBA, NFL, and college football matchups." if market else
+                ('Explore saved college player performances and game logs.' if sport=='NCAAF' else
+                 'Explore historical player performances and career statistics.') if kind=='player' else
                 'Explore historical team performances and statistics.')
-        return ({"display": "none" if market or odds or backtesting else "grid"}, {"display": "block" if market else "none"},
+        return ({"display": "none" if market or odds or backtesting or in_game else "grid"}, {"display": "block" if market else "none"},
                 f"{sport} · Upcoming games", FANDUEL_LINKS.get(sport, FANDUEL_LINKS["NBA"]), not market,
                 *intro, {"display": "none" if odds else "grid"}, {"display": "block" if odds else "none"}, not odds,
                 {'display':'block' if backtesting else 'none'})
@@ -606,43 +653,93 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     @app.callback(Output('historical-navigation','children'),Output('historical-navigation','style'),
                   Output('historical-page-link','className'),Output('market-page-link','className'),
                   Output('backtesting-page-link','className'),Output('market-page-link','href'),
-                  Input('workspace-page','value'),Input('sport','value'),Input('entity-type','value'))
-    def sport_page_navigation(page,sport,kind):
+                  Input('workspace-page','value'),Input('sport','value'),Input('entity-type','value'),Input('market-return','data'))
+    def sport_page_navigation(page,sport,kind,market_return=None):
         visible=page=='historical' and sport in SOURCES
         active=lambda value:'sport-page-link'+(' active' if page==value else '')
-        return (historical_navigation(sport,kind),{'display':'grid' if visible else 'none'},
-            active('historical'),active('market'),active('backtesting'),f'#{sport.lower()}-games')
+        links=historical_navigation(sport,kind)
+        if sport=='NCAAF' and kind=='player':
+            links=[html.A('Team Statistics',href='#historical-team',className='backtesting-model-link',**{'aria-current':'false'})]
+            links.append(html.Span('Player Statistics (saved)',className='backtesting-model-link active',**{'aria-current':'page'}))
+        remembered=remembered_market(market_return,sport)
+        return (links,{'display':'grid' if visible else 'none'},
+            active('historical'),active('market'),active('backtesting'),remembered['route'] if remembered else f'#{sport.lower()}-games')
+
+    app.clientside_callback(
+        'function(hash, snapshot, category, saved) { return window.dash_clientside.market_navigation.remember(hash, snapshot, category, saved); }',
+        Output('market-return','data'),Input('market-url','hash'),Input('market-snapshot','value'),
+        Input('market-category','value'),State('market-return','data'))
 
     @app.callback(Output('backtesting-navigation','children'),Output('backtesting-navigation','style'),
                   Output('backtesting-content','children'),Output('backtest-evaluation-panel','style'),
                   Input('workspace-page','value'),Input('sport','value'),
-                  Input('market-url','hash'))
-    def show_backtesting(page,sport,location_hash):
+                  Input('market-url','hash'),Input('research-sport','value'))
+    def show_backtesting(page,sport,location_hash,research_sport='NBA'):
+        if sport=='RESEARCH':
+            model=find_model(research_sport,research_view.route(location_hash))
+            return (research_view.navigation(research_sport,location_hash),{'display':'block','margin':0,'padding':0,'border':0},
+                research_view.page(research_sport,location_hash),{'display':'block' if model else 'none'})
         if page!='backtesting' or sport not in SOURCES:
             return no_update,{'display':'none'},no_update,{'display':'none'}
         model=find_model(sport,backtesting_route(location_hash))
         return (backtesting_navigation(sport,location_hash),{'display':'block'},backtesting_page(sport,location_hash),
                 {'display':'block' if model else 'none'})
 
+    @app.callback(Output('historical-page-link','style'),Output('market-page-link','style'),
+                  Output('backtesting-page-link','style'),Output('research-setup','style'),Output('research-team-field','style'),
+                  Input('sport','value'),Input('market-url','hash'))
+    def research_visibility(sport,location_hash):
+        research=sport=='RESEARCH';hidden={'display':'none'}
+        route=research_view.route(location_hash)
+        return (*(hidden if research else {} for _ in range(3)),{'display':'block' if research else 'none'},
+                {'display':'block' if research and route and route[0]=='player-stats' and route[1]!='comparison' else 'none'})
+
+    @app.callback(Output('research-parameters','children'),Output('research-parameter-note','children'),
+                  Output('research-editor-context','data'),Input('backtest-context','data'),Input('research-reset','n_clicks'),
+                  State('research-editor-context','data'))
+    def research_parameters(context,_reset,previous_key=None):
+        if not context or context.get('workspace')!='research':return [],'Choose a strategy from the left to edit its parameters.',None
+        key=[context[k] for k in ['sport','group','model']]
+        if key==previous_key and ctx.triggered_id!='research-reset':return no_update,no_update,no_update
+        controls=research_view.editor(context['sport'],context['group'],context['model'])
+        return controls,f'{len(controls)} configuration fields · sport-specific defaults. Evaluation controls below restrict the test sample; model parameters govern estimation and simulation.',key
+
+    @app.callback(Output('research-team','options'),Output('research-team','value'),
+                  Input('sport','value'),Input('research-sport','value'),Input('market-url','hash'),State('research-team','value'))
+    def research_teams(tab,sport,location_hash,previous):
+        options=[dict(label='All teams',value='__all__')]
+        route=research_view.route(location_hash)
+        if tab=='RESEARCH' and route and route[0]=='player-stats':
+            try:
+                frame=backtesting_service.player_inputs(sport)
+                options.extend(dict(label=team,value=team) for team in sorted(frame.team.dropna().astype(str).unique()))
+            except (DataSourceError,OSError,ValueError):pass
+        return options,previous if previous in {o['value'] for o in options} else '__all__'
+
     @app.callback(Output('backtest-context','data'),Output('backtest-entity','options'),Output('backtest-entity','value'),
                   Output('backtest-entity-label','children'),Output('backtest-statistic-field','style'),
                   Output('backtest-line-field','style'),Output('backtest-target-field','style'),
                   Output('backtest-input-status','children'),Input('sport','value'),Input('market-url','hash'),
-                  Input('workspace-page','value'),State('backtest-entity','value'))
-    def configure_backtest(sport,location_hash,page,previous):
-        model=find_model(sport,backtesting_route(location_hash))
+                  Input('workspace-page','value'),State('backtest-entity','value'),
+                  Input('research-sport','value'),Input('research-team','value'))
+    def configure_backtest(sport,location_hash,page,previous,research_sport='NBA',research_team='__all__'):
+        research=sport=='RESEARCH'
+        model=find_model(research_sport if research else sport,research_view.route(location_hash) if research else backtesting_route(location_hash))
         hidden={'display':'none'}
-        if page!='backtesting' or model is None:
+        if (not research and page!='backtesting') or model is None:
             return None,[],None,'Team',hidden,hidden,hidden,''
+        if research:sport=research_sport
         context=dict(sport=sport,group=model.group,model=model.key)
         player=model.group=='player-stats'
+        if research:context.update(workspace='research',team_filter=research_team if player and research_team!='__all__' else None)
         try:
             options,_,_=backtesting_service.options(sport,model.group,model.key,previous)
+            if research and player:options.insert(0,dict(label='All players',value='__all__'))
             chosen=previous if previous in {o['value'] for o in options} else options[0]['value'] if options else None
             note='Saved inputs only. Missing history is reported; source and odds APIs are not called.'
         except (DataSourceError,OSError,ValueError,TypeError) as exc:
             options=[];chosen=None;note=str(exc)
-        return (context,options,chosen,'Player' if player else 'Team',{'display':'block' if player else 'none'},
+        return (context,options,chosen,'Player cohort' if research and player else 'Player' if player else 'Team',{'display':'block' if player else 'none'},
                 {'display':'block' if player else 'none'},{'display':'none' if player else 'block'},note)
 
     @app.callback(Output('backtest-statistic','options'),Output('backtest-statistic','value'),
@@ -663,6 +760,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Input('backtest-context','data'))
     def backtest_lookback_default(context):
         if not context:return 'All available (Model Default)',''
+        if context.get('workspace')=='research':return 'Model Default','Use the configured model windows above. Enter a whole number to additionally cap eligible input histories.'
         return default_lookback(context['sport'],context['group'],context['model'])
 
     @app.callback(Output('backtest-available','children'),Input('backtest-context','data'),Input('backtest-entity','value'),
@@ -671,8 +769,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     def backtest_available(context,entity,market,start,end,playoffs):
         if not context or entity is None:return 'Select a team or player to count saved games.'
         try:
+            extra=dict(team_filter=context.get('team_filter')) if context.get('workspace')=='research' else {}
             count=backtesting_service.available_games(context['sport'],context['group'],context['model'],entity,
-                market,start,end,playoffs=='include')
+                market,start,end,playoffs=='include',**extra)
             return f'{count:,} saved games available with these filters. Insufficient training history may cause skips.'
         except (DataSourceError,OSError,ValueError,TypeError) as exc:return str(exc)
 
@@ -699,42 +798,115 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             'backtest-monitor'+(' is-collapsed' if collapsed else ''),'false' if collapsed else 'true',
             ('Expand' if collapsed else 'Minimize')+' backtesting processes')
 
+    @app.callback(Output('backtest-history','options'),Output('backtest-history','value'),
+                  Output('backtest-history-status','children'),Output('backtest-history-location','children'),
+                  Input('backtest-context','data'),Input('backtest-history-panel','open'),
+                  Input('backtest-result','modified_timestamp'),State('backtest-history','value'))
+    def previous_simulations(context,opened,_updated,selected):
+        if not context:return [],None,'Choose a backtesting method to see its saved simulations.',''
+        location=str(backtesting_service.root/context['sport'].lower()/context['group']/context['model'])
+        if not opened:return [],None,'Expand this section to browse saved simulations.',location
+        reports=backtesting_service.history(context['sport'],context['group'],context['model'])
+        options=[]
+        for report in reports:
+            market=(report.get('market') or '').removeprefix('player_').replace('_',' ').title()
+            label=(f'{format_eastern(report["created_at"])} · {report["entity_label"]}'
+                   +(' · '+market if market else '')
+                   +(' · Research' if report.get('workspace')=='research' else '')
+                   +f' · {report["evaluated"]:,} evaluated / {report["limit"]:,} requested'
+                   +f' · Lookback {report["lookback"] or "default"} · {report["run_id"][:8]}')
+            options.append(dict(label=label,value=report['run_id']))
+        value=selected if selected in {o['value'] for o in options} else None
+        message=(f'{len(options):,} saved simulation'+('s' if len(options)!=1 else '')+'. Choose one and select Open simulation.'
+                 if options else 'No completed simulations saved for this sport and method yet.')
+        return options,value,message,location
+
+    @app.callback(Output('backtest-history-open','disabled'),Input('backtest-history','value'))
+    def enable_previous_simulation(run_id):
+        return not bool(run_id)
+
     @app.callback(Output('backtest-result','data'),Output('backtest-run-status','children'),
                   Output('backtest-job','data'),Output('backtest-poll','disabled'),Output('backtest-progress','value'),
                   Output('backtest-progress-label','children'),Output('backtest-run','disabled'),Output('backtest-run','children'),
+                  Output('backtest-pages','data'),
                   Input('backtest-run','n_clicks'),Input('backtest-context','data'),Input('backtest-poll','n_intervals'),
                   State('backtest-entity','value'),State('backtest-statistic','value'),
                   State('backtest-start','date'),State('backtest-end','date'),State('backtest-limit','value'),
                   State('backtest-tolerance','value'),State('backtest-line','value'),
                   State('backtest-playoffs','value'),State('backtest-lookback','value'),State('backtest-job','data'),
-                  State('backtest-entity','options'))
-    def run_backtest(clicks,context,tick,entity,market,start,end,limit,tolerance,line,playoffs,lookback,job_id,entity_options=None):
-        if not context:return None,'',None,True,0,'Ready',False,'Run backtest'
-        if ctx.triggered_id not in {'backtest-run','backtest-poll'}:
-            saved=backtesting_service.latest(context['sport'],context['group'],context['model'])
-            message='Loaded the latest saved run. Use Run backtest to apply the current controls.' if saved else 'Choose a scope and run a chronological backtest.'
-            return saved,message,None,True,100 if saved else 0,'Saved result' if saved else 'Ready',False,'Run backtest'
+                  State('backtest-entity','options'),State('backtest-pages','data'),
+                  Input('backtest-history-open','n_clicks'),State('backtest-history','value'),
+                  State({'type':'research-parameter','path':ALL},'value'),State({'type':'research-parameter','path':ALL},'id'))
+    def run_backtest(clicks,context,tick,entity,market,start,end,limit,tolerance,line,playoffs,lookback,job_id,entity_options=None,pages=None,history_clicks=None,history_run=None,parameter_values=None,parameter_ids=None):
+        if not context:return None,'',None,True,0,'Ready',False,'Run backtest',no_update
+        previous=pages or {};pages=dict(previous)
+        page_key='/'.join(context[k] for k in ['sport','group','model'])
+        if context.get('workspace')=='research':page_key='research/'+page_key
+        entry=dict(pages.get(page_key) or {})
+        restoring=ctx.triggered_id not in {'backtest-run','backtest-poll'}
+        def remember(*values):
+            pages[page_key]=entry
+            return (*values,pages if pages!=previous else no_update)
+        def saved_result():
+            result=backtesting_service.saved(context['sport'],context['group'],context['model'],entry.get('run_id'))
+            if result is None:result=backtesting_service.latest(context['sport'],context['group'],context['model'])
+            if result and result.get('run_id'):entry['run_id']=result['run_id']
+            return result
+        if ctx.triggered_id=='backtest-history-open':
+            if not history_clicks:raise PreventUpdate
+            result=backtesting_service.saved(context['sport'],context['group'],context['model'],history_run)
+            if result is None:
+                return remember(no_update,'That saved simulation is unavailable. Choose another previous simulation.',
+                    no_update,no_update,no_update,no_update,no_update,no_update)
+            entry['run_id']=result['run_id']
+            entry.pop('job_id',None)
+            try:
+                directory=backtesting_service.ensure_exports(result)
+                message=f'Opened saved simulation from {format_eastern(result["created_at"])}. CSV and JSON files: {directory}'
+            except OSError as exc:
+                message=f'Opened saved simulation. CSV exports could not be saved: {exc}'
+            return remember(result,message,None,True,100,'Saved simulation',False,'Run backtest')
         if ctx.triggered_id=='backtest-run':
             if not clicks:raise PreventUpdate
-            if entity is None:return None,'Choose a team or player with saved history first.',None,True,0,'Ready',False,'Run backtest'
+            if entity is None:return remember(no_update,'Choose a team or player with saved history first.',job_id,not bool(job_id),0,'Ready',False,'Run backtest')
             label=next((o['label'] for o in entity_options or [] if o['value']==entity),None)
+            extra={}
+            if context.get('workspace')=='research':
+                try:parameters=form_parameters(context['sport'],context['group'],context['model'],parameter_ids or [],parameter_values or [])
+                except (ValueError,TypeError) as exc:
+                    return remember(no_update,'Check model parameters: '+str(exc),no_update,no_update,no_update,no_update,False,'Run backtest')
+                extra=dict(config_overrides=parameters,team_filter=context.get('team_filter'),workspace='research')
+                if context.get('team_filter'):label=(label or 'All players')+' · '+context['team_filter']
             job_id=backtesting_service.start(sport=context['sport'],group=context['group'],key=context['model'],
                 entity=entity,market=market,start=start,end=end,limit=limit,tolerance=tolerance,
                 line=line if context['group']=='player-stats' else None,include_playoffs=playoffs=='include',lookback=lookback,
-                display_label=label)
-            return None,'Running backtest…',job_id,False,0,'0% · Preparing saved inputs',True,'Running backtest…'
-        if not job_id:raise PreventUpdate
-        job=backtesting_service.progress(job_id)
-        if job is None:return no_update,'This run was interrupted. Run backtest again to resume from saved results.',None,True,0,'Interrupted',False,'Run backtest'
-        if any(job['parameters'].get(k)!=context[c] for k,c in [('sport','sport'),('group','group'),('key','model')]):
+                display_label=label,**extra)
+            entry['job_id']=job_id
+            return remember(no_update,'Running backtest. You can change the controls and start another run.',job_id,False,0,'0% · Preparing saved inputs',False,'Run another backtest')
+        # A page's remembered job takes precedence over the shared visible job
+        # slot, which can still belong to the page we just navigated away from.
+        job_id=entry.get('job_id') or (None if restoring else job_id)
+        if not job_id and not restoring:raise PreventUpdate
+        job=backtesting_service.progress(job_id) if job_id else None
+        if job is not None and any(job['parameters'].get(k)!=context[c] for k,c in [('sport','sport'),('group','group'),('key','model')]):
             raise PreventUpdate
+        if job is None:
+            saved=saved_result()
+            entry.pop('job_id',None)
+            if not restoring and job_id:
+                return remember(saved,'This run was interrupted. Previous saved results are shown when available.',None,True,0,'Interrupted',False,'Run backtest')
+            message='Restored saved results. Use Run backtest to apply the current controls.' if saved else 'Choose a scope and run a chronological backtest.'
+            return remember(saved,message,None,True,100 if saved else 0,'Saved result' if saved else 'Ready',False,'Run backtest')
+        entry['job_id']=job_id
         if job['state']=='completed':
             result=job['result']
+            if result.get('run_id'):entry['run_id']=result['run_id']
             message=f'Completed {len(result["records"])} evaluated games; {len(result["skipped"])} skipped. '
             message+='Reused an identical saved run.' if job['reused'] else 'Results and CSV reports saved locally.'
-            return result,message,job_id,True,100,'100% · Complete'+(' (saved run)' if job['reused'] else ''),False,'Run backtest'
-        if job['state']=='failed':return None,job['message'],job_id,True,job['percent'],'Failed',False,'Run backtest'
-        return no_update,job['message'],job_id,False,job['percent'],f'{job["percent"]}% · {job["message"]}',True,'Running backtest…'
+            return remember(result,message,job_id,True,100,'100% · Complete'+(' (saved run)' if job['reused'] else ''),False,'Run backtest')
+        prior=saved_result() if restoring else no_update
+        if job['state']=='failed':return remember(prior,job['message'],job_id,True,job['percent'],'Failed',False,'Run backtest')
+        return remember(prior,job['message'],job_id,False,job['percent'],f'{job["percent"]}% · {job["message"]}',False,'Run another backtest')
 
     @app.callback(Output('backtest-results','children'),Output('backtest-export','disabled'),
                   Input('backtest-result','data'),Input('backtest-context','data'),Input('backtest-target','value'))
@@ -753,7 +925,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
 
     @app.callback(Output("sport", "value"), Output("workspace-page", "value"), Input("market-url", "hash"))
     def restore_game_route(location_hash):
-        if historical_route(location_hash):return no_update,'historical'
+        in_game = re.fullmatch(r'#(nba|nfl)-in-game-data', location_hash or '')
+        if in_game:return in_game[1].upper(),'in-game'
+        if location_hash=='#research' or research_view.route(location_hash):return 'RESEARCH','backtesting'
+        if historical_route(location_hash):
+            target=history_target(location_hash)
+            return target['sport'] if target else no_update,'historical'
         if location_hash=='#backtesting' or backtesting_route(location_hash):
             return no_update,'backtesting'
         schedule=re.fullmatch(r'#(nba|nfl|ncaaf)-games',location_hash or '')
@@ -782,8 +959,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Output("market-detail-context", "data"),
                   Input("market-url", "hash"), Input("sport", "value"), Input("workspace-page", "value"),
                   Input("market-schedule", "data"), Input("market-refresh-signal", "data"),
-                  State("market-snapshot", "value"), State("market-detail-context", "data"))
-    def open_game(location_hash, sport, page, games, refreshed, previous, previous_context):
+                  State("market-snapshot", "value"), State("market-detail-context", "data"),State('market-return','data'))
+    def open_game(location_hash, sport, page, games, refreshed, previous, previous_context,market_return=None):
         game_id = market_game_id(location_hash)
         if not game_id or sport not in market_services or market_game_sport(location_hash) != sport or page != "market":
             return {"display": "block"}, {"display": "none"}, [], [], None, None
@@ -798,7 +975,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                    else uuid4().hex} if game else None
         options = [{"label": format_eastern(item["pulled_at"]),
                     "value": item.get("csv_file", item["pulled_at"])} for item in snapshots]
-        chosen = previous if previous in {option["value"] for option in options} else options[0]["value"] if options else None
+        available={option['value'] for option in options}
+        remembered=remembered_market(market_return,sport,location_hash)
+        restored=remembered.get('snapshot') if remembered else None
+        chosen = previous if previous in available else restored if restored in available else options[0]['value'] if options else None
         if ("market-refresh-signal.data" in ctx.triggered_prop_ids and refreshed and
                 refreshed.get("sport", "NFL") == sport and str(refreshed.get("game_id")) == game_id and refreshed.get("snapshot") in {item["value"] for item in options}):
             chosen = refreshed["snapshot"]
@@ -915,36 +1095,56 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 ['true' if flag else 'false' for flag in flags])
 
     @app.callback(Output("market-category", "children"), Output("market-category", "value"), Output("market-snapshot-status", "children"),
-                  Input("market-snapshot", "value"), Input("market-url", "hash"), State("market-category", "value"))
-    def snapshot_categories(selection, location_hash, previous):
+                  Input("market-snapshot", "value"), Input("market-url", "hash"), State("market-category", "value"),State('market-return','data'))
+    def snapshot_categories(selection, location_hash, previous,market_return=None):
         snapshot = saved_snapshot(location_hash, selection)
         if not snapshot:
             return [], None, "No saved markets yet. Use Pull Live Markets above to download a snapshot."
         available = {row["group"] for row in snapshot["rows"]}
+        available.add(FILTER_CATEGORY)
         categories = NBA_CATEGORIES if market_game_sport(location_hash) == "NBA" else CATEGORIES
         tabs = [dcc.Tab(label=label, value=key, className="market-category-tab", selected_className="market-category-tab selected")
                 for key, label in categories if key in available]
-        value = previous if previous in available else tabs[0].value if tabs else None
+        tabs.append(dcc.Tab(label='Mispricing Filter',value=FILTER_CATEGORY,className='market-category-tab',
+                            selected_className='market-category-tab selected'))
+        remembered=remembered_market(market_return,market_game_sport(location_hash),location_hash)
+        restored=remembered.get('category') if remembered and remembered.get('snapshot')==selection else None
+        value = restored if restored in available else previous if previous in available else tabs[0].value if tabs else None
         cost = f"{snapshot['cost']} credits" if snapshot["cost"] is not None else "Cost not reported"
         return tabs, value, [html.Span(latest_pull_text(snapshot) + f" · {cost}"),
                              html.Small("Saved in data/market_data", title=snapshot.get("csv_file", "Saved locally"))]
 
     @app.callback(Output("market-applied-criteria", "data"), Output("market-criteria-status", "children"),
                   Output("market-category", "value", allow_duplicate=True),
+                  Output('mispricing-request','data'),
                   Input("market-apply-criteria", "n_clicks"), State("market-probability-threshold", "value"),
-                  State("market-edge-threshold", "value"), State("market-category", "value"), prevent_initial_call=True)
-    def apply_market_criteria(clicks, probability, edge, category):
-        if not clicks:
+                  State("market-edge-threshold", "value"), State("market-category", "value"),
+                  Input('market-quick-filter','n_clicks'),State('market-url','hash'),State('market-snapshot','value'),
+                  State('market-forecast-method','value'),State('player-forecast-method','value'),prevent_initial_call=True)
+    def apply_market_criteria(clicks, probability, edge, category,quick_clicks=0,location_hash=None,selection=None,method='PPP',player_method='WHP'):
+        if not clicks and not quick_clicks:
             raise PreventUpdate
-        if (not all(isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-                    for value in (probability, edge)) or not 0 <= probability <= 100 or not -100 <= edge <= 100):
-            return no_update, "Enter an Estimated Probability from 0 to 100 and an Edge from -100 to 100. Previous criteria remain applied.", no_update
-        return {"probability": probability / 100, "edge": edge / 100}, (
-            f"Applied to all calculated selections: estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Player tabs and Game Lines use their selected forecast methods."), category or "Game"
+        try:criteria=criteria_values(probability,edge)
+        except ValueError as exc:return no_update,str(exc),no_update,no_update
+        request=no_update
+        if ctx.triggered_id=='market-quick-filter':
+            if not market_game_id(location_hash) or not selection:
+                return no_update,'Choose a saved game snapshot before using Quick Filtering.',no_update,no_update
+            if method not in {'PPP','EPA','ELO'} or player_method not in {'WHP','UO','OAM','PGE'}:
+                return no_update,'Choose a supported game and player forecast method.',no_update,no_update
+            request={**filter_context(location_hash,selection,method,player_method,criteria),'sequence':quick_clicks}
+        return criteria, (
+            f"Applied to all calculated selections: estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Player tabs and Game Lines use their selected forecast methods."), category or FILTER_CATEGORY,request
+
+    @app.callback(Output('mispricing-filter-panel','style'),Output('saved-market-sections','style'),Input('market-category','value'))
+    def mispricing_visibility(category):
+        selected=category==FILTER_CATEGORY
+        return {'display':'block' if selected else 'none'},{'display':'none' if selected else 'block'}
 
     @app.callback(Output("player-forecast-method", "options"), Output("player-forecast-method", "value"),
                   Input("market-url", "hash"), State("player-forecast-method", "value"))
     def player_forecast_methods(location_hash, previous):
+        if not market_game_sport(location_hash):return no_update,no_update
         supported = market_game_sport(location_hash) in {"NBA", "NFL", "NCAAF"}
         options = [{"label": "Weighted Historical Performance (WHP)", "value": "WHP"},
                    {"label": "Usage & Opportunity (UO)",
@@ -972,10 +1172,71 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             except (ValueError, TypeError, KeyError):
                 return prefix + "Unavailable"
             if kind == "player":
-                last += " · " + record["category"] + " markets"
+                last += " · " + record["category"] + ("" if record["category"]=='All player props' else " markets")
             return prefix + last
         return (label("game", game_method or "PPP", "Latest historical game used: "),
                 label("player", player_method or "WHP", "Latest historical performance used: "))
+
+    def forecast_player_markets(snapshot,player_method,category=None):
+        forecast,error=None,None
+        rows=[row for row in snapshot['rows'] if row['market_key'].startswith('player_') and
+              (category is None or row['group']==category)]
+        if not rows:return None,None,{'latest_date':None,'category':'All player props' if category is None else category}
+        try:
+            if snapshot['sport']=='NCAAF':
+                names=[snapshot['home_team'],snapshot['away_team']]
+                ncaaf_model_data.prepare(names,snapshot['commence_time'])
+                if player_method!='WHP':ncaaf_model_data.prepare_player_inputs(names,snapshot['commence_time'])
+            if player_method in {'UO','OAM','PGE'}:
+                # One joint game forecast preserves the same simulated volumes
+                # and player correlations across tabs and the cross-market filter.
+                forecast={'UO':usage_opportunity_service,'OAM':opponent_adjusted_service,
+                          'PGE':pace_game_environment_service}[player_method].forecast(snapshot)
+            else:
+                if snapshot['sport']=='NCAAF':ncaaf_model_data.prepare_players(snapshot,rows)
+                forecast=whp_service.forecast({**snapshot,'rows':rows})
+        except (DataSourceError,OSError,ValueError) as exc:
+            error=str(exc)
+            if 'No saved player history.' in error:
+                error='Player estimates are unavailable because no saved historical player data is available.'
+        dates=[item.diagnostics.get('last_game_date') for item in forecast.forecasts.values()] if forecast else []
+        dates=[value for value in dates if value]
+        return forecast,error,dict(latest_date=max(dates) if dates else None,category='All player props' if category is None else category)
+
+    def forecast_game_markets(snapshot,method):
+        if not any(row['market_key'] in {'alternate_spreads','alternate_totals'} for row in snapshot['rows']):return None,None
+        try:
+            if snapshot['sport']=='NCAAF':service=ncaaf_forecast_services[method]
+            elif snapshot['sport']=='NBA':service={'PPP':nba_ppp_service,'EPA':nba_epa_service,'ELO':nba_elo_service}[method]
+            else:service={'PPP':ppp_service,'EPA':epa_service,'ELO':elo_service}[method]
+            return service.forecast(snapshot),None
+        except (DataSourceError,OSError,ValueError) as exc:return None,str(exc)
+
+    @app.callback(Output('mispricing-results','children'),Output('market-forecast-history','data',allow_duplicate=True),
+                  Input('mispricing-request','data'),Input('market-category','value'),Input('market-url','hash'),
+                  Input('market-snapshot','value'),Input('market-forecast-method','value'),Input('player-forecast-method','value'),
+                  Input('market-applied-criteria','data'),State('market-forecast-history','data'),prevent_initial_call=True,
+                  running=[(Output('market-quick-filter','disabled'),True,False)])
+    def quick_filter_markets(request,category,location_hash,selection,method,player_method,criteria,previous_history):
+        prompt=html.P('Click Quick Filtering to show the top three selections and all remaining matches.',className='saved-market-empty')
+        if category!=FILTER_CATEGORY:return prompt,no_update
+        expected=filter_context(location_hash,selection,method,player_method,criteria)
+        if not request or any(request.get(key)!=value for key,value in expected.items()):return prompt,no_update
+        if method not in {'PPP','EPA','ELO'} or player_method not in {'WHP','UO','OAM','PGE'}:return prompt,no_update
+        snapshot=saved_snapshot(location_hash,selection)
+        if not snapshot:return html.P('That saved snapshot is unavailable. Choose a snapshot and run Quick Filtering again.',className='saved-market-empty'),no_update
+        snapshot={**snapshot,'sport':market_game_sport(location_hash)}
+        game,game_error=forecast_game_markets(snapshot,method)
+        players,player_error,player_history=forecast_player_markets(snapshot,player_method)
+        ranked=rank_markets(snapshot,game,players,criteria,method,player_method)
+        context=[location_hash,selection]
+        previous=previous_history if previous_history and previous_history.get('context')==context else {}
+        history=dict(context=context,game=dict(previous.get('game',{})),player=dict(previous.get('player',{})))
+        history['game'][method]={'latest_date':game.diagnostics.get('last_game_date') if game else None}
+        history['player'][player_method]=player_history
+        errors=[f'{method} game forecast: {game_error}' if game_error else None,
+                f'{player_method} player forecast: {player_error}' if player_error else None]
+        return mispricing_results(snapshot,ranked,criteria,errors),history
 
     @app.callback(Output("saved-market-sections", "children"), Output("market-forecast-history", "data"),
                   Input("market-category", "value"),
@@ -985,6 +1246,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     def show_saved_markets(category, selection, location_hash, criteria, method, player_method, previous_history):
         if category is None:
             raise PreventUpdate
+        if category==FILTER_CATEGORY:return [],no_update
         method = method or "PPP"
         if method not in ("PPP", "EPA", "ELO"):
             raise PreventUpdate
@@ -996,47 +1258,15 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             return html.P("Use Pull Live Markets above to download this game's first snapshot.", className="saved-market-empty"), history
         if not snapshot["rows"]:
             return html.P("The saved response contains no FanDuel selections.", className="saved-market-empty"), history
-        forecast, model_error = None, None
         snapshot = {**snapshot, "sport": market_game_sport(location_hash)}
         if category != "Game":
             player_method = player_method or "WHP"
             if player_method not in {"WHP", "UO", "OAM", "PGE"}:
                 raise PreventUpdate
-            try:
-                if snapshot['sport']=='NCAAF':
-                    names=[snapshot['home_team'],snapshot['away_team']]
-                    ncaaf_model_data.prepare(names,snapshot['commence_time'])
-                    if player_method!='WHP':
-                        ncaaf_model_data.prepare_player_inputs(names,snapshot['commence_time'])
-                if player_method in {"UO", "OAM", "PGE"}:
-                    # Simulate the full saved game once, so changing a player tab
-                    # retains common team volumes and correlated prop outcomes.
-                    forecast = {"UO": usage_opportunity_service, "OAM": opponent_adjusted_service,
-                                "PGE": pace_game_environment_service}[player_method].forecast(snapshot)
-                else:
-                    if snapshot['sport']=='NCAAF':
-                        ncaaf_model_data.prepare_players(snapshot,[row for row in snapshot['rows'] if row['group']==category])
-                    forecast = whp_service.forecast({**snapshot, "rows": [row for row in snapshot["rows"] if row["group"] == category]})
-            except (DataSourceError, OSError, ValueError) as exc:
-                model_error = str(exc)
-                if "No saved player history." in model_error:
-                    model_error = "Player estimates are unavailable because no saved historical player data is available."
-            dates = [item.diagnostics.get("last_game_date") for item in forecast.forecasts.values()] if forecast else []
-            dates = [value for value in dates if value]
-            history["player"][player_method or "WHP"] = {"latest_date": max(dates) if dates else None, "category": category}
+            forecast,model_error,record=forecast_player_markets(snapshot,player_method,category)
+            history['player'][player_method]=record
             return market_sections(snapshot, category, forecast, model_error, criteria, player_method), history
-        if category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
-            try:
-                if market_game_sport(location_hash) == "NCAAF":
-                    forecast = ncaaf_forecast_services[method].forecast(snapshot)
-                elif market_game_sport(location_hash) == "NBA":
-                    # Copies old CSV metadata so rendering always uses the correct sport.
-                    snapshot = {**snapshot, "sport": "NBA"}
-                    forecast = {"PPP": nba_ppp_service, "EPA": nba_epa_service, "ELO": nba_elo_service}[method].forecast(snapshot)
-                else:
-                    forecast = {"PPP": ppp_service, "EPA": epa_service, "ELO": elo_service}[method].forecast(snapshot)
-            except DataSourceError as exc:
-                model_error = str(exc)
+        forecast,model_error=forecast_game_markets(snapshot,method)
         history["game"][method] = {"latest_date": forecast.diagnostics.get("last_game_date") if forecast else None}
         return market_sections(snapshot, category, forecast, model_error, criteria, method), history
 
@@ -1149,11 +1379,11 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                               className="panel market-empty")
         return blocks, status, schedule.games
 
-    @app.callback(Output("college-fields", "style"), Output("week-fields", "style"), Input("sport", "value"))
-    def source_details(sport):
+    @app.callback(Output("college-fields", "style"), Output("week-fields", "style"), Input("sport", "value"),Input('entity-type','value'))
+    def source_details(sport,kind='team'):
         if sport not in SOURCES:
             raise PreventUpdate
-        return ({"display": "block" if sport == "NCAAF" else "none"},
+        return ({"display": "block" if sport == "NCAAF" and kind!='player' else "none"},
                 {"display": "block" if sport != "NBA" else "none"})
 
     @app.callback(Output("entity-type", "value"),Input("sport", "value"),
@@ -1161,7 +1391,27 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     def statistics_modes(sport,location_hash,kind):
         if sport not in SOURCES:
             raise PreventUpdate
+        target=history_target(location_hash)
+        if target and target['sport']==sport:return target['kind']
         return statistics_kind(sport,historical_route(location_hash) or kind)
+
+    @app.callback(Output('season','value'),Output('season-type','value'),Output('college-team','value'),
+                  Output('week','value'),Input('market-url','hash'))
+    def historical_market_scope(location_hash):
+        target=historical_target(location_hash)
+        if not target:raise PreventUpdate
+        return (target.get('season',no_update),'regular',
+                target['name'] if target['sport']=='NCAAF' and target['kind']=='team' else no_update,None)
+
+    def college_player_history(season,phase,week):
+        frame=backtesting_service.player_inputs('NCAAF')
+        frame=frame[pd.to_numeric(frame.season,errors='coerce').eq(int(season)) & frame.season_type.eq(phase)].copy()
+        if week is not None:
+            if 'week' not in frame:raise DataSourceError('Week metadata is unavailable in saved college player history. Clear the week filter.')
+            frame=frame[pd.to_numeric(frame.week,errors='coerce').eq(int(week))]
+        if frame.empty:raise DataSourceError('No saved college player history matches this season and phase. Prepare college player history or choose another season.')
+        if 'matchup' not in frame:frame['matchup']=frame.team+' vs '+frame.opponent
+        return frame.assign(sport='NCAAF',entity_type='player')
 
     @app.callback(Output("dataset", "data"), Output("load-status", "children"),
                   Output("dataset-summary", "children"), Output("export", "disabled"),
@@ -1172,13 +1422,18 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     def load_data(_load, _refresh, sport, season, kind, phase, team, week, page):
         if page != "historical" or sport not in SOURCES:
             raise PreventUpdate
-        if sport not in PLAYER_SPORTS:
+        if sport not in PLAYER_SPORTS and sport!='NCAAF':
             kind = "team"
         try:
             if season is None or int(season) != float(season):
                 raise ValueError("Choose a whole season year.")
             if sport != "NBA" and week is not None and int(week) != float(week):
                 raise ValueError("Choose a whole week number.")
+            if sport=='NCAAF' and kind=='player':
+                frame=college_player_history(season,phase,week)
+                return (dict(key='saved-college-players',sport=sport,season=season,kind=kind,phase=phase,week=week,saved_players=True),
+                        'Saved CollegeFootballData player boxes. This view reads prepared history; it does not download data.',
+                        f'{sport} · {season} · {phase} · {len(frame):,} appearances · {frame.entity_id.nunique():,} players',False)
             query = Query(sport, int(season), kind, phase, (team or "").strip() if sport == "NCAAF" else "",
                           int(week) if week is not None and sport != "NBA" else None)
             result = service.load(query, refresh=ctx.triggered_id == "refresh")
@@ -1191,10 +1446,39 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             message += f" Showing previously saved data. {result.notice}"
         return {"key": result.key, "sport": sport, "season": season, "kind": kind, "phase": phase}, message, summary, False
 
+    def historical_frame(dataset):
+        frame=(college_player_history(dataset['season'],dataset['phase'],dataset.get('week')) if dataset.get('saved_players') else
+               service.read(dataset['key']).frame)
+        return market_metrics(frame,dataset['sport'],dataset['kind'])
+
+    def linked_metric(dataset,entity,metrics,location_hash):
+        target=historical_target(location_hash)
+        if matches_dataset(target,dataset):
+            frame=historical_frame(dataset)
+            if target_entity(frame,target)==entity:
+                return target_metric(target,metrics,frame[frame.entity_id.eq(entity)]),True
+        return None,False
+
+    @app.callback(Output('historical-link-status','children'),Input('dataset','data'),Input('entity','value'),
+                  Input('metric','value'),Input('market-url','hash'))
+    def historical_market_status(dataset,entity,metric,location_hash):
+        target=historical_target(location_hash)
+        if not target:return ''
+        if not matches_dataset(target,dataset):return f"Loading historical data for {target['name']}…"
+        try:
+            resolved=target_entity(historical_frame(dataset),target)
+        except DataSourceError:return 'Reload historical data to open this market’s history.'
+        if resolved is None:
+            return f"No unique match for {target['name']} in this season’s saved data. Choose another season or select a name manually."
+        if entity!=resolved:return ''
+        if metric is None:return f"No recorded statistic for this market is available for {target['name']} in this scope. Choose another season or statistic."
+        note=' Touchdown counts are shown; first/last scorer order is not available in these box scores.' if target['market'] in {'player_1st_td','player_last_td'} else ''
+        return f"{target['name']} · {metric_label(metric,dataset['sport'])} historical game log."+note
+
     @app.callback(Output('ncaaf-history-status','children'),Input('dataset','data'),Input('entity','value'),
                   Input('refresh','n_clicks'),State('workspace-page','value'))
     def prepare_college_selection(dataset,entity,_refresh,page):
-        if page!='historical' or not dataset or dataset.get('sport')!='NCAAF':return ''
+        if page!='historical' or not dataset or dataset.get('sport')!='NCAAF' or dataset['kind']!='team':return ''
         if not entity:return 'Choose a college school to prepare reusable team/player forecasting CSVs.'
         try:
             frame=service.read(dataset['key']).frame
@@ -1208,12 +1492,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
 
     @app.callback(Output("entity", "options"), Output("entity", "value"),
                   Output("entity", "disabled"), Output("entity", "placeholder"),
-                  Input("dataset", "data"), Input("player-team", "value"), State("entity", "value"))
-    def select_options(dataset, team, previous_entity):
+                  Input("dataset", "data"), Input("player-team", "value"), State("entity", "value"),Input('market-url','hash'))
+    def select_options(dataset, team, previous_entity,location_hash=None):
         if not supported_dataset(dataset):
             return [], None, True, "No data available — see source status"
         try:
-            frame = service.read(dataset["key"]).frame
+            frame = historical_frame(dataset)
         except DataSourceError:
             return [], None, True, "Reload the historical data"
         frame = filter_team(frame, dataset["kind"], team)
@@ -1224,23 +1508,28 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if not options:
             return [], None, True, "No matching observations"
         selected_entity = previous_entity if previous_entity in set(entities["entity_id"]) else options[0]["value"]
-        return options, selected_entity, False, "Choose a team or player"
+        target=historical_target(location_hash)
+        placeholder='Choose a team or player'
+        if matches_dataset(target,dataset):
+            selected_entity=target_entity(frame,target)
+            if selected_entity is None:placeholder=f"No unique match for {target['name']} — select manually"
+        return options, selected_entity, False, placeholder
 
     @app.callback(Output("player-team-field", "style"), Output("identity-filters", "className"),
                   Output("entity-label", "children"), Input("entity-type", "value"), Input("sport", "value"))
     def show_player_team(kind, sport):
-        if kind == "player" and sport in PLAYER_SPORTS:
+        if kind == "player" and sport in {*PLAYER_SPORTS,'NCAAF'}:
             return {"display": "block"}, "analysis-filters identity-filters", "Player"
         return {"display": "none"}, "analysis-filters identity-filters single-entity", "Team"
 
     @app.callback(Output("player-team", "options"), Output("player-team", "value"),
                   Output("player-team", "disabled"), Output("player-team", "placeholder"),
-                  Input("dataset", "data"), State("player-team", "value"))
-    def select_player_teams(dataset, previous_team):
+                  Input("dataset", "data"), State("player-team", "value"),Input('market-url','hash'))
+    def select_player_teams(dataset, previous_team,location_hash=None):
         if not supported_dataset(dataset) or dataset["kind"] != "player":
             return [], None, True, "Choose player statistics to filter by team"
         try:
-            frame = service.read(dataset["key"]).frame
+            frame = historical_frame(dataset)
         except DataSourceError:
             return [], None, True, "Reload the historical data"
         teams = sorted(team for team in frame["team"].dropna().unique() if str(team).strip())
@@ -1248,12 +1537,13 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             return [], None, True, "No team data available"
         options = [{"label": "All teams", "value": ALL_TEAMS}] + [{"label": team, "value": team} for team in teams]
         selected = previous_team if previous_team == ALL_TEAMS or previous_team in teams else ALL_TEAMS
+        if matches_dataset(history_target(location_hash),dataset):selected=ALL_TEAMS
         return options, selected, False, "Choose a team"
 
     def available_metrics(dataset, entity, team):
         if not supported_dataset(dataset) or entity is None:
             return []
-        frame = service.read(dataset["key"]).frame
+        frame = historical_frame(dataset)
         frame = filter_team(frame, dataset["kind"], team)
         selected = frame[frame["entity_id"] == entity]
         return relevant_metrics(selected, dataset["sport"], dataset["kind"])
@@ -1261,8 +1551,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     @app.callback(Output("metric-group", "options"), Output("metric-group", "value"),
                   Output("metric-group", "disabled"), Output("metric-group", "placeholder"),
                   Input("dataset", "data"), Input("entity", "value"), Input("player-team", "value"),
-                  State("metric-group", "value"), State("metric", "value"))
-    def select_categories(dataset, entity, team, previous_category, previous_metric):
+                  State("metric-group", "value"), State("metric", "value"),Input('market-url','hash'))
+    def select_categories(dataset, entity, team, previous_category, previous_metric,location_hash=None):
         if not supported_dataset(dataset):
             return [], None, True, "Load historical data — see source status above"
         if entity is None:
@@ -1277,13 +1567,15 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         categories = {option["value"] for option in options}
         preferred = previous_metric if previous_metric in metrics else preferred_metric(metrics)
         value = previous_category if previous_category in categories else statistic_category(preferred, dataset["sport"])
+        requested,linked=linked_metric(dataset,entity,metrics,location_hash)
+        if linked:value=statistic_category(requested,dataset['sport']) if requested else None
         return options, value, False, "Choose a statistic type"
 
     @app.callback(Output("metric", "options"), Output("metric", "value"),
                   Output("metric", "disabled"), Output("metric", "placeholder"),
                   Input("dataset", "data"), Input("entity", "value"), Input("player-team", "value"),
-                  Input("metric-group", "value"), State("metric", "value"))
-    def select_metrics(dataset, entity, team, category, previous_metric):
+                  Input("metric-group", "value"), State("metric", "value"),Input('market-url','hash'))
+    def select_metrics(dataset, entity, team, category, previous_metric,location_hash=None):
         if not supported_dataset(dataset):
             return [], None, True, "Load historical data — see source status above"
         if entity is None:
@@ -1298,6 +1590,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if not metrics:
             return [], None, True, "Choose an available statistic type"
         value = previous_metric if previous_metric in metrics else preferred_metric(metrics)
+        requested,linked=linked_metric(dataset,entity,metrics,location_hash)
+        if linked and requested in metrics:value=requested
         return [{"label": metric_label(c, dataset["sport"]), "value": c} for c in metrics], value, False, "Choose a statistic"
 
     @app.callback(Output("trend", "figure"), Output("forecast-summary", "children"),
@@ -1310,7 +1604,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                  kpi("BACKTEST MAE", "—", "Mean absolute error on past games")]
         if not supported_dataset(dataset) or entity is None or metric is None:
             return empty_figure(), blank, [], []
-        frame = service.read(dataset["key"]).frame
+        frame = historical_frame(dataset)
         frame = filter_team(frame, dataset["kind"], team)
         if metric not in frame:
             return empty_figure(), blank, [], []
@@ -1346,7 +1640,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if not supported_dataset(dataset) or dataset["kind"] != "player" or entity is None or metric is None:
             return empty_figure("Choose a player and statistic to load career history"), ""
         try:
-            frame = service.read(dataset["key"]).frame
+            frame = historical_frame(dataset)
             selected = frame[frame["entity_id"] == entity]
             if selected.empty or metric not in relevant_metrics(selected, dataset["sport"], "player"):
                 return empty_figure("Choose a statistic relevant to this player"), ""
@@ -1368,7 +1662,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     def export_data(_clicks, dataset):
         if not supported_dataset(dataset):
             return no_update
-        frame = service.read(dataset["key"]).frame
+        frame = historical_frame(dataset)
         return dcc.send_data_frame(frame.to_csv, f"{dataset['sport']}_{dataset['season']}_{dataset['kind']}_stats.csv", index=False)
 
+    register_comparison_callbacks(app,backtesting_service)
+    register_in_game_callbacks(app,in_game_service)
     return app

@@ -1,11 +1,13 @@
 """Replay supplied contemporaneous market snapshots against final outcomes."""
 import math
 import pandas as pd
+from models.replay import replay_scope
 from .calibration import diagnostics
 from .errors import UsageOpportunityError
 from .markets import prop_key
 
 
+@replay_scope
 def walk_forward_backtest(service, snapshots, actuals):
     """Never fabricate historical prices or use held-out realized opportunities.
 

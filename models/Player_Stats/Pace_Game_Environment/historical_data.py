@@ -2,6 +2,7 @@
 from functools import lru_cache
 from pathlib import Path
 import pandas as pd
+from models.replay import replay_repository
 from models.Player_Stats.Usage_Opportunity.historical_data import (
     UsageHistoryRepository, eligible, match_player, identity_name, atomic_json,
 )
@@ -73,6 +74,7 @@ class PaceHistoryRepository(UsageHistoryRepository):
                 notice += f' Play-by-play unavailable; explicitly labeled box-score volume fallback will be used: {exc}'
         return notice
 
+    @replay_repository
     def load(self, sport, start, teams):
         players, boxes = super().load(sport, start, teams)
         if sport == 'NFL':

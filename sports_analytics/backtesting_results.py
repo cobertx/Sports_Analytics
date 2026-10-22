@@ -1,5 +1,5 @@
 """Controls, metric cards and plots for actual chronological replay records."""
-import math
+import math,json
 from dash import dcc,html,dash_table
 import numpy as np
 import pandas as pd
@@ -15,7 +15,20 @@ def field(label,control,note=None):
 def layout():
     return html.Section([
         dcc.Store(id='backtest-context'),dcc.Store(id='backtest-result'),dcc.Store(id='backtest-job'),
+        dcc.Store(id='backtest-pages',data={},storage_type='session'),
         dcc.Interval(id='backtest-poll',interval=750,disabled=True),dcc.Download(id='backtest-download'),
+        html.Details([
+            html.Summary('Previous simulations'),
+            html.P('Reopen completed simulations for this sport and method, including their original settings and results.',className='backtest-status'),
+            html.Div([
+                field('Saved simulation',dcc.Dropdown(id='backtest-history',options=[],value=None,
+                    placeholder='Choose a previous simulation',clearable=True)),
+                html.Button('Open simulation',id='backtest-history-open',n_clicks=0,disabled=True,className='export-button'),
+            ],className='backtest-history-controls'),
+            html.P(id='backtest-history-status',className='backtest-status',role='status'),
+            html.P(['Saved files: ',html.Code(id='backtest-history-location')],className='backtest-status'),
+            html.P('JSON reports retain the full simulation. CSV exports open in Excel and are available through Export results.',className='backtest-status'),
+        ],id='backtest-history-panel',open=False,className='panel backtest-history'),
         html.Div([
             html.H2('Backtesting results'),
             html.P('Replay completed games using only earlier available data. Choose the evaluation sample and estimation history separately.'),
@@ -91,9 +104,26 @@ def per_game_axis(fig,data):
     return x,[[format_eastern(r.date),r.label,str(r.game_id)] for r in data.itertuples()]
 
 
+def error_summary(errors):
+    """Exact statistics of signed forecast errors, rather than histogram bins."""
+    values=np.asarray(errors,dtype=float).ravel()
+    if not np.isfinite(values).all():raise ValueError('Forecast errors must be finite.')
+    if not len(values):return dict(samples=0)
+    q05,q25,q75,q95=np.percentile(values,[5,25,75,95])
+    return dict(samples=len(values),mean=float(values.mean()),median=float(np.median(values)),
+        sample_sd=float(values.std(ddof=1)) if len(values)>1 else None,
+        mae=float(np.abs(values).mean()),rmse=float(np.sqrt(np.mean(values**2))),
+        minimum=float(values.min()),maximum=float(values.max()),
+        p05=float(q05),q25=float(q25),q75=float(q75),p95=float(q95))
+
+
 def error_distribution(fig,errors):
     """Exact histogram counts with a Gaussian-kernel descriptive overlay."""
-    errors=np.asarray(errors,float)
+    errors=np.asarray(errors,float).ravel()
+    summary=error_summary(errors)
+    if not len(errors):
+        fig.add_annotation(text='No evaluated forecast errors.',showarrow=False,x=.5,y=.5,xref='paper',yref='paper')
+        return
     count=max(20,min(100,math.ceil(3*math.sqrt(len(errors)))))
     counts,edges=np.histogram(errors,bins=count)
     centers=(edges[:-1]+edges[1:])/2
@@ -118,6 +148,27 @@ def error_distribution(fig,errors):
         hovertemplate='Error: %{x:.2f}<br>Smoothed games per bin: %{y:.2f}<extra></extra>'))
     fig.add_vline(x=0,line_dash='dash',line_color='#f6c667')
     fig.update_yaxes(rangemode='tozero',dtick=1 if max(counts)<10 else None)
+    # Reserve space above the plot so the statistics cannot obscure histogram
+    # bars or tails. Three short columns remain readable in narrow chart panels.
+    fig.update_layout(height=460,margin=dict(t=150),title=dict(y=.98,yanchor='top'),
+        meta={**(fig.layout.meta or {}),'error_distribution':summary})
+    stats=[('Mean (bias)',f'{summary["mean"]:+.2f}','Average signed error. Positive means overprediction; negative means underprediction.'),
+           ('Median',f'{summary["median"]:+.2f}','Middle signed error; less sensitive to extreme errors than the mean.'),
+           ('Sample SD',f'{summary["sample_sd"]:.2f}' if summary['sample_sd'] is not None else 'N/A',
+            'Sample standard deviation of signed errors (n − 1 denominator). Requires at least two observations.'),
+           ('Samples',f'{summary["samples"]:,}','Evaluated games or player appearances in this distribution.'),
+           ('MAE',f'{summary["mae"]:.2f}','Mean absolute error, in the selected statistic’s units.'),
+           ('RMSE',f'{summary["rmse"]:.2f}','Root mean squared error; larger misses receive more weight.')]
+    range_text=(f'<br>Min / max: {summary["minimum"]:.2f} / {summary["maximum"]:.2f}'
+                f'<br>25th / 75th percentile: {summary["q25"]:.2f} / {summary["q75"]:.2f}'
+                f'<br>5th / 95th percentile: {summary["p05"]:.2f} / {summary["p95"]:.2f}')
+    for index,(label,value,help_text) in enumerate(stats):
+        column=index%3
+        fig.add_annotation(x=[0,.5,1][column],y=1.29 if index<3 else 1.07,xref='paper',yref='paper',
+            xanchor=['left','center','right'][column],yanchor='bottom',showarrow=False,
+            text=f'<span style="font-size:10px">{label}</span><br><b>{value}</b>',
+            hovertext=help_text+range_text,align='center',font=dict(size=12,color='#c7d3e4'),
+            bgcolor='#17253a',bordercolor='#243249',borderpad=5)
 
 
 def historical_accuracy(fig,data,context):
@@ -228,6 +279,11 @@ def render(result,target='margin'):
     calibration.update_xaxes(range=[0,1],tickformat='.0%');calibration.update_yaxes(range=[0,1],tickformat='.0%')
     accuracy=figure('Historical accuracy by game','Game date','Accuracy')
     historical_accuracy(accuracy,data,context)
+    chart_notes={id(residual):'Error = predicted − actual. Mean and median describe bias; sample SD describes spread. MAE and RMSE measure miss size. Hover a statistic for its definition, range and percentiles.',
+        id(rolling):'Each point averages absolute errors over the last up to 5 evaluated observations, including individual player appearances in cohort runs. Lower is better. Compare the model with the prior-data baseline on the same observations; rising values indicate worse recent point forecasts.',
+        id(calibration):'Predictions are grouped in 2-percentage-point bins. The diagonal means forecast probability matches observed frequency; below it means the event happened less often than predicted. Hover for each bin’s sample count. '+
+            ('This checks home-team win probabilities, even when the error charts show total points. It does not check every alternate spread or total line.' if game else
+             'This checks Over the fixed reference line used in this run; pushes are excluded. It does not check every alternate prop line.')}
     table=[]
     for r in records:
         table.append(dict(date=format_eastern(r['date']),game=r['label'],actual=round(r['actual'],3),
@@ -236,7 +292,9 @@ def render(result,target='margin'):
             probability=round(100*r['probability'],2) if r.get('probability') is not None else None,
             training_through=r.get('latest_training')))
     return html.Div([
-        html.P(f'Saved run: {format_eastern(result["created_at"])} · {context["sport"]} · '
+        html.Details([html.Summary('Parameters used for this simulation'),
+            html.Pre(json.dumps(result.get('config',{}),indent=2),className='research-used-parameters')],className='panel research-applied-parameters'),
+        html.P(('Research experiment: ' if context.get('workspace')=='research' else 'Saved run: ')+f'{format_eastern(result["created_at"])} · {context["sport"]} · '
             f'{context.get("entity_label",context["entity"])} · {records[0]["date"][:10]} to {records[-1]["date"][:10]} · '
             f'Last {context["limit"]} eligible games · '
             + ('Playoff setting: not recorded (older run)' if 'include_playoffs' not in context else
@@ -257,7 +315,8 @@ def render(result,target='margin'):
                 html.Aside([html.Strong(f'{inside.mean():.1%}'),html.Span('Inside '+interval_label+' interval'),
                     html.Small(f'{int(inside.sum()):,} of {len(data):,} actuals')],className='backtest-coverage')],
                 className='panel backtest-chart backtest-timeline'),
-            *[html.Div(dcc.Graph(figure=fig,config={'displaylogo':False}),className='panel backtest-chart')
+            *[html.Div([dcc.Graph(figure=fig,config={'displaylogo':False}),
+                *([html.P(chart_notes[id(fig)],className='chart-note backtest-chart-note')] if id(fig) in chart_notes else [])],className='panel backtest-chart')
                 for fig in [parity,residual,rolling,calibration,accuracy]],
         ],className='backtest-chart-grid'),
         html.Section([html.Div(html.H3('Evaluated predictions'),className='panel-heading'),

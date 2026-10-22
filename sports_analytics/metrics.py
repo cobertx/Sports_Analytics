@@ -33,7 +33,7 @@ ROLE_GROUPS = {
 
 
 def metric_group(metric):
-    if metric in {"completions", "attempts", "sacks_suffered"} or metric.startswith(("passing_", "sack_")):
+    if metric in {"completions", "attempts", "sacks_suffered", "interceptions"} or metric.startswith(("passing_", "sack_")):
         return "passing"
     if metric == "carries" or metric.startswith("rushing_"):
         return "rushing"
@@ -89,7 +89,7 @@ def relevant_metrics(frame, sport, kind):
     # A receiver, back, or defender may also be a return specialist.
     if "returns" in active_groups:
         allowed.add("returns")
-    return [name for name in metrics if metric_group(name) in allowed]
+    return [name for name in metrics if metric_group(name) in allowed or name == 'touchdowns']
 
 
 def preferred_metric(metrics):
@@ -124,6 +124,9 @@ NBA_CATEGORIES = {
 
 
 def statistic_category(metric, sport):
+    if metric in {"scoring_margin", "game_total", "points_assists", "points_rebounds", "points_rebounds_assists"}:
+        return 'scoring'
+    if metric == 'rebounds_assists':return 'playmaking'
     if sport != "NBA":
         if sport == "NCAAF" and metric in NCAAF_CATEGORIES:
             return NCAAF_CATEGORIES[metric]
@@ -149,6 +152,10 @@ def statistic_categories(metrics, sport):
 
 
 def metric_label(metric, sport):
+    market_labels = {'scoring_margin':'Scoring margin', 'game_total':'Game total points',
+                     'points_assists':'Points + Assists', 'points_rebounds':'Points + Rebounds',
+                     'rebounds_assists':'Rebounds + Assists', 'points_rebounds_assists':'Points + Rebounds + Assists'}
+    if metric in market_labels:return market_labels[metric]
     if sport == "NCAAF":
         college = {
             "points": "Points scored", "net_passing_yards": "Net passing yards",

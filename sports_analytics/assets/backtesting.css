@@ -37,6 +37,29 @@
 .backtesting-model-notes { margin: 0 0 22px; }
 .backtesting-model-notes > summary { color: var(--muted); padding: 10px 0; font-size: 12px; cursor: pointer; }
 .backtest-setup { padding: 22px; margin-bottom: 22px; }
+.backtest-history { padding: 18px 22px; margin-bottom: 22px; }
+.backtest-history > summary { color: var(--text); font-size: 15px; font-weight: 650; cursor: pointer; }
+.backtest-history-controls { display: flex; align-items: end; gap: 12px; margin-top: 16px; }
+.backtest-history-controls > .field { flex: 1; min-width: 0; margin: 0; }
+.backtest-history-controls > button { flex-shrink: 0; min-height: 36px; }
+.backtest-history code { color: var(--accent); overflow-wrap: anywhere; }
+.research-setup,.research-methodology { padding: 22px; margin-bottom: 22px; }
+.research-methodology h3,.research-setup h3 { font-size: 16px; margin: 0 0 14px; }
+.research-methodology h3:not(:first-child) { margin-top: 24px; }
+.research-methodology p,.research-methodology li { font-size: 13px; color: #c7d3e4; line-height: 1.8; }
+.research-methodology li { padding-left: 5px; margin-bottom: 12px; }
+.research-scope-controls { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.research-parameter-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin: 12px 0; }
+.research-parameter-heading h3 { margin: 0; }
+.research-parameters { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; margin-top: 20px; }
+.research-parameters .field { margin: 0; }
+.research-parameters input { width: 100%; }
+.research-applied-parameters { padding: 15px 20px; margin: 14px 0; }
+.research-applied-parameters summary { color: var(--accent); cursor: pointer; font-size: 12px; }
+.research-used-parameters { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow-y: auto; font-size: 12px; line-height: 1.6; }
+@media (max-width: 1100px) { .research-parameters { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 700px) { .research-parameters,.research-scope-controls { grid-template-columns: minmax(0,1fr); } }
+@media (max-width: 700px) { .backtest-history-controls { align-items: stretch; flex-direction: column; } }
 .backtest-setup > p { font-size: 12px; }
 .backtest-controls { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; margin-top: 20px; }
 .backtest-controls .field { margin: 0; }
@@ -67,12 +90,24 @@
 .backtest-target { max-width: 320px; margin-top: 20px; }
 .backtest-target .field { margin: 0; }
 .backtest-status,.backtest-applied { color: var(--muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.comparison-setup { padding: 22px; margin-bottom: 18px; }
+.comparison-controls { margin-top: 20px; }
+.comparison-history .field { margin: 16px 0; }
+.comparison-summary { padding: 20px; }
+.comparison-progress { display: grid; gap: 10px; margin: 16px 0; }
+.comparison-progress-row { display: grid; grid-template-columns: 60px minmax(100px,180px) minmax(0,1fr); align-items: center; gap: 14px; color: var(--muted); font-size: 12px; }
+.comparison-progress-row strong { color: var(--text); }
+.comparison-progress-row progress { accent-color: var(--accent); width: 100%; }
+.comparison-detail { margin-top: 24px; }
+.comparison-detail > .field { max-width: 450px; }
+@media (max-width: 600px) { .comparison-progress-row { grid-template-columns: 45px minmax(0,1fr); } .comparison-progress-row span { grid-column: 1/-1; } }
 .backtest-applied { padding: 0 2px 12px; }
 .backtest-kpis { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; margin: 18px 0; }
 .backtest-kpis .kpi strong { font-size: 27px; }
 .backtest-empty { padding: 0 18px; overflow: hidden; }
 .backtest-chart-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; margin-top: 20px; }
 .backtest-chart { overflow: hidden; min-width: 0; }
+.backtest-chart-note { padding: 0 16px 16px; margin: 0; }
 .backtest-timeline { display: grid; grid-template-columns: minmax(0,1fr) 125px; align-items: center; }
 .backtest-timeline > .dash-graph { min-width: 0; }
 .backtest-coverage { display: flex; flex-direction: column; gap: 7px; padding: 16px 12px; border-left: 1px solid var(--line); }

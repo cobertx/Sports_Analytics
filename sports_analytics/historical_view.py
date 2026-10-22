@@ -5,6 +5,7 @@ from .data import PLAYER_SPORTS,SOURCES
 
 
 def historical_route(location_hash):
+    location_hash=(location_hash or '').partition('?')[0]
     if location_hash=='#historical':return 'team'
     match=re.fullmatch(r'#historical-(team|player)',location_hash or '')
     return match[1] if match else None

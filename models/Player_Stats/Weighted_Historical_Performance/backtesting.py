@@ -3,10 +3,12 @@
 import math
 import numpy as np
 import pandas as pd
+from models.replay import replay_scope
 from .core import WeightedHistoricalPerformance, eligible_history
 from .errors import WHPError
 
 
+@replay_scope
 def walk_forward_backtest(history, config, *, nonnegative=True, count=False, line=None,
                           side="Over", evaluation_start=None):
     """Fixed-parameter replay. Dispersion for each test game uses only earlier errors.

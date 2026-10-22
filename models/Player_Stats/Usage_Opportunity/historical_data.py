@@ -1,6 +1,7 @@
 """Saved player and team inputs; downloads require the explicit preparation CLI."""
 from pathlib import Path
 import pandas as pd
+from models.replay import replay_repository
 from sports_analytics.data import DataSourceError, Query
 from models.Player_Stats.Weighted_Historical_Performance.historical_data import (
     PlayerHistoryRepository, model_frame, seasons_for, identity_name, atomic_json,
@@ -35,6 +36,7 @@ class UsageHistoryRepository:
         self.data = data or self.players.data
         self.root = Path(root or ROOT)
 
+    @replay_repository
     def load(self, sport, start, teams):
         if sport == 'NCAAF':
             from sports_analytics.ncaaf_model_data import NcaafModelData,seasons_for_start

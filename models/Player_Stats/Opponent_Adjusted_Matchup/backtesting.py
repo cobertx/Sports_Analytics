@@ -2,6 +2,7 @@
 import math
 import numpy as np
 import pandas as pd
+from models.replay import replay_scope
 from models.Player_Stats.Usage_Opportunity.calibration import diagnostics as base_diagnostics
 from models.Player_Stats.Usage_Opportunity.markets import prop_key
 
@@ -30,6 +31,7 @@ def empirical_crps(forecast,actual):
     return float(p@np.abs(x-actual)-np.sum(p*(x*before_p-before_x)))
 
 
+@replay_scope
 def walk_forward_backtest(service,snapshots,actuals):
     required={'game_id','subject','market','value'}
     if not required<=set(actuals):raise ValueError('Actuals need game_id,subject,market,value.')

@@ -1,0 +1,22 @@
+.in-game-page { gap: 20px; min-width: 0; }
+.in-game-setup { padding: 22px; }
+.in-game-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.in-game-heading h2 { margin-top: 7px; font-size: 21px; }
+.in-game-heading p { font-size: 12px; }
+.in-game-heading button { flex-shrink: 0; }
+.in-game-scope { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+.in-game-scope > .field:last-child { grid-column: 1/-1; }
+.in-game-help { font-size: 12px; line-height: 1.75; margin: 0 0 16px; color: #a7b8cd; }
+.in-game-game-heading { padding: 0 3px; }
+.in-game-visual { padding: 22px; overflow: hidden; min-width: 0; }
+.in-game-filters { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 0 14px; }
+.in-game-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 12px; }
+.in-game-stat { display: flex; flex-direction: column; gap: 8px; border: 1px solid #2c4154; border-radius: 8px; padding: 14px; background: #132637; }
+.in-game-stat span { font-size: 11px; color: #b4c5d6; }
+.in-game-stat strong { font-size: 25px; color: #f0e6d0; font-weight: 600; }
+.in-game-details { padding: 20px; }
+.in-game-details summary { cursor: pointer; color: #cbdce9; font-size: 13px; }
+.in-game-details[open] summary { margin-bottom: 18px; }
+@media (max-width: 900px) { .in-game-filters { grid-template-columns: repeat(2,minmax(0,1fr)); } .in-game-summary { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 700px) { #in-game-page-link { grid-row: 2; grid-column: 1/-1; } }
+@media (max-width: 600px) { .in-game-scope,.in-game-filters { grid-template-columns: 1fr; } .in-game-heading { flex-direction: column; align-items: flex-start; } .in-game-visual,.in-game-setup { padding: 15px; } .in-game-stat strong { font-size: 21px; } }

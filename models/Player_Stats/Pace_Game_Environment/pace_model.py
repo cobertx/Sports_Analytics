@@ -1,6 +1,7 @@
 """Chronological, partially pooled ridge pace; held-forward residual scenarios."""
 import numpy as np
 import pandas as pd
+from models.replay import replay_memoized
 from models.Player_Stats.Usage_Opportunity.opportunity_model import weights
 
 
@@ -36,6 +37,19 @@ class PaceModel:
         w = weights(len(rows),2*self.config.scenario_half_life)*len(rows)
         return np.linalg.solve(x.T@(w[:,None]*x)+self.config.ridge*np.eye(2),x.T@(w*y))
 
+    @replay_memoized
+    def _validation_batch(self, prefix, batch, training):
+        coefficients = self._fit(training)
+        additions, residuals = [], []
+        for r in batch.itertuples(index=False):
+            league,x,margin = self._features(prefix,r.team,r.opponent)
+            prediction = max(1.,float(league+x@coefficients))
+            additions.append(dict(x=x.tolist(),y=float(r.volume-league),available_at=r.available_at))
+            residuals.append(dict(game_id=r.game_id,team=r.team,opponent=r.opponent,
+                event_date=r.event_date,available_at=r.available_at,residual=float(r.volume-prediction),
+                predicted=prediction,predicted_margin=margin,margin=float(r.margin),extra=float(r.extra)))
+        return additions, residuals
+
     def fit(self, rows):
         self.history = rows.copy()
         self.training,self.residuals = [],[]
@@ -46,15 +60,8 @@ class PaceModel:
             if prefix.game_id.nunique() < self.config.minimum_league_games:
                 continue
             training = [r for r in self.training if r['available_at'] < when]
-            coefficients = self._fit(training)
-            additions = []
-            for _,r in batch.iterrows():
-                league,x,margin = self._features(prefix,r.team,r.opponent)
-                prediction = max(1.,float(league+x@coefficients))
-                additions.append(dict(x=x.tolist(),y=float(r.volume-league),available_at=r.available_at))
-                self.residuals.append(dict(game_id=r.game_id,team=r.team,opponent=r.opponent,
-                    event_date=r.event_date,available_at=r.available_at,residual=float(r.volume-prediction),
-                    predicted=prediction,predicted_margin=margin,margin=float(r.margin),extra=float(r.extra)))
+            additions, residuals = self._validation_batch(prefix, batch, training)
+            self.residuals.extend(residuals)
             self.training.extend(additions)
         if len({r['game_id'] for r in self.residuals}) < self.config.minimum_league_games:
             raise ValueError('PGE needs more chronological history for held-forward pace errors; prepare the prior season.')

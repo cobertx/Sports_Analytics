@@ -1,6 +1,6 @@
 # Sports Analytics
 
-A Python Dash workspace for analyzing historical **NBA, NFL, and NCAA Football (NCAAF)** team statistics, NBA and NFL player statistics, and developing forecasts of future performance. Historical Data remains team-only for NCAAF; its FanDuel player tabs support WHP forecasts using separately prepared college player data.
+A Python Dash workspace for analyzing historical **NBA, NFL, and NCAA Football (NCAAF)** team statistics, NBA and NFL player statistics, and developing forecasts of future performance. NCAAF FanDuel player links also open saved college player history using separately prepared data.
 
 Code implementation manuals: [PPP guide](models/Game_Outcome/PPP/PPP_Implementation_Guide.pdf)
 and [EPA guide](models/Game_Outcome/EPA/EPA_Implementation_Guide.pdf), plus the
@@ -8,7 +8,33 @@ and [EPA guide](models/Game_Outcome/EPA/EPA_Implementation_Guide.pdf), plus the
 windows, minimum game counts, new-season carryover, formulas, calibration and
 saved-model behavior. The source research PDFs are retained separately.
 
-Each sport has three sections in the left toolbar. **Historical Data** opens nested **Team Statistics** and **Player Statistics** pages for NBA/NFL (NCAAF has Team Statistics only), replacing the team/player radio selector. These pages contain the historical filters, charts, career histories, and game log. **FanDuel Market** shows upcoming game cards; **Backtesting** opens a model overview and nested model pages. Switching pages preserves the historical controls. Historical subpages use `#historical-team` and `#historical-player`, apply to the selected sport tab, and support browser back/forward navigation.
+Each sport has three sections in the left toolbar. **Historical Data** opens nested **Team Statistics** and **Player Statistics** pages for NBA/NFL (NCAAF's standard menu has Team Statistics), replacing the team/player radio selector. These pages contain the historical filters, charts, career histories, and game log. **FanDuel Market** shows upcoming game cards; **Backtesting** opens a model overview and nested model pages. Switching pages preserves the historical controls. Historical subpages use `#historical-team` and `#historical-player`, apply to the selected sport tab, and support browser back/forward navigation.
+
+Player prop headings show **Player name - Market**, for example **Jerry Jeudy - Alt Receiving Yds**.
+Click the player name to open Historical Data with that player, sport, game season and relevant
+statistic selected. NBA combination props show the exact sum of their recorded components.
+History links appear only in player market headings and the game's matchup header.
+Selection rows, Game Lines and Mispricing Filter tables use plain team/player names.
+Matchup-header links select points scored. Missing
+components remain unavailable, and missing or ambiguous names never select an unrelated player.
+NCAAF player links open a saved-history player view using prepared college boxes without
+downloading data; career summaries remain NBA/NFL only. First/last touchdown props show available
+touchdown counts, with an explanation that scorer order is unavailable in box scores.
+After following a history link, the first click on **FanDuel Market** returns to the
+last saved game, snapshot and market tab. Player-header links also reopen and scroll
+to that player's exact market. The return location is retained per sport for the
+browser tab's session. **Back to upcoming games** still opens the schedule.
+
+Each saved game also has a **Mispricing Filter** tab beside Game Lines and the player-prop tabs.
+It contains the Game Outcome and Player Forecast method selectors, Estimated Probability and
+Edge thresholds, **Apply Criteria**, and **Quick Filtering**. Quick Filtering applies the current
+thresholds and evaluates game lines and player props across the selected snapshot with the chosen
+methods. The first table shows up to three selections with the highest estimated edge; the next
+table shows all remaining matches in descending edge order. Both thresholds must be exceeded.
+Edge is measured in percentage points and uses the same push-adjusted model probabilities as
+the market tabs. Duplicate selections appear once, and unavailable model estimates/prices are
+excluded with a count. Changing the game, snapshot, selected methods or applied criteria requires
+another Quick Filtering run so old rankings are not displayed for new settings.
 
 Under **Backtesting**, expand **Game Outcome** for PPP, EPA and ELO / Power Rating,
 or **Player Stats** for Weighted Historical Performance, Usage & Opportunity,
@@ -24,13 +50,48 @@ Runs use saved inputs, fixed model defaults and earlier available observations
 at each game’s cutoff; opening a page reloads its latest saved report.
 
 Results include event accuracy with a Wilson interval, MAE, RMSE, bias, sample
-error variance/SD, within-tolerance accuracy, 90% predictive interval coverage,
-Brier score, log loss and a prior-data baseline. Five charts show predictions
-versus actual outcomes, agreement, residuals, rolling MAE and calibration.
+error variance/SD, within-tolerance accuracy, 80% predictive interval coverage,
+Brier score, log loss and a prior-data baseline. Six charts show predictions
+versus actual outcomes, agreement, residuals, rolling MAE, calibration and historical interval accuracy.
+The forecast error histogram displays exact mean bias, median, sample SD, sample
+count, MAE and RMSE above the plot. Hover a statistic for its definition, min/max,
+quartiles and 5th/95th percentiles. Errors are predicted minus actual; sample SD
+uses the n−1 denominator and is unavailable for a single observation. Notes below
+the error, calibration and rolling-error charts explain their interpretation.
+Individual reports use a trailing five-observation MAE; comparison charts use ten.
+Game calibration checks home wins, while player calibration checks Over a fixed
+reference line, excluding pushes. These are not separate calibration checks of
+every sportsbook spread, total or alternate player line.
 Game pages switch between home margin and total points. A detailed table,
 skipped-game reasons and CSV export support inspection. Reports and model replay
 caches stay in ignored `data/backtesting/`; source or odds APIs are never called
 by a run. See [backtesting details](docs/BACKTESTING.md).
+
+NBA and NFL each include **Visualized In-Game Data** in the left navigation.
+Choose a season, phase, team and recorded game. NBA shots appear on a maple
+court with regulation markings, made/missed symbols, player/period/result filters,
+and half/full court views. Select an individual shot/play to isolate it. Legacy shot coordinates are converted from tenths of
+a foot; free throws are excluded. The summary/table include filtered attempts
+outside the current view, and the chart reports hidden heaves or missing locations.
+NFL offensive plays appear on a striped field with end zones, yard lines and NFL
+hash marks. Filter by offense, passer/rusher/receiver, period, play type and drive.
+Horizontal position uses recorded line of scrimmage and yards gained; vertical
+left/middle/right lanes are explicitly schematic, not measured player routes.
+All plays face the same direction; incomplete passes use actual gain rather than
+intended air yards. Hover for play details and expand **Event details & CSV export**
+for the full filtered records.
+
+Existing NBA play-by-play archives and nflverse raw CSVs are reused. Missing NBA
+games use the official NBA CDN play-by-play endpoint; an uncached NFL season
+downloads its nflverse play-by-play once. Saved season files are indexed once per
+file revision under ignored `data/cache/in_game/`, and only the selected game's
+events reach the browser. **Refresh game list** updates the catalogue; **Refresh
+game data** checks the source for that game's events (NFL refreshes the season
+source). Source timestamps and refresh-fallback notices are shown. These are
+recorded events rather than a live tracking feed; coverage, including older NBA
+CDN games, depends on the provider. Unavailable games show a message, not synthetic
+locations. No paid odds requests are used. Run `python scripts/check_in_game.py`
+for offline coordinate, cache, filtering and navigation checks.
 
 The separate **Odds API** tab connects to your [The Odds API](https://the-odds-api.com/) account and shows monthly credit usage as a donut chart, with used, unused, and total credits. Add `ODDS_API_KEY=your_api_key_here` to the ignored `.env` file and restart `python index.py`. The key stays on the server and is never placed in browser components or stored in the usage cache.
 
@@ -400,7 +461,85 @@ Run the offline checks:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/check_project.py
+.\.venv\Scripts\python.exe scripts/check_backtesting.py
+.\.venv\Scripts\python.exe scripts/check_research.py
+.\.venv\Scripts\python.exe scripts/check_market_history.py
+.\.venv\Scripts\python.exe scripts/check_mispricing.py
+.\.venv\Scripts\python.exe scripts/check_comparisons.py
 ```
+
+The **Strategy & Research** tab has separate **Game Outcome** and **Player Stats**
+strategy menus. Choose a method and sport to read its implemented methodology,
+data requirements and configuration fields. All dataclass configuration fields,
+including nested UO baseline settings for OAM/PGE, have typed controls and help
+text. Model sport follows the sport selector; **Reset sport defaults** restores
+that sport's settings. Changing the evaluation team preserves edited parameters.
+
+Game Outcome experiments evaluate all eligible games or one team's games. Player
+Stats can evaluate all players, a specific team's players, or one player for a
+chosen statistic. All-player/team sample limits count distinct games; metrics
+count individual player appearances. Player histories stay separate, and UO/OAM/
+PGE simulate all selected subjects in each matchup together with finite team pools.
+Evaluation scope does not remove eligible league/opponent history from training.
+
+Research settings are validated before launch and passed directly to the actual
+forecast engines. They participate in report/cache identity and are recorded in
+JSON reports and the **Parameters used for this simulation** section. Research
+and sport-page jobs retain separate page selections while sharing the progress
+monitor, saved-report history, results charts and CSV exports. Experiments use
+saved local inputs; load/prepare histories through the sport pages before testing.
+
+Both research menus also contain **Methodology Comparison**. Select a sport and
+all or any subset of the group's methods, then run with shared team/player,
+statistic, date, game-count, postseason, lookback and reference-line settings.
+Each method runs independently with its sport-specific defaults and appears in
+the global progress monitor. By default the summary recalculates metrics on
+identical games/player appearances successfully evaluated by every completed
+method. An alternative shows each method's full evaluated sample; sample counts,
+skips, interval levels and conflicting recorded outcomes remain explicit.
+Compare MAE/RMSE, bias, coverage, event scores and rolling errors, export a summary
+CSV, and inspect any method's original full report. **Previous simulations and
+comparisons** can reopen a saved comparison or compare one saved simulation per
+selected method, including experiments with customized parameters. Player runs
+must use the same statistic and reference line. Small comparison manifests under
+`data/backtesting/comparisons/<sport>/<group>/` reference the existing JSON/CSV
+reports; results survive page navigation and application restarts. Failed methods
+retain their reasons while successful method reports remain available.
+
+Backtesting reuses identical calibration folds, ratings and seasonal source reads
+within each run. Caches are bounded and isolated between jobs; training contents,
+cutoffs and model settings identify each fit. Lookback windows, availability
+rules, Monte Carlo counts and random seeds retain their original behavior.
+Backtests run concurrently: change the controls and use **Run another backtest**
+while an earlier run is active. The progress monitor at the far-left edge shows
+all active runs; each backtesting page remembers its latest run and successful
+results. Returning to a page resumes its progress or displays its completed
+report, including runs that finished while you were elsewhere. Previous results
+remain visible during a rerun and if that rerun fails. Page references persist
+for the browser tab's session; completed reports are restored from local disk.
+Identical active requests reuse the existing job. Each completed run saves its
+own report and CSV exports.
+Expand **Previous simulations** on a backtesting page, choose a saved run, and
+click **Open simulation** to restore its results. The list is specific to that
+sport and strategy and includes older runs saved before CSV exports were added.
+Opening a historical run leaves any active jobs running in the background.
+
+Files are stored under `data/backtesting/<sport>/<group>/<method>/runs/<scope>_<run-id>/`.
+Each run contains `report.json` and CSV exports (separate margin and total files
+for game models; one statistic file for player models). CSVs open in Excel.
+The app loads JSON to retain the original configuration, predictions, intervals,
+and skipped-game reasons together. Opening an older JSON-only run generates its
+missing CSV exports. The hash-named JSON files one directory above are reusable
+cached reports; either a cache report or its independent `report.json` archive
+can restore a simulation. These local data files are ignored by Git.
+PPP/EPA calibration computes only the folds needed to recover the exact latest
+validation residuals, including postponed games and unavailable forecasts.
+
+To measure reuse on your saved game data without downloading inputs or writing
+reports, run `python scripts/benchmark_backtesting.py --sport NFL --model ppp --games 20`.
+The benchmark compares cold calculations with run-local reuse and checks exact
+equality of evaluated records and skipped-game reasons. Timings exclude input
+loading and rendering and depend on your saved history and selected model.
 
 GitHub Actions installs the project, checks dependencies, compiles source and runs this offline check on Python 3.11 and 3.13. It does not require local source caches, credentials, or test folders, and makes no external data/odds requests. Local `test/` and `tests/` folders are ignored by Git. If you maintain local tests, run them separately with `python -m unittest discover -s tests -v`.
 

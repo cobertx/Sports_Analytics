@@ -8,6 +8,7 @@ import math
 from statistics import NormalDist
 import numpy as np
 import pandas as pd
+from models.replay import cached_calculation
 
 from .distributions import settlement
 from .errors import WHPError
@@ -150,14 +151,29 @@ class WeightedHistoricalPerformance:
         # At each held-out game's start, exclude even earlier-starting games
         # whose results were not yet available. Realized workload is never used.
         records = []
-        for _, game in history.tail(self.config.maximum_calibration).iterrows():
-            past = history[history["available_at"].lt(game["event_date"])
-                           & history["event_date"].lt(game["event_date"])]
-            if len(past) < self.config.minimum_games:
+        event_times = history.event_date.array.as_unit('ns').asi8
+        available_times = history.available_at.array.as_unit('ns').asi8
+        values = history.value.to_numpy()
+        opportunities = history.opportunity.to_numpy() if 'opportunity' in history else None
+        columns = ['game_id', 'event_date', 'value']
+        for game in history[columns].tail(self.config.maximum_calibration).itertuples(index=False):
+            end = np.searchsorted(event_times, game.event_date.value, side='left')
+            positions = np.flatnonzero(available_times[:end] < game.event_date.value)
+            if len(positions) < self.config.minimum_games:
                 continue
-            fitted, _, _ = self._point(past, game["event_date"])
-            records.append({"game_id": str(game["game_id"]), "event_date": game["event_date"].isoformat(),
-                            "actual": float(game["value"]), "predicted": fitted["adjusted_mean"]})
+            def calculate():
+                # Most histories have a contiguous eligible prefix. A slice
+                # avoids copying every box-score column; delayed results still
+                # use the exact noncontiguous set of eligible observations.
+                past = (history.iloc[:len(positions)] if positions[-1]+1 == len(positions)
+                        else history.iloc[positions])
+                return self._point(past, game.event_date)[0]['adjusted_mean']
+            predicted = cached_calculation(self, 'calibration_point',
+                lambda: (event_times[positions], values[positions],
+                         opportunities[positions] if opportunities is not None else None, game.event_date),
+                calculate)
+            records.append({"game_id": str(game.game_id), "event_date": game.event_date.isoformat(),
+                            "actual": float(game.value), "predicted": predicted})
         if len(records) < self.config.minimum_calibration:
             raise WHPError(f"Need {self.config.minimum_calibration} walk-forward errors after the minimum history; "
                            f"only {len(records)} available. Prepare the prior season too.")

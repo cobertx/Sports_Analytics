@@ -16,6 +16,7 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from models.replay import replay_memoized, calibration_tail
 from models.Game_Outcome.PPP.PPP import MarketProbability, PPPError, PPPForecast
 
 
@@ -91,6 +92,7 @@ class NBAPPPModel:
             raise PPPError("NBA team rows disagree on opponent, score, date, venue or possessions.")
         return result.sort_values(["event_date", "game_id", "is_home"])
 
+    @replay_memoized
     def _ratings(self, history, as_of):
         if history.game_id.nunique() < self.config.minimum_training_games:
             raise PPPError("Not enough completed NBA games for PPP ratings.")
@@ -123,26 +125,30 @@ class NBAPPPModel:
                         matchup_ppp(a["offense"], h["defense"], ratings["league"])]
         return np.asarray(efficiencies) * pace, {"possessions": pace, "home_ppp": efficiencies[0], "away_ppp": efficiencies[1]}
 
+    @replay_memoized
+    def _validation_fold(self, training, held, held_date):
+        ratings = self._ratings(training, held_date)
+        errors = []
+        for game_id, game in held.groupby("game_id"):
+            h, a = game[game.is_home.eq(1)].iloc[0], game[game.is_home.eq(0)].iloc[0]
+            try:
+                means, _ = self._means(ratings, h.team, a.team)
+            except PPPError:
+                continue
+            errors.append({"game_id": game_id, "date": held_date.isoformat(),
+                           "home_error": float(h.points - means[0]), "away_error": float(a.points - means[1])})
+        return errors
+
     def predict(self, frame, home_team, away_team, as_of, neutral=False):
         history = self._history(frame, as_of)
-        errors = []
         # Refit by held-out date. Actual target pace/scores never enter a mean.
-        dates = history.event_date.drop_duplicates().sort_values()
-        for held_date in dates:
-            held = history[history.event_date.eq(held_date)]
+        def evaluate(held):
+            held_date = held.event_date.iloc[0]
             training = history[history.available_at.lt(held_date) & history.event_date.lt(held_date)]
             if training.game_id.nunique() < self.config.minimum_training_games:
-                continue
-            ratings = self._ratings(training, held_date)
-            for game_id, game in held.groupby("game_id"):
-                h, a = game[game.is_home.eq(1)].iloc[0], game[game.is_home.eq(0)].iloc[0]
-                try:
-                    means, _ = self._means(ratings, h.team, a.team)
-                except PPPError:
-                    continue
-                errors.append({"game_id": game_id, "date": held_date.isoformat(),
-                               "home_error": float(h.points - means[0]), "away_error": float(a.points - means[1])})
-        errors = errors[-self.config.maximum_calibration_games:]
+                return []
+            return self._validation_fold(training, held, held_date)
+        errors = calibration_tail(history, 'event_date', self.config.maximum_calibration_games, evaluate)
         if len(errors) < self.config.minimum_calibration_games:
             raise PPPError(f"NBA PPP needs {self.config.minimum_calibration_games} chronological validation games; found {len(errors)}.")
         residuals = np.asarray([[row["home_error"], row["away_error"]] for row in errors])

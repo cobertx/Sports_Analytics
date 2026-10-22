@@ -19,6 +19,13 @@ from statistics import NormalDist
 import numpy as np
 import pandas as pd
 
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from models.replay import replay_memoized, calibration_tail
+
 
 class PPPError(ValueError):
     """Insufficient or invalid model observations; never substitute sample odds."""
@@ -163,6 +170,7 @@ class PPPModel:
         frame["weight"] = np.exp2(-(cutoff - frame["event_date"]).dt.total_seconds() / 86400 / self.config.half_life_days)
         return frame.sort_values(["event_date", "game_id", "is_home"])
 
+    @replay_memoized
     def _fit(self, frame):
         if frame["game_id"].nunique() < self.config.minimum_training_games:
             raise PPPError("Not enough completed games to fit PPP ratings.")
@@ -230,32 +238,40 @@ class PPPModel:
                             "matchup_ppp": rate, "additional_points": float(delta), "prior_games": len(rows)}
         return means, detail
 
+    @replay_memoized
+    def _validation_fold(self, training, held_out, cutoff):
+        training = self._history(training, cutoff)
+        ratings = self._fit(training)
+        errors = []
+        for game_id, game in held_out.groupby("game_id"):
+            home = game[game["is_home"].eq(1)]
+            away = game[game["is_home"].eq(0)]
+            if len(home) != 1 or len(away) != 1:
+                continue
+            h, a = home.iloc[0], away.iloc[0]
+            try:
+                means, _ = self._means(training, ratings, h["team"], a["team"], bool(h["neutral"]))
+            except PPPError:
+                continue
+            errors.append({"game_id": game_id, "date": h["event_date"].isoformat(),
+                           "home_error": float(h["points"] - means[0]), "away_error": float(a["points"] - means[1])})
+        return errors
+
     def predict(self, observations, home_team, away_team, as_of, neutral=False):
         if home_team == away_team:
             raise PPPError("Choose two different NFL teams.")
         history = self._history(observations, as_of)
-        errors = []
         # Entire game weeks are held out: no observation from a predicted week
         # enters its fit. Residuals are genuinely forward predictions, not fit errors.
-        for _, held_out in history.groupby(["season", "week"], sort=True):
+        def evaluate(held_out):
             training = history[history["available_at"].lt(held_out["event_date"].min())]
             if training["game_id"].nunique() < self.config.minimum_training_games:
-                continue
-            training = self._history(training.drop(columns="weight"), held_out["event_date"].min())
-            ratings = self._fit(training)
-            for game_id, game in held_out.groupby("game_id"):
-                home = game[game["is_home"].eq(1)]
-                away = game[game["is_home"].eq(0)]
-                if len(home) != 1 or len(away) != 1:
-                    continue
-                h, a = home.iloc[0], away.iloc[0]
-                try:
-                    means, _ = self._means(training, ratings, h["team"], a["team"], bool(h["neutral"]))
-                except PPPError:
-                    continue
-                errors.append({"game_id": game_id, "date": h["event_date"].isoformat(),
-                               "home_error": float(h["points"] - means[0]), "away_error": float(a["points"] - means[1])})
-        errors = sorted(errors, key=lambda row: (row["date"], row["game_id"]))[-self.config.maximum_calibration_games:]
+                return []
+            # Outer forecast weights change each game; the fold recomputes its
+            # own weights at its original cutoff, so omit outer weights from keys.
+            return self._validation_fold(training.drop(columns="weight"),
+                held_out.drop(columns="weight"), held_out["event_date"].min())
+        errors = calibration_tail(history, ["season", "week"], self.config.maximum_calibration_games, evaluate)
         if len(errors) < self.config.minimum_calibration_games:
             raise PPPError(f"PPP needs at least {self.config.minimum_calibration_games} chronological validation games; found {len(errors)}.")
         residuals = np.array([[row["home_error"], row["away_error"]] for row in errors])
@@ -304,7 +320,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     main()

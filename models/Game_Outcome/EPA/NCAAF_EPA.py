@@ -1,6 +1,7 @@
 """College provider PPA ratings -> fitted total-scoring-per-play bridge."""
 import numpy as np
 import pandas as pd
+from models.replay import replay_memoized
 from models.Game_Outcome.PPP.NCAAF_PPP import NCAAFPPPModel
 from models.Game_Outcome.PPP.PPP import PPPConfig,PPPError
 
@@ -19,6 +20,7 @@ class NCAAFEPAModel(NCAAFPPPModel):
         frame=frame[frame.game_id.isin(good[good.eq(2)].index)]
         return super()._history(frame,as_of)
 
+    @replay_memoized
     def _fit(self,frame):
         if frame.game_id.nunique()<self.config.minimum_training_games:raise PPPError('Not enough college PPA games for EPA.')
         teams={t:i for i,t in enumerate(sorted(set(frame.team)|set(frame.opponent)))};n=len(teams)

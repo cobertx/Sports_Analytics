@@ -30,7 +30,7 @@ def contents(jobs):
         target=(params.get('market') or '').removeprefix('player_').replace('_',' ').title()
         percent=int(job['percent'])
         cards.append(html.Li([
-            html.Div([html.Strong(f'{sport} · {key.upper()}',title=label),html.Span(f'{percent}%',className='backtest-job-percent')],
+            html.Div([html.Strong(f'{sport} · {key.upper()}'+(' · Research' if params.get('workspace')=='research' else ''),title=label),html.Span(f'{percent}%',className='backtest-job-percent')],
                 className='backtest-job-heading'),
             html.Div(scope,className='backtest-job-scope',title=scope),
             html.Small(f'{games:,} games'+(' · '+target if target else ''),className='backtest-job-detail'),

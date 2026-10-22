@@ -24,6 +24,7 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from models.replay import replay_memoized
 from models.Game_Outcome.PPP.PPP import PPPConfig, PPPError, PPPForecast, PPPModel
 
 
@@ -83,6 +84,7 @@ class EPAModel(PPPModel):
             raise EPAError("EPA requires complete, finite passing/rushing EPA coverage for both teams; missing EPA is not zero.")
         return frame
 
+    @replay_memoized
     def _fit(self, frame):
         if frame["game_id"].nunique() < self.config.minimum_training_games:
             raise EPAError("Not enough completed games to fit EPA ratings.")

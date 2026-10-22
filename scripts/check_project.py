@@ -7,6 +7,7 @@ No source data, credentials, fitted caches or external requests are required.
 import argparse
 import importlib
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -113,7 +114,7 @@ def main():
         from sports_analytics.backtesting_view import available_models,model_config,backtesting_route,find_model
         from sports_analytics.backtesting_service import (diagnostics,default_evaluation_games,season_phases,estimation_history,
             default_lookback,parse_lookback,PREDICTIVE_Z)
-        from sports_analytics.backtesting_results import figure,error_distribution,per_game_axis
+        from sports_analytics.backtesting_results import figure,error_distribution,error_summary,per_game_axis
         import pandas as pd
         import numpy as np
         require([default_evaluation_games(s) for s in ['NBA','NFL','NCAAF']]==[1000,250,1000] and
@@ -141,6 +142,14 @@ def main():
         require(len(distribution.data[0].x)>=20 and sum(distribution.data[0].y)==5 and
                 len(distribution.data[1].x)==384 and np.isfinite(distribution.data[1].y).all() and
                 (np.asarray(distribution.data[1].y)>=0).all(),'Backtesting histogram/smoothed distribution failed.')
+        summary=error_summary([-4,-1,0,2,8])
+        require(summary['samples']==5 and summary['mean']==1 and summary['median']==0 and
+                abs(summary['sample_sd']-math.sqrt(20))<1e-12 and summary['mae']==3 and
+                abs(summary['rmse']-math.sqrt(17))<1e-12,
+                'Forecast error statistics must use raw signed errors and sample SD.')
+        require(error_summary([2])['sample_sd'] is None and error_summary([2]*4)['sample_sd']==0 and
+                len(distribution.layout.annotations)==6 and distribution.layout.meta['error_distribution']['samples']==5,
+                'Forecast error chart statistics / small-sample handling failed.')
         same_day=pd.DataFrame({'date':['2025-01-01T00:00:00Z']*3,'label':['A','B','C'],'game_id':['a','b','c']})
         positions,_=per_game_axis(figure('Games'),same_day)
         require(len(set(positions))==3,'Backtesting must retain distinct positions for same-date games.')

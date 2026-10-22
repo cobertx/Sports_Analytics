@@ -16,6 +16,7 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from models.replay import cached_calculation, fingerprint, calibration_tail
 from models.Game_Outcome.PPP.PPP import PPPError
 from models.Game_Outcome.PPP.NBA_PPP import NBAPPPConfig, NBAPPPForecast, NBAPPPModel
 
@@ -136,28 +137,40 @@ class NBAEPAModel(NBAPPPModel):
                              "additional_points": extra, "prior_games": len(frame)}
         return np.asarray(means), details
 
+    def _cached_fit_epv(self, history, dataset, cutoff, state_key):
+        return cached_calculation(self, 'fit_epv', (history, cutoff, state_key),
+                                  lambda: self._fit_epv(history, dataset, cutoff))
+
+    def _validation_fold(self, training, held, cutoff, dataset, state_key):
+        fitted = self._cached_fit_epv(training, dataset, cutoff, state_key)
+        errors = []
+        for game_id, game in held.groupby("game_id"):
+            h, a = game[game.is_home.eq(1)].iloc[0], game[game.is_home.eq(0)].iloc[0]
+            try:
+                means, _ = self._epv_means(training, fitted, h.team, a.team, cutoff)
+            except PPPError:
+                continue
+            errors.append({"game_id": game_id, "date": h.event_date.isoformat(),
+                           "home_error": float(h.points-means[0]), "away_error": float(a.points-means[1])})
+        return errors
+
     def predict(self, dataset, home_team, away_team, as_of, neutral=False):
         history = self._history(dataset.games, as_of)
         required = {"offensive_points", "additional_points", "offensive_possessions", "defensive_possessions"} | {prefix+x for prefix in ("start_", "def_start_") for x in FEATURES}
         if not required <= set(history) or not np.isfinite(history[sorted(required)].to_numpy(float)).all():
             raise PPPError("Prepare reconciled NBA EPV states and possession contexts before fitting EPA.")
-        errors = []
+        # The changing dataset.games is already represented by each training
+        # frame. Fingerprint the shared sufficient statistics once per forecast.
+        state_key = fingerprint((dataset.game_ids, dataset.state_xx, dataset.state_xy))
         weeks = history.event_date.dt.strftime("%G-%V")
-        for _, held in history.groupby(weeks, sort=True):
+        def evaluate(held):
             cutoff = held.event_date.min()
             training = history[history.available_at.lt(cutoff) & history.event_date.lt(cutoff)]
             if training.game_id.nunique() < self.config.minimum_training_games:
-                continue
-            fitted = self._fit_epv(training, dataset, cutoff)
-            for game_id, game in held.groupby("game_id"):
-                h, a = game[game.is_home.eq(1)].iloc[0], game[game.is_home.eq(0)].iloc[0]
-                try:
-                    means, _ = self._epv_means(training, fitted, h.team, a.team, cutoff)
-                except PPPError:
-                    continue
-                errors.append({"game_id": game_id, "date": h.event_date.isoformat(),
-                               "home_error": float(h.points-means[0]), "away_error": float(a.points-means[1])})
-        errors = sorted(errors, key=lambda x:(x["date"],x["game_id"]))[-self.config.maximum_calibration_games:]
+                return []
+            return cached_calculation(self, 'epv_validation_fold', (training, held, cutoff, state_key),
+                lambda: self._validation_fold(training, held, cutoff, dataset, state_key))
+        errors = calibration_tail(history, weeks, self.config.maximum_calibration_games, evaluate)
         if len(errors) < self.config.minimum_calibration_games:
             raise PPPError(f"NBA EPA needs {self.config.minimum_calibration_games} chronological validation games; found {len(errors)}.")
         residuals = np.asarray([[x["home_error"],x["away_error"]] for x in errors])
@@ -166,7 +179,7 @@ class NBAEPAModel(NBAPPPModel):
         total_var = covariance.sum()
         if min(margin_var,total_var) <= 0:
             raise PPPError("NBA EPA validation residuals do not support nonzero score uncertainty.")
-        fitted = self._fit_epv(history, dataset, as_of)
+        fitted = self._cached_fit_epv(history, dataset, as_of, state_key)
         means, teams = self._epv_means(history, fitted, home_team, away_team, as_of, neutral)
         bias = residuals.mean(axis=0)
         means += bias.mean() if neutral else bias

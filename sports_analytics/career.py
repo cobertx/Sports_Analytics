@@ -20,6 +20,7 @@ import zlib
 import pandas as pd
 
 from .data import DataSourceError, HttpClient
+from .historical_links import market_metrics
 
 ARCHIVE = "https://github.com/sportsdataverse/sportsdataverse-data/releases/download/"
 FLOORS = {"NBA": 1996, "NFL": 1999}
@@ -179,7 +180,7 @@ class CareerService:
             for task in as_completed(tasks):
                 year = tasks[task]
                 try:
-                    frame = task.result()
+                    frame = market_metrics(task.result(), sport, 'player')
                 except DataSourceError:
                     failed.append(year)
                     continue

@@ -2,6 +2,7 @@
 
 from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
+from hashlib import sha256
 import math
 from pathlib import Path
 from urllib.parse import quote
@@ -14,6 +15,7 @@ from .display_time import eastern_datetime, format_eastern
 from .nfl_markets import NFL_TEAM_CODES
 from .nba_markets import NBA_TEAM_CODES
 from .parlay import quote_key
+from .historical_links import history_href
 
 NFL_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NFL" / "Team Logos"
 NFL_LOGO_FILES = {path.stem.casefold(): path.name for path in NFL_LOGO_DIRECTORY.glob("*.png")}
@@ -86,6 +88,12 @@ def logo_badge(name, abbreviation, sport="NFL"):
                      if url else abbreviation, className="team-badge team-badge-logo" if url else "team-badge")
 
 
+def market_section_id(snapshot,market_key,player):
+    identity='\0'.join(str(value) for value in [snapshot.get('sport','NFL'),snapshot.get('game_id',snapshot.get('event_id','')),
+                        snapshot.get('pulled_at',''),market_key,player])
+    return 'market-section-'+sha256(identity.encode()).hexdigest()[:24]
+
+
 def game_header(game, snapshot=None, sport="NFL"):
     if not game and snapshot:
         game = snapshot.get("game") or {"start": snapshot["commence_time"],
@@ -96,7 +104,8 @@ def game_header(game, snapshot=None, sport="NFL"):
     def team(side):
         item = game[side]
         return html.Div([logo_badge(item["name"], item["abbreviation"], sport), html.Strong(item["abbreviation"]),
-                         html.Small(item["name"])], className="matchup-team")
+                         html.Small(html.A(item["name"], href=history_href(sport, "team", item["name"], snapshot=snapshot or {"game": game}),
+                                           className="market-history-link", title=f"View {item['name']} historical team statistics"))], className="matchup-team")
     return html.Div([team("away"), html.Div([html.Strong(format_eastern(game["start"]) if not game.get("time_tbd") else
                                                        format_eastern(game["start"])[:10] + " EDT"),
                                            html.Span("Time TBD") if game.get("time_tbd") else None,
@@ -285,7 +294,11 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
     evaluated = 0
     matched_counts = {"alternate_spreads": 0, "alternate_totals": 0}
     for index, ((key, player), rows) in enumerate(groups.items()):
-        title = f"{player} - {MARKET_NAMES.get(key, (rows[0]['market'], ''))[0]}" if player else rows[0]["market"]
+        sport = snapshot.get("sport", "NFL")
+        def history_link(name, kind, market_key=key):
+            return html.A(name, href=history_href(sport, kind, name, market_key, snapshot),
+                          className="market-history-link", title=f"View {name} historical statistics for this market")
+        title = [history_link(player, "player"), " - ", MARKET_NAMES.get(key, (rows[0]['market'], ''))[0]] if player else rows[0]["market"]
         rows = sorted(rows, key=lambda row: (row["subject"].casefold() if not player else "",
                                             0 if row["selection"] == "Over" else 1,
                                             row["line"] if row["line"] is not None else 0))
@@ -311,6 +324,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 n_clicks=0,className='market-price market-price-button',disabled=not valid_price,
                 title='Add or remove this saved selection in the parlay slip',
                 **{'aria-label':f"Add {selection_text(row)} at {price} to parlay",'aria-pressed':'false'})
+            selection = selection_text(row)
             if comparison:
                 implied, estimate, edge = values[id(row)]
                 detail = (f"Win {probability_text(estimate.win)} · Loss {probability_text(estimate.loss)} · "
@@ -319,7 +333,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                     detail += " " + forecast.detail(row)
                 fair = f"{estimate.odds:+.0f}" if estimate and estimate.odds is not None else "—"
                 return html.Div([
-                    html.Span(selection_text(row), className="market-selection"),
+                    html.Span(selection, className="market-selection"),
                     price_button,
                     html.Span(probability_text(implied), className="market-probability", title="Raw break-even probability; includes bookmaker margin"),
                     html.Span(probability_text(estimate.probability) if estimate else "—", className="ppp-probability", title=detail),
@@ -329,7 +343,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 ], className="market-outcome market-line-comparison" + (" market-criteria-match" if matches[id(row)] else ""))
             return html.Div([
                 html.Span(initials, className="player-marker", **{"aria-hidden": "true"}),
-                html.Span(selection_text(row), className="market-selection"),
+                html.Span(selection, className="market-selection"),
                 price_button,
             ], className="market-outcome")
         sections.append(html.Details([
@@ -346,7 +360,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                           ]),
                           html.Div([outcome(row) for row in rows[6:]])], className="more-market-lines",
                          open=False) if len(rows) > 6 else None,
-        ], key=f"{snapshot.get('game_id', snapshot.get('event_id', ''))}:{snapshot.get('pulled_at', '')}:{key}:{player}",
+        ], id=market_section_id(snapshot,key,player),key=f"{snapshot.get('game_id', snapshot.get('event_id', ''))}:{snapshot.get('pulled_at', '')}:{key}:{player}",
            open=index < 2, className="sportsbook-market" + (
             " market-criteria-group" if match_count else " market-criteria-no-match" if no_match else "")))
     if (category == "Game" or player_method) and isinstance(criteria, dict) and criteria:
