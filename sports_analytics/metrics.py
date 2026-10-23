@@ -72,15 +72,17 @@ def relevant_metrics(frame, sport, kind):
     Where a provider has no position label, use the selected player's recorded
     stat families. This does not infer or display a fabricated position.
     """
-    metrics = [name for name in frame if name not in META and
-               pd.api.types.is_numeric_dtype(frame[name]) and frame[name].notna().any()]
+    numeric = [name for name in frame if name not in META and pd.api.types.is_numeric_dtype(frame[name])]
+    present = frame[numeric].notna().any()
+    metrics = [name for name in numeric if present[name]]
     if kind != "player" or sport == "NBA":
         return metrics
     roles = position_roles(frame)
-    active_groups = {metric_group(name) for name in metrics if frame[name].fillna(0).ne(0).any()}
+    active = frame[metrics].fillna(0).ne(0).any()
+    active_groups = {metric_group(name) for name in metrics if active[name]}
     if not roles:
         return [name for name in metrics if (metric_group(name) in active_groups and metric_group(name) != "other")
-                or (metric_group(name) == "other" and frame[name].fillna(0).ne(0).any())]
+                or (metric_group(name) == "other" and active[name])]
     allowed = set().union(*(ROLE_GROUPS[role] for role in roles))
     if "passer" in roles and "receiving" in active_groups:
         allowed.add("receiving")

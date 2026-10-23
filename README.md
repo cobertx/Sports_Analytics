@@ -93,6 +93,35 @@ CDN games, depends on the provider. Unavailable games show a message, not synthe
 locations. No paid odds requests are used. Run `python scripts/check_in_game.py`
 for offline coordinate, cache, filtering and navigation checks.
 
+NFL drives can be selected from either team's drive list or the labeled drive
+dropdown. Each list shows the drive result and recorded offensive-play count/net
+yards; the focused field labels plays in drive order. Personnel and play-calling
+breakdowns follow the same team, drive, period, player, play-type and individual
+play filters. When all drives are selected, each offense and opposing defense
+retain separate percentage denominators.
+
+**Load / refresh personnel & coverage** retrieves optional nflverse
+[participation](https://nflreadr.nflverse.com/reference/load_participation.html)
+and [FTN charting](https://nflreadr.nflverse.com/reference/load_ftn_charting.html)
+season files, joined by exact NFL game/play IDs and indexed locally. Saved
+charting is reused automatically without another download. Participation is
+available from 2016; from 2023 onward, FTN participation is released after the
+postseason. The public FTN charting subset starts in 2022 and can arrive during
+the season. Missing or failed supplementary downloads leave the base game usable.
+
+The breakdowns include offensive personnel (11/12/21 packages when the recorded
+counts support them), defensive DL/LB/DB personnel, run/dropback share, offensive
+formation, man/zone, coverage schemes, box counts, pass rushers, blitzers, play
+action and RPO. A dropback includes passes, sacks and marked QB scrambles; kneels
+and spikes are excluded from run/dropback shares. Coverage percentages use the
+selected dropbacks faced; personnel percentages use selected offensive plays.
+Every percentage includes Unknown in its denominator and shows recorded/eligible
+counts. No missing value is counted as a recorded No. Defensive formation is
+shown only when explicitly supplied; positional personnel never implies a front,
+alignment or coverage call. Exact raw packages and charting values are included
+in event details/CSV exports. Sources and timestamps are displayed with attribution
+to FTN Data or NFL NextGenStats via nflverse under CC BY-SA 4.0.
+
 The separate **Odds API** tab connects to your [The Odds API](https://the-odds-api.com/) account and shows monthly credit usage as a donut chart, with used, unused, and total credits. Add `ODDS_API_KEY=your_api_key_here` to the ignored `.env` file and restart `python index.py`. The key stays on the server and is never placed in browser components or stored in the usage cache.
 
 Usage comes from the provider's `x-requests-used` and `x-requests-remaining` headers on `GET /v4/sports/`, which [does not consume usage credits](https://the-odds-api.com/liveapi/guides/v4/#get-sports). Counters cover the subscription's current quota cycle across all sports; the app does not infer a calendar-month reset date. Usage loads when Odds API is opened, refreshes every five minutes while visible, and can be checked immediately using **Connect / Refresh usage**. The server shares a five-minute memory cache for the account. A failed refresh labels any saved snapshot explicitly; missing keys and invalid responses show setup/errors rather than invented credit values.
@@ -466,6 +495,7 @@ Run the offline checks:
 .\.venv\Scripts\python.exe scripts/check_market_history.py
 .\.venv\Scripts\python.exe scripts/check_mispricing.py
 .\.venv\Scripts\python.exe scripts/check_comparisons.py
+.\.venv\Scripts\python.exe scripts/check_performance.py
 ```
 
 The **Strategy & Research** tab has separate **Game Outcome** and **Player Stats**
@@ -540,6 +570,13 @@ reports, run `python scripts/benchmark_backtesting.py --sport NFL --model ppp --
 The benchmark compares cold calculations with run-local reuse and checks exact
 equality of evaluated records and skipped-game reasons. Timings exclude input
 loading and rendering and depend on your saved history and selected model.
+
+Saved-season decoding reuses at most four payloads, keyed by their exact contents.
+Each cache lookup returns an independent frame; expiry checks, manual refreshes
+and stale-data notices still apply. Statistic filtering operates across numeric
+columns together, and WHP quote audits index opposing selections once while
+preserving the rule that duplicate opposing quotes are ambiguous.
+`scripts/check_performance.py` checks these behaviors without source downloads.
 
 GitHub Actions installs the project, checks dependencies, compiles source and runs this offline check on Python 3.11 and 3.13. It does not require local source caches, credentials, or test folders, and makes no external data/odds requests. Local `test/` and `tests/` folders are ignored by Git. If you maintain local tests, run them separately with `python -m unittest discover -s tests -v`.
 

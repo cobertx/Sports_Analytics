@@ -146,15 +146,19 @@ class WHPMarketService:
                 result.errors[key] = str(exc)
         # Audit the exact quote comparison without changing the original snapshot.
         evaluations = []
+        quotes = {}
+        for row in snapshot['rows']:
+            if not row['market_key'].startswith('player_'):
+                continue
+            key = (row['subject'], row['market_key'], row['line'], row['selection'])
+            quotes.setdefault(key, []).append(row['odds'])
         for row in snapshot["rows"]:
             if not row["market_key"].startswith("player_"):
                 continue
             try:
                 price = result.selection(row)
                 opposite_side = {"Over": "Under", "Under": "Over", "Yes": "No", "No": "Yes"}.get(row["selection"])
-                opposite_quotes = [other["odds"] for other in snapshot["rows"]
-                    if other["subject"] == row["subject"] and other["market_key"] == row["market_key"]
-                    and other["line"] == row["line"] and other["selection"] == opposite_side]
+                opposite_quotes = quotes.get((row['subject'], row['market_key'], row['line'], opposite_side), [])
                 comparison = compare_price(price, row["odds"], opposite_quotes[0] if len(opposite_quotes) == 1 else None)
             except ValueError:
                 price, comparison = None, {}

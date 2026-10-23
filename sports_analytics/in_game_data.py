@@ -20,13 +20,21 @@ from .service import DataService
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = 1
+NFL_VERSION = 2
 NBA_COLUMNS = {'game_id', 'action_number', 'order_index', 'period', 'clock', 'team_tricode',
                'person_id', 'player_name', 'player_name_i', 'x_legacy', 'y_legacy',
                'shot_result', 'is_field_goal', 'shot_value', 'description'}
 NFL_COLUMNS = {'game_id', 'play_id', 'posteam', 'play_type', 'play_deleted', 'qtr', 'time',
                'down', 'ydstogo', 'yardline_100', 'yards_gained', 'pass_location', 'run_location',
                'passer_player_name', 'rusher_player_name', 'receiver_player_name', 'fixed_drive',
-               'drive', 'desc', 'epa', 'touchdown', 'td_team', 'interception', 'sack', 'fumble_lost'}
+               'drive', 'desc', 'epa', 'touchdown', 'td_team', 'interception', 'sack', 'fumble_lost',
+               'defteam', 'home_team', 'away_team', 'fixed_drive_result', 'drive_time_of_possession',
+               'shotgun', 'no_huddle', 'qb_scramble', 'qb_dropback'}
+CHARTING_COLUMNS = {'offense_personnel', 'defense_personnel', 'offense_formation', 'defense_formation',
+    'defense_man_zone_type', 'defense_coverage_type', 'defenders_in_box', 'n_defense_box',
+    'number_of_pass_rushers', 'n_pass_rushers', 'n_blitzers', 'qb_location', 'is_no_huddle',
+    'is_play_action', 'is_screen_pass', 'is_rpo'}
+NFL_COLUMNS |= CHARTING_COLUMNS
 
 
 def number(value):
@@ -39,6 +47,33 @@ def number(value):
 
 def pick(row, *keys):
     return next((row[k] for k in keys if k in row and row[k] not in ('', None)), '')
+
+
+def charting_fields(row):
+    """Preserve recorded labels only; personnel does not imply man/zone coverage."""
+    def text(key):
+        value = str(row.get(key, '')).strip()
+        return value if value.lower() not in {'', 'na', 'nan', 'none', 'null'} else None
+
+    def flag(*keys):
+        value = str(pick(row, *keys)).lower()
+        return True if value in {'1', '1.0', 'true'} else False if value in {'0', '0.0', 'false'} else None
+
+    return dict(offense_personnel=text('offense_personnel'), defense_personnel=text('defense_personnel'),
+        offense_formation=text('offense_formation'), defense_formation=text('defense_formation'),
+        coverage_family=text('defense_man_zone_type'), coverage_scheme=text('defense_coverage_type'),
+        defenders_in_box=number(pick(row, 'defenders_in_box', 'n_defense_box')),
+        pass_rushers=number(pick(row, 'number_of_pass_rushers', 'n_pass_rushers')),
+        blitzers=number(row.get('n_blitzers')), qb_location=text('qb_location'),
+        shotgun=flag('shotgun'), no_huddle=flag('is_no_huddle', 'no_huddle'),
+        play_action=flag('is_play_action'), screen=flag('is_screen_pass'), rpo=flag('is_rpo'))
+
+
+def charted_play(row):
+    identity = number(row.get('play_id'))
+    if identity is None or not identity.is_integer():
+        return None
+    return dict(id=str(int(identity)), order=identity, **charting_fields(row))
 
 
 def nba_shot(row):
@@ -83,13 +118,18 @@ def nfl_play(row):
     period = number(row.get('qtr'))
     return dict(id=str(row.get('play_id', '')), order=number(row.get('play_id')) or 0,
                 period=int(period) if period is not None else None, clock=row.get('time', ''), team=team,
-                kind=kind, drive=str(pick(row, 'fixed_drive', 'drive')), down=number(row.get('down')),
+                defense=canonical_team(row.get('defteam', '')), kind=kind,
+                drive=str(pick(row, 'fixed_drive', 'drive')), drive_result=row.get('fixed_drive_result', ''),
+                drive_duration=row.get('drive_time_of_possession', ''), down=number(row.get('down')),
                 to_go=number(row.get('ydstogo')), start=start, end=end, yards=gained, direction=direction,
                 passer=row.get('passer_player_name', ''), rusher=row.get('rusher_player_name', ''),
                 receiver=row.get('receiver_player_name', ''), description=row.get('desc', ''),
                 epa=number(row.get('epa')), touchdown=number(row.get('touchdown')) == 1 and
                 canonical_team(row.get('td_team', '')) == team, interception=number(row.get('interception')) == 1,
-                sack=number(row.get('sack')) == 1, fumble_lost=number(row.get('fumble_lost')) == 1)
+                sack=number(row.get('sack')) == 1, fumble_lost=number(row.get('fumble_lost')) == 1,
+                call='QB kneel' if kind == 'qb_kneel' else 'QB spike' if kind == 'qb_spike' else
+                'Dropback' if kind == 'pass' or number(row.get('qb_scramble')) == 1 or number(row.get('qb_dropback')) == 1 else 'Run',
+                **charting_fields(row))
 
 
 def valid_game(sport, game_id):
@@ -180,8 +220,10 @@ class InGameService:
         """Index each source revision once, transactionally, with only needed columns."""
         source = str(path.resolve())
         stat = path.stat()
-        signature = f'{VERSION}:{stat.st_size}:{stat.st_mtime_ns}'
-        columns, normalize = (NBA_COLUMNS, nba_shot) if sport == 'NBA' else (NFL_COLUMNS, nfl_play)
+        signature = f'{VERSION if sport == "NBA" else NFL_VERSION}:{stat.st_size}:{stat.st_mtime_ns}'
+        charting = sport in {'participation', 'ftn'}
+        columns, normalize = ((CHARTING_COLUMNS | {'nflverse_game_id', 'game_id', 'play_id', 'nflverse_play_id'}, charted_play)
+                              if charting else (NBA_COLUMNS, nba_shot) if sport == 'NBA' else (NFL_COLUMNS, nfl_play))
         with self._lock, self.connect() as db:
             cached = db.execute('SELECT signature FROM sources WHERE source=?', (source,)).fetchone()
             if not cached or cached[0] != signature:
@@ -189,18 +231,55 @@ class InGameService:
                 with pd.read_csv(path, usecols=lambda name: name in columns, dtype=str,
                                  keep_default_na=False, chunksize=25000) as chunks:
                     for chunk in chunks:
-                        if not {'game_id', 'is_field_goal' if sport == 'NBA' else 'play_type'} <= set(chunk):
+                        if charting:
+                            chunk = chunk.rename(columns={old: new for old, new in
+                                [('nflverse_game_id', 'game_id'), ('nflverse_play_id', 'play_id')] if new not in chunk})
+                        required = {'game_id', 'play_id'} if charting else {'game_id', 'is_field_goal' if sport == 'NBA' else 'play_type'}
+                        if not required <= set(chunk):
                             raise DataSourceError('Saved play-by-play is missing required event columns.')
-                        chunk = chunk[chunk['is_field_goal'].eq('1')] if sport == 'NBA' else chunk[chunk['play_type'].isin(['pass', 'run', 'qb_kneel', 'qb_spike'])]
+                        if not charting:
+                            chunk = chunk[chunk['is_field_goal'].eq('1')] if sport == 'NBA' else chunk[chunk['play_type'].isin(['pass', 'run', 'qb_kneel', 'qb_spike'])]
                         batch = []
                         for row in chunk.to_dict('records'):
                             event = normalize(row)
-                            if event and event['id'] and valid_game(sport, row['game_id']):
+                            if event and event['id'] and valid_game('NFL' if charting else sport, row['game_id']):
                                 batch.append((source, row['game_id'], event['id'], json.dumps(event, allow_nan=False)))
                         db.executemany('INSERT OR REPLACE INTO events VALUES (?,?,?,?)', batch)
                 db.execute('INSERT OR REPLACE INTO sources VALUES (?,?)', (source, signature))
             records = db.execute('SELECT payload FROM events WHERE source=? AND game=?', (source, game_id)).fetchall()
         return sorted((json.loads(row[0]) for row in records), key=lambda r: r['order'])
+
+    def nfl_charting(self, events, season, game_id, download=False):
+        """Join exact game/play IDs; fetching supplementary seasons is explicit."""
+        events = [dict(event) for event in events]
+        by_id = {event['id']: event for event in events}
+        notices, sources = [], []
+        for kind, stem, minimum in [('participation', 'pbp_participation', 2016), ('ftn', 'ftn_charting', 2022)]:
+            name = f'{stem}_{season}.csv'
+            path = self.nfl.directory / 'raw' / name
+            if season < minimum:
+                continue
+            try:
+                if download:
+                    path, notice = self._nfl_source(name, f'{RELEASES}/{stem}/{name}', refresh=True)
+                    if notice: notices.append(notice)
+                if not path.is_file():
+                    continue
+                rows = self._indexed(path, kind, game_id)
+                for row in rows:
+                    if row['id'] in by_id:
+                        # FTN's public subset complements participation; missing values never erase it.
+                        by_id[row['id']].update({k: v for k, v in row.items() if k not in {'id', 'order'} and v is not None})
+                sources.append(dict(name=stem, matched=sum(r['id'] in by_id for r in rows),
+                    saved_at=datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec='seconds')))
+            except (DataSourceError, OSError, ValueError) as exc:
+                notices.append(f'{stem} unavailable: {exc}')
+        counts = {}
+        for event in events:
+            key = (event['team'], event['drive'])
+            counts[key] = counts.get(key, 0) + 1
+            event['drive_play_number'] = counts[key]
+        return events, dict(sources=sources, notices=notices)
 
     @staticmethod
     def _revision(path):
@@ -220,7 +299,7 @@ class InGameService:
                 events[event['id']] = event
         return sorted(events.values(), key=lambda r: r['order']), url
 
-    def game(self, sport, season, game_id, refresh=False):
+    def game(self, sport, season, game_id, refresh=False, charting=False):
         self.validate(sport, season)
         if (not valid_game(sport, game_id) or (sport == 'NFL' and not game_id.startswith(f'{season}_')) or
                 (sport == 'NBA' and game_id[3:5] != f'{season % 100:02}')):
@@ -230,6 +309,7 @@ class InGameService:
             with self._lock:
                 path, notice = self._nfl_source(f'play_by_play_{season}.csv', f'{RELEASES}/pbp/play_by_play_{season}.csv', refresh)
                 events = self._indexed(path, sport, game_id)
+                events, charting_info = self.nfl_charting(events, season, game_id, download=charting)
             source = 'nflverse / nflfastR play-by-play'
             stamp = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec='seconds')
         else:
@@ -276,5 +356,5 @@ class InGameService:
             if events:
                 atomic_text(saved, json.dumps(result, allow_nan=False))
             return result
-        return dict(version=VERSION, sport=sport, season=season, game_id=game_id, events=events,
-                    source=source, source_at=stamp, notice=notice)
+        return dict(version=NFL_VERSION, sport=sport, season=season, game_id=game_id, events=events,
+                    source=source, source_at=stamp, notice=notice, charting=charting_info)

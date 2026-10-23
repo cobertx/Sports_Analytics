@@ -1,6 +1,7 @@
 """Offline checks for recorded coordinates, season indexing, filtering and routing."""
 import csv
 import gzip
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -11,8 +12,9 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dash.exceptions import PreventUpdate
 from sports_analytics.dashboard import create_app
-from sports_analytics.in_game_data import InGameService, nba_shot, nfl_play, valid_game
+from sports_analytics.in_game_data import InGameService, nba_shot, nfl_play, valid_game, charting_fields
 from sports_analytics import in_game_view as view
+from sports_analytics import nfl_in_game as nfl
 from sports_analytics.service import DataService
 
 
@@ -90,6 +92,75 @@ class InGameChecks(TestCase):
         self.assertIsNone(nfl_play(play(play_type='no_play')))
         self.assertIsNone(nfl_play(play(play_deleted='1')))
         self.assertIsNone(nfl_play(play(play_type='punt')))
+
+    def test_charting_preserves_false_zero_and_unknown_without_inferring_coverage(self):
+        fields = charting_fields(dict(offense_personnel='1 RB, 1 TE, 3 WR', defense_personnel='4 DL, 2 LB, 5 DB',
+            is_play_action='FALSE', is_rpo='TRUE', n_blitzers='0', defenders_in_box='6', defense_man_zone_type='NA'))
+        self.assertIs(fields['play_action'], False)
+        self.assertIs(fields['rpo'], True)
+        self.assertEqual((fields['blitzers'], fields['defenders_in_box']), (0, 6))
+        self.assertIsNone(fields['coverage_family']); self.assertIsNone(fields['coverage_scheme'])
+        self.assertEqual(nfl_play(play(qb_scramble='1'))['call'], 'Dropback')
+        self.assertEqual(nfl_play(play())['call'], 'Run')
+        self.assertEqual(nfl_play(play(play_type='qb_kneel'))['call'], 'QB kneel')
+
+    def test_personnel_grouping_preserves_packages_and_does_not_call_them_formations(self):
+        self.assertEqual(nfl.personnel_label('1 QB, 1 C, 2 G, 2 T, 1 RB, 1 TE, 3 WR', True),
+            '11 personnel · 1 RB/FB, 1 TE, 3 WR')
+        self.assertEqual(nfl.personnel_label('1 RB, 1 FB, 1 TE, 2 WR', True),
+            '21 personnel · 2 RB/FB, 1 TE, 2 WR')
+        self.assertNotIn('personnel ·', nfl.personnel_label('1 QB, 2 C, 4 T, 1 RB, 2 TE, 1 WR', True))
+        self.assertEqual(nfl.personnel_label('2 CB, 1 FS, 1 SS, 2 DE, 1 DT, 2 OLB, 2 ILB', False),
+            '3 DL · 4 LB · 4 DB')
+
+    def test_usage_percentages_include_unknown_and_keep_real_no_values(self):
+        events = [dict(coverage_family=value) for value in ['MAN_COVERAGE', 'zone', None, '']]
+        counts = {r['label']: r for r in nfl.distribution(events, 'coverage_family')}
+        self.assertEqual({name: r['percent'] for name, r in counts.items()}, {'MAN': 25, 'ZONE': 25, 'Unknown': 50})
+        self.assertEqual(sum(r['count'] for r in counts.values()), 4)
+        flags = nfl.distribution([dict(play_action=True), dict(play_action=False), dict(play_action=None)], 'play_action')
+        self.assertEqual({r['label']: r['count'] for r in flags}, {'Yes': 1, 'No': 1, 'Unknown': 1})
+
+    def test_drives_are_separate_for_both_teams_even_when_numbers_repeat(self):
+        events = [nfl_play(play()), nfl_play(play(play_id='70', posteam='NO', defteam='ARI', drive='1')),
+                  nfl_play(play(play_id='80', drive='2'))]
+        self.assertEqual(list(nfl.drives(events)), ['ARI:1', 'NO:1', 'ARI:2'])
+        self.assertEqual(view.filter_events(events, 'NFL', drive='NO:1'), [events[1]])
+        self.assertIn('NO offense vs ARI', nfl.drive_label([events[1]]))
+
+    def test_supplementary_charting_joins_exact_ids_and_does_not_erase_fields(self):
+        write_csv(self.nfl, [play(), play(play_id='70', play_type='pass', defteam='NO')])
+        participation = self.nfl.parent / 'pbp_participation_2025.csv'
+        ftn = self.nfl.parent / 'ftn_charting_2025.csv'
+        write_csv(participation, [dict(nflverse_game_id=NFL_ID, play_id='70', offense_personnel='1 RB, 1 TE, 3 WR',
+            defense_personnel='4 DL, 2 LB, 5 DB', defense_man_zone_type='MAN_COVERAGE', defense_coverage_type='COVER_1'),
+            dict(nflverse_game_id='2025_02_ARI_NO', play_id='63', offense_personnel='WRONG GAME')])
+        write_csv(ftn, [dict(nflverse_game_id=NFL_ID, nflverse_play_id='70.0', ftn_play_id='999',
+            is_play_action='false', n_blitzers='0', qb_location='S'),
+            dict(nflverse_game_id=NFL_ID, nflverse_play_id='1234', ftn_play_id='63', is_play_action='true', n_blitzers='9')])
+        data = self.service.game('NFL', 2025, NFL_ID)
+        first, second = data['events']
+        self.assertIsNone(first['offense_personnel']); self.assertIsNone(first['play_action'])
+        self.assertEqual((second['offense_personnel'], second['coverage_family']), ('1 RB, 1 TE, 3 WR', 'MAN_COVERAGE'))
+        self.assertIs(second['play_action'], False); self.assertEqual(second['blitzers'], 0)
+        self.assertEqual([r['matched'] for r in data['charting']['sources']], [1, 1])
+        self.assertEqual([r['drive_play_number'] for r in data['events']], [1, 2])
+        with patch('sports_analytics.in_game_data.pd.read_csv', side_effect=AssertionError('No repeated season scan')):
+            self.assertEqual(self.service.game('NFL', 2025, NFL_ID), data)
+        write_csv(ftn, [dict(nflverse_game_id=NFL_ID, nflverse_play_id='70', is_play_action='true')])
+        changed = self.service.game('NFL', 2025, NFL_ID)
+        self.assertIs(changed['events'][1]['play_action'], True)
+        self.assertEqual(changed['events'][1]['coverage_family'], 'MAN_COVERAGE')
+        self.client.get.assert_not_called()
+
+    def test_supplementary_download_failure_keeps_base_game_available(self):
+        from sports_analytics.data import DataSourceError
+        write_csv(self.nfl, [play()])
+        self.client.get.side_effect = DataSourceError('Charting not released')
+        data = self.service.game('NFL', 2025, NFL_ID, charting=True)
+        self.assertEqual(len(data['events']), 1)
+        self.assertEqual(len(data['charting']['notices']), 2)
+        self.assertIsNone(data['events'][0]['coverage_family'])
 
     def test_defensive_return_is_not_offensive_touchdown(self):
         defense = nfl_play(play(touchdown='1', td_team='NO', interception='1'))
@@ -217,7 +288,7 @@ class InGameChecks(TestCase):
             response = post('in_game_catalog', values, 'workspace-page.value')
             self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
             values.update({'in-game-catalog': response.get_json()['response']['in-game-catalog']['data'],
-                           'in-game-game': NBA_ID, 'in-game-refresh': 0, 'in-game-events': None})
+                           'in-game-game': NBA_ID, 'in-game-refresh': 0, 'in-game-events': None, 'in-game-charting-load': 0})
             response = post('in_game_load', values, 'in-game-game.value')
             self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
             values['in-game-events'] = response.get_json()['response']['in-game-events']['data']
@@ -262,6 +333,44 @@ class InGameChecks(TestCase):
             rendered = callbacks['in_game_render'](data, view.ALL, view.ALL, view.ALL, view.ALL, view.ALL,
                 view.ALL, 'half', 'NFL', NFL_ID, catalog)
             self.assertEqual(rendered[-1], [])
+        events = [nfl_play(play(defteam='NO')), nfl_play(play(play_id='70', posteam='NO', defteam='ARI', drive='2'))]
+        data = dict(sport='NFL', season=2025, game_id=NFL_ID, events=events)
+        choices = callbacks['in_game_player_options'](data, view.ALL, view.ALL, None)
+        self.assertEqual(choices[-1], 'ARI:1')
+        self.assertEqual(callbacks['in_game_player_options'](data, view.ALL, view.ALL, 'NO:2')[-1], 'NO:2')
+        self.assertEqual(callbacks['in_game_player_options'](data, view.ALL, view.ALL, view.ALL)[-1], view.ALL)
+        clicked = dict(type='in-game-drive-button', drive='NO:2')
+        with patch('sports_analytics.in_game_callbacks.ctx', SimpleNamespace(triggered_id=clicked, triggered=[dict(value=1)])):
+            self.assertEqual(callbacks['in_game_choose_drive']([0, 1], data, view.ALL), 'NO:2')
+            with self.assertRaises(PreventUpdate): callbacks['in_game_choose_drive']([0, 1], data, 'ARI')
+        key, meta = next((key, item) for key, item in app.callback_map.items()
+            if item.get('callback') and item['callback'].__wrapped__.__name__ == 'in_game_choose_drive')
+        response = app.server.test_client().post('/_dash-update-component', json=dict(output=key,
+            outputs=dict(id='in-game-drive', property='value'),
+            inputs=[dict(**meta['inputs'][0], value=[0, 1])],
+            state=[dict(**item, value=data if item['id'] == 'in-game-events' else view.ALL) for item in meta['state']],
+            changedPropIds=[json.dumps(clicked, sort_keys=True, separators=(',', ':')) + '.n_clicks']))
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()['response']['in-game-drive']['value'], 'NO:2')
+        key, meta = next((key, item) for key, item in app.callback_map.items()
+            if item.get('callback') and item['callback'].__wrapped__.__name__ == 'in_game_load')
+        catalog = dict(sport='NFL', season=2025, games=[dict(id=NFL_ID, date='2025-09-07', matchup='ARI @ NO')])
+        loaded = {**data, 'version': 2, 'source': 'fixture', 'source_at': '2026-10-22T00:00:00Z'}
+        values = {'in-game-game': NFL_ID, 'in-game-catalog': catalog, 'in-game-refresh': 0,
+                  'workspace-page': 'in-game', 'sport': 'NFL', 'in-game-charting-load': 1, 'in-game-events': loaded}
+        with patch.object(self.service, 'game', return_value=loaded) as load:
+            response = app.server.test_client().post('/_dash-update-component', json=dict(output=key,
+                outputs=[dict(id=o.component_id, property=o.component_property) for o in meta['output']],
+                inputs=[dict(**item, value=values[item['id']]) for item in meta['inputs']],
+                state=[dict(**item, value=values[item['id']]) for item in meta['state']],
+                changedPropIds=['in-game-charting-load.n_clicks']))
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            load.assert_called_once_with('NFL', 2025, NFL_ID, refresh=False, charting=True)
+            self.assertEqual(response.get_json()['response']['in-game-events']['data']['game_id'], NFL_ID)
+        self.assertTrue(callbacks['in_game_nfl_insights'](data, view.ALL, view.ALL, view.ALL, view.ALL,
+            'NO:2', view.ALL, 'NFL', NFL_ID))
+        self.assertEqual(callbacks['in_game_nfl_insights'](data, view.ALL, view.ALL, view.ALL, view.ALL,
+            'NO:2', view.ALL, 'NBA', NBA_ID), [])
 
 
 if __name__ == '__main__':

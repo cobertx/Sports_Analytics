@@ -53,13 +53,19 @@ class DataService:
         serialized = json.dumps({"version": CACHE_VERSION, **query.parameters()}, sort_keys=True)
         return hashlib.sha256(serialized.encode()).hexdigest()
 
+    @staticmethod
+    @lru_cache(maxsize=4)
+    def _decode(payload):
+        # Key by the actual saved bytes so revised data cannot reuse an old frame.
+        return pd.read_json(StringIO(zlib.decompress(payload).decode()), orient="table")
+
     def cached(self, key):
         with self.connect() as db:
             row = db.execute("SELECT source, fetched_at, payload FROM datasets WHERE key = ?", (key,)).fetchone()
         if not row:
             return None
         try:
-            frame = pd.read_json(StringIO(zlib.decompress(row[2]).decode()), orient="table")
+            frame = self._decode(row[2]).copy(deep=True)
         except (ValueError, TypeError, zlib.error) as exc:
             raise DataSourceError("The local cache could not be read. Refresh this dataset to replace it.") from exc
         return Dataset(key, frame, row[0], row[1], "cached")

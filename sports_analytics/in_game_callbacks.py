@@ -1,9 +1,11 @@
 """Isolated callbacks for recorded NBA/NFL in-game exploration."""
-from dash import Input, Output, State, ctx, no_update
+from dash import ALL, Input, Output, State, ctx, no_update
 from dash.exceptions import PreventUpdate
 
 from .data import DataSourceError
+from .in_game_data import NFL_VERSION
 from . import in_game_view as view
+from . import nfl_in_game
 
 
 def register(app, service):
@@ -18,13 +20,15 @@ def register(app, service):
                   Output('in-game-page-link', 'href'), Output('in-game-page-link', 'className'),
                   Output('in-game-shot-filters', 'style'), Output('in-game-court-filter', 'style'),
                   Output('in-game-play-filters', 'style'), Output('in-game-drive-filter', 'style'),
+                  Output('in-game-nfl-panel', 'style'),
                   Input('workspace-page', 'value'), Input('sport', 'value'))
     def in_game_visibility(page, sport):
         supported = sport in {'NBA', 'NFL'}
         nba, nfl = ({}, {'display': 'none'}) if sport == 'NBA' else ({'display': 'none'}, {})
         return ({'display': 'grid' if supported and page == 'in-game' else 'none'},
                 {} if supported else {'display': 'none'}, f'#{sport.lower()}-in-game-data',
-                'sport-page-link' + (' active' if page == 'in-game' else ''), nba, nba, nfl, nfl)
+                'sport-page-link' + (' active' if page == 'in-game' else ''), nba, nba, nfl, nfl,
+                {} if sport == 'NFL' else {'display': 'none'})
 
     @app.callback(Output('in-game-catalog', 'data'), Output('in-game-list-status', 'children'),
                   Input('workspace-page', 'value'), Input('sport', 'value'), Input('in-game-season', 'value'),
@@ -63,8 +67,9 @@ def register(app, service):
                   Output('in-game-matchup', 'children'),
                   Input('in-game-game', 'value'), Input('in-game-catalog', 'data'), Input('in-game-refresh', 'n_clicks'),
                   Input('workspace-page', 'value'), Input('sport', 'value'),
-                  State('in-game-events', 'data'))
-    def in_game_load(game_id, catalog, _refresh, page, sport, previous):
+                  Input('in-game-charting-load', 'n_clicks'), State('in-game-events', 'data'),
+                  running=[(Output('in-game-charting-load', 'disabled'), True, False)])
+    def in_game_load(game_id, catalog, _refresh, page, sport, _charting=0, previous=None):
         if page != 'in-game' or sport not in {'NBA', 'NFL'}:
             raise PreventUpdate
         games = (catalog or {}).get('games', [])
@@ -72,10 +77,12 @@ def register(app, service):
         if not catalog or catalog.get('sport') != sport or not game:
             return None, 'Choose a recorded game to load its events.', ''
         refresh = ctx.triggered_id == 'in-game-refresh'
-        if not refresh and previous and (previous.get('sport'), previous.get('season'), previous.get('game_id')) == (sport, catalog['season'], game_id):
+        charting = sport == 'NFL' and ctx.triggered_id == 'in-game-charting-load'
+        if (not refresh and not charting and previous and (sport != 'NFL' or previous.get('version') == NFL_VERSION)
+                and (previous.get('sport'), previous.get('season'), previous.get('game_id')) == (sport, catalog['season'], game_id)):
             return no_update, no_update, f"{game['date']} · {game['matchup']}"
         try:
-            result = service.game(sport, catalog['season'], game_id, refresh=refresh)
+            result = service.game(sport, catalog['season'], game_id, refresh=refresh, **({'charting': True} if charting else {}))
             status = f"{result['source']} · Source saved/checked {result['source_at']} · {len(result['events'])} events."
             if not result['events']:
                 status += ' No shot/play events are available for this game yet; try another game or refresh later.'
@@ -106,11 +113,45 @@ def register(app, service):
         events = [r for r in (data or {}).get('events', []) if offense == view.ALL or r['team'] == offense]
         players = {r['player_id']: r['player'] for r in events} if sport == 'NBA' else {
             r[k]: r[k] for r in events for k in ['passer', 'rusher', 'receiver'] if r[k]}
-        drives = sorted({r['drive'] for r in events if r.get('drive')}, key=lambda d: float(d)) if sport == 'NFL' else []
+        drives = nfl_in_game.drives(events) if sport == 'NFL' else {}
+        selected_drive = previous_drive if previous_drive == view.ALL or previous_drive in drives else next(iter(drives), view.ALL)
         return ([dict(label='All players', value=view.ALL)] + [dict(label=name, value=key) for key, name in sorted(players.items(), key=lambda pair: pair[1])],
                 previous_player if previous_player in players else view.ALL,
-                [dict(label='All drives', value=view.ALL)] + [dict(label='Drive ' + d, value=d) for d in drives],
-                previous_drive if previous_drive in drives else view.ALL)
+                [dict(label='All drives', value=view.ALL)] + [dict(label=nfl_in_game.drive_label(rows), value=key) for key, rows in drives.items()],
+                selected_drive if sport == 'NFL' else None)
+
+    @app.callback(Output('in-game-drive', 'value', allow_duplicate=True),
+                  Input({'type': 'in-game-drive-button', 'drive': ALL}, 'n_clicks'),
+                  State('in-game-events', 'data'), State('in-game-offense', 'value'), prevent_initial_call=True)
+    def in_game_choose_drive(clicks, data, offense):
+        clicked = ctx.triggered_id
+        if not isinstance(clicked, dict) or not any(clicks or []):
+            raise PreventUpdate
+        events = [r for r in (data or {}).get('events', []) if offense == view.ALL or r['team'] == offense]
+        if clicked['drive'] == view.ALL or clicked['drive'] in nfl_in_game.drives(events):
+            return clicked['drive']
+        raise PreventUpdate
+
+    @app.callback(Output('in-game-drive-navigation', 'children'),
+                  Input('in-game-events', 'data'), Input('in-game-offense', 'value'),
+                  Input('in-game-drive', 'value'), Input('sport', 'value'))
+    def in_game_drive_navigation(data, offense, drive, sport):
+        if sport != 'NFL' or not data or data.get('sport') != 'NFL':
+            return []
+        events = [r for r in data['events'] if offense == view.ALL or r['team'] == offense]
+        return nfl_in_game.drive_navigation(events, drive)
+
+    @app.callback(Output('in-game-nfl-insights', 'children'),
+                  Input('in-game-events', 'data'), Input('in-game-offense', 'value'), Input('in-game-player', 'value'),
+                  Input('in-game-period', 'value'), Input('in-game-kind', 'value'), Input('in-game-drive', 'value'),
+                  Input('in-game-event-select', 'value'), Input('sport', 'value'), Input('in-game-game', 'value'))
+    def in_game_nfl_insights(data, offense, player, period, kind, drive, event_id, sport, game_id):
+        if sport != 'NFL' or not data or data.get('sport') != 'NFL' or data.get('game_id') != game_id:
+            return []
+        events = view.filter_events(data['events'], 'NFL', offense, player, period, kind=kind, drive=drive)
+        if event_id != view.ALL:
+            events = [r for r in events if r['id'] == event_id]
+        return nfl_in_game.insights(events, data)
 
     @app.callback(Output('in-game-event-select', 'options'), Output('in-game-event-select', 'value'),
                   Input('in-game-events', 'data'), Input('in-game-offense', 'value'), Input('in-game-player', 'value'),
@@ -153,6 +194,7 @@ def register(app, service):
         else:
             missing = sum(not view.located_play(r) for r in events)
             note = ('Open circle = line of scrimmage; filled marker = end of recorded yardage; star = offensive TD; X = turnover. '
+                    'Numbers show the offensive-play sequence within a single selected drive. '
                     'All offenses advance toward the right. Horizontal position and gain use recorded yards. '
                     'Vertical lanes are schematic left/middle/right categories, not measured routes or player tracking; N/A means direction unavailable. '
                     'Passes include sacks; runs include scrambles. Incomplete passes use recorded gain, not intended air yards. '

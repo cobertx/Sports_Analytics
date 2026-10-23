@@ -44,3 +44,5 @@ jobs:
         run: python scripts/check_comparisons.py
       - name: Check recorded in-game coordinates, indexing and navigation
         run: python scripts/check_in_game.py
+      - name: Check cache refresh isolation and equivalent filtering
+        run: python scripts/check_performance.py

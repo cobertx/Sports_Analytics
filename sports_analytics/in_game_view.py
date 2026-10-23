@@ -6,6 +6,7 @@ import re
 
 from dash import dash_table, dcc, html
 import plotly.graph_objects as go
+from . import nfl_in_game
 
 ALL = '__all__'
 COLORS = {'made': '#127052', 'missed': '#c63b50', 'pass': '#67d8ff', 'run': '#ffcf67',
@@ -59,14 +60,30 @@ def layout():
                 html.Div(field('Play type', dropdown('kind', [dict(label='All offensive plays', value=ALL),
                     dict(label='Pass (includes sacks)', value='pass'), dict(label='Run (includes scrambles)', value='run'),
                     dict(label='QB kneel', value='qb_kneel'), dict(label='QB spike', value='qb_spike')])), id='in-game-play-filters'),
-                html.Div(field('Drive', dropdown('drive')), id='in-game-drive-filter'),
+                html.Div(field('Drive', dropdown('drive', value=None)), id='in-game-drive-filter'),
                 field('Individual shot / play', dropdown('event-select', [dict(label='All filtered events', value=ALL)])),
             ], className='in-game-filters'),
+            html.Div(id='in-game-drive-navigation'),
             html.Div(id='in-game-summary', className='in-game-summary'),
             dcc.Graph(id='in-game-chart', figure=court_figure([]), config={'displaylogo': False, 'scrollZoom': False,
                       'toImageButtonOptions': {'format': 'png', 'filename': 'in_game_chart', 'scale': 2}}),
             html.P(id='in-game-chart-note', className='in-game-help', role='status'),
         ], className='panel in-game-visual'),
+        html.Section([
+            html.Div([html.H2('Personnel, formations & play calling'),
+                html.Button('Load / refresh personnel & coverage', id='in-game-charting-load', n_clicks=0,
+                            className='export-button')], className='in-game-heading'),
+            html.P('Participation charting from 2023 onward is published after the season’s postseason. '
+                   'In-season man/zone or personnel may be unavailable. FTN’s public play-calling subset '
+                   'can be available earlier. Unknown values remain explicit.', className='in-game-help'),
+            dcc.Loading(html.Div(id='in-game-nfl-insights'), color='#57dbc4'),
+            html.P([html.A('FTN Data via nflverse', href='https://nflreadr.nflverse.com/reference/load_participation.html',
+                target='_blank', rel='noopener noreferrer'), ' (2023 onward participation; FTN charting from 2022) · ',
+                'NFL NextGenStats via nflverse (participation through 2022) · ',
+                html.A('CC BY-SA 4.0', href='https://creativecommons.org/licenses/by-sa/4.0/',
+                       target='_blank', rel='noopener noreferrer'),
+                '. Percentages and drive summaries are computed from the source records.'], className='in-game-help'),
+        ], id='in-game-nfl-panel', className='panel in-game-setup', style={'display': 'none'}),
         html.Details([html.Summary('Event details & CSV export'),
             dash_table.DataTable(id='in-game-table', data=[], columns=[], page_size=12, sort_action='native',
                 filter_action='native', export_format='csv', style_table={'overflowX': 'auto'},
@@ -213,14 +230,24 @@ def football_figure(events):
             ys += [LANES[r['direction']], LANES[r['direction']], None]
         figure.add_trace(go.Scatter(x=xs, y=ys, mode='lines', line={'color': COLORS[kind], 'width': 2},
                                     opacity=.5, showlegend=False, hoverinfo='skip'))
+        single_drive = len({nfl_in_game.drive_key(r) for r in events}) == 1
         figure.add_trace(go.Scatter(x=[r['end'] for r in rows], y=[LANES[r['direction']] for r in rows],
-            mode='markers', name=label, marker={'size': 11, 'color': COLORS[kind], 'line': {'color': '#173d2a', 'width': 1},
+            mode='markers+text' if single_drive else 'markers', name=label,
+            text=[str(r.get('drive_play_number', '')) for r in rows], textposition='top center',
+            textfont={'color': '#fff3d6', 'size': 12},
+            marker={'size': 11, 'color': COLORS[kind], 'line': {'color': '#173d2a', 'width': 1},
                 'symbol': ['star' if r['touchdown'] else 'x' if r['interception'] or r['fumble_lost'] else
                            'triangle-left' if r['yards'] < 0 else 'circle' if r['yards'] == 0 else 'triangle-right' for r in rows]},
             customdata=[[escape(r['team']), period_label(r['period']) if r['period'] else '?', clock_label(r['clock']),
-                         r['drive'], r['down'], r['to_go'], r['yards'], r['epa'], escape(r['description'])] for r in rows],
+                         r['drive'], r['down'], r['to_go'], r['yards'], r['epa'], escape(r['description']),
+                         escape(r.get('defense', '')), r.get('drive_play_number', ''),
+                         escape(r.get('offense_personnel') or 'Unknown'), escape(r.get('defense_personnel') or 'Unknown'),
+                         escape(r.get('coverage_family') or 'Unknown'), escape(r.get('coverage_scheme') or 'Unknown')] for r in rows],
             hovertemplate='<b>%{customdata[0]}</b> · %{customdata[1]} · %{customdata[2]}<br>Drive %{customdata[3]}'
+                ' · Offensive play %{customdata[10]} · Defense %{customdata[9]}'
                 '<br>Down %{customdata[4]} · %{customdata[5]} to go<br>Gain: %{customdata[6]} yd · EPA: %{customdata[7]}'
+                '<br>Offensive personnel: %{customdata[11]}<br>Defensive personnel: %{customdata[12]}'
+                '<br>Coverage: %{customdata[13]} · %{customdata[14]}'
                 '<br>%{customdata[8]}<extra>' + label + '</extra>'))
         figure.add_trace(go.Scatter(x=[r['start'] for r in rows], y=[LANES[r['direction']] for r in rows],
             mode='markers', marker={'size': 5, 'color': COLORS[kind], 'symbol': 'circle-open'},
@@ -236,7 +263,7 @@ def filter_events(events, sport, offense=ALL, player=ALL, period=ALL, result=ALL
         return [r for r in rows if (player == ALL or r['player_id'] == player) and
                 (result == ALL or r['made'] is (result == 'made'))]
     return [r for r in rows if (player == ALL or player in {r['passer'], r['rusher'], r['receiver']}) and
-            (kind == ALL or r['kind'] == kind) and (drive == ALL or r['drive'] == drive)]
+            (kind == ALL or r['kind'] == kind) and (drive == ALL or r['drive'] == drive or nfl_in_game.drive_key(r) == drive)]
 
 
 def summary(events, sport):
@@ -262,7 +289,12 @@ def event_table(events, sport):
                       [('Drive', 'drive'), ('Type', 'kind'), ('Down', 'down'), ('To go', 'to_go'),
                        ('Passer', 'passer'), ('Rusher', 'rusher'), ('Receiver / target', 'receiver'),
                        ('Direction', 'direction'), ('LOS from own goal (yd)', 'start'),
-                       ('Yards gained', 'yards'), ('EPA', 'epa')]) + [('Description', 'description')]
+                       ('Yards gained', 'yards'), ('EPA', 'epa'), ('Defense', 'defense'), ('Play call', 'call'),
+                       ('Offensive personnel', 'offense_personnel'), ('Defensive personnel', 'defense_personnel'),
+                       ('Offensive formation', 'offense_formation'), ('Defensive formation', 'defense_formation'),
+                       ('Man / zone', 'coverage_family'), ('Coverage scheme', 'coverage_scheme'),
+                       ('Defenders in box', 'defenders_in_box'), ('Pass rushers', 'pass_rushers'), ('Blitzers', 'blitzers'),
+                       ('Play action', 'play_action'), ('RPO', 'rpo')]) + [('Description', 'description')]
     rows = []
     for r in events:
         row = {key: r.get(key) for _, key in fields}
