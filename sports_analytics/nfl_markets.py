@@ -1,6 +1,7 @@
 """Click-triggered FanDuel snapshots; NFL defaults and shared persistence for NBA."""
 
 from contextlib import closing
+from collections import OrderedDict
 import csv
 from datetime import datetime, timezone
 import hashlib
@@ -148,7 +149,10 @@ class NflMarketService:
         self.path = Path(path)
         self.csv_directory = Path(csv_directory) if csv_directory is not None else self.path.parent / "market_data"
         self.usage_log = usage_log or ApiUsageLog(self.csv_directory.parent / "API Log" / "api_credit_usage.csv")
-        self._csv_cache = {}
+        self._csv_cache = OrderedDict()
+        self._csv_lock = threading.Lock()
+        self._history_cache = OrderedDict()
+        self._history_lock = threading.Lock()
         self._lock = threading.Lock()
 
     def _connect(self):
@@ -197,10 +201,13 @@ class NflMarketService:
                 temporary.unlink(missing_ok=True)
 
     def _read_csv(self, path):
-        stamp = path.stat().st_mtime_ns
-        cached = self._csv_cache.get(path.name)
-        if cached and cached[0] == stamp:
-            return cached[1]
+        stat = path.stat()
+        stamp = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
+        with self._csv_lock:
+            cached = self._csv_cache.get(path.name)
+            if cached and cached[0] == stamp:
+                self._csv_cache.move_to_end(path.name)
+                return cached[1]
         with path.open(encoding="utf-8-sig", newline="") as file:
             reader = csv.DictReader(file)
             first = next(reader)
@@ -215,7 +222,11 @@ class NflMarketService:
                 snapshot["rows"].append(item)
             snapshot["raw_response"] = json.loads(first.get("api_response_json") or "null")
             snapshot["csv_file"] = path.name
-        self._csv_cache[path.name] = (stamp, snapshot)
+        with self._csv_lock:
+            self._csv_cache[path.name] = (stamp, snapshot)
+            self._csv_cache.move_to_end(path.name)
+            if len(self._csv_cache) > 32:
+                self._csv_cache.popitem(last=False)
         return snapshot
 
     def _saved(self, selected):
@@ -223,9 +234,52 @@ class NflMarketService:
             account = self.api.account_id()
         except DataSourceError:
             return []
+        # A game is read by several Dash callbacks. Reuse its saved snapshots
+        # only while SQLite, exported CSVs and the credit log are unchanged.
+        revision = self._saved_revision() if selected is not None and len(selected) == 1 else None
+        key = (account, tuple(sorted(selected)), revision) if revision is not None else None
+        if key is not None:
+            with self._history_lock:
+                if key in self._history_cache:
+                    self._history_cache.move_to_end(key)
+                    return self._copy_snapshots(self._history_cache[key])
+        snapshots = self._saved_account(account, selected)
+        if key is not None and revision == self._saved_revision():
+            with self._history_lock:
+                self._history_cache[key] = snapshots
+                self._history_cache.move_to_end(key)
+                if len(self._history_cache) > 8:
+                    self._history_cache.popitem(last=False)
+        return self._copy_snapshots(snapshots)
+
+    @staticmethod
+    def _copy_snapshots(snapshots):
+        # Quote rows are independent; the archived raw response stays read-only.
+        return [{**snapshot, 'rows': [dict(row) for row in snapshot['rows']]} for snapshot in snapshots]
+
+    def _saved_revision(self):
+        if not isinstance(self.usage_log, ApiUsageLog):
+            return None
+        paths = [self.path, Path(str(self.path) + '-wal'), Path(str(self.path) + '-journal'),
+                 self.usage_log.path, *sorted(self.csv_directory.glob(f'{self.sport.lower()}_*.csv'))]
+        revision = []
+        try:
+            for path in paths:
+                try:
+                    stat = path.stat()
+                    revision.append((str(path), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino))
+                except FileNotFoundError:
+                    revision.append((str(path), None))
+        except OSError:
+            return None  # Let the normal reader report export/log access errors.
+        return tuple(revision)
+
+    def _saved_account(self, account, selected):
         saved = {}
         with closing(self._connect()) as db:
-            rows = db.execute(f"SELECT game_id, payload FROM {self.table} WHERE account = ? AND state = 'done' ORDER BY pulled_at DESC", (account,))
+            scope = '' if selected is None else f" AND game_id IN ({','.join('?' for _ in selected)})"
+            rows = db.execute(f"SELECT game_id, payload FROM {self.table} WHERE account = ? AND state = 'done'{scope} ORDER BY pulled_at DESC",
+                              (account, *(sorted(selected) if selected is not None else ())))
             for game_id, payload in rows:
                 if selected is None or game_id in selected:
                     snapshot = json.loads(payload)

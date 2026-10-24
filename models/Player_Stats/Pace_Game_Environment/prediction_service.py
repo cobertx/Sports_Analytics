@@ -20,7 +20,7 @@ from .pace_model import PaceModel
 from models.Player_Stats.Usage_Opportunity.prediction_service import UsageMarketForecast
 from .historical_data import PaceHistoryRepository, eligible, match_player, atomic_json, identity_name
 from models.Player_Stats.Usage_Opportunity.market_comparison import compare_price
-from models.Player_Stats.Usage_Opportunity.markets import market_spec, prop_key
+from models.Player_Stats.Usage_Opportunity.markets import market_spec, prop_key, quote_index
 from models.Player_Stats.Usage_Opportunity.nba_model import simulate_nba
 from models.Player_Stats.Usage_Opportunity.nfl_model import simulate_nfl
 
@@ -109,7 +109,8 @@ class PaceGameEnvironmentMarketService:
         model = PaceModel(config).fit(volumes)
         valid_keys = set(zip(volumes.game_id,volumes.team))
         teams = teams[[ (str(r.game_id),r.team) in valid_keys for _,r in teams.iterrows() ]].copy()
-        result, matched = PaceMarketForecast(), {}
+        result, matched, failed_players = PaceMarketForecast(), {}, {}
+        players['_whp_name'] = players.entity_name.map(identity_name)
         for row in snapshot['rows']:
             if not row['market_key'].startswith('player_'):
                 continue
@@ -120,6 +121,9 @@ class PaceGameEnvironmentMarketService:
                 continue
             if row['subject'] in matched:
                 continue
+            if row['subject'] in failed_players:
+                result.errors[key] = failed_players[row['subject']]
+                continue
             try:
                 history = match_player(players, snapshot, row['subject'], cutoff)
                 latest = history.iloc[-1]
@@ -127,6 +131,7 @@ class PaceGameEnvironmentMarketService:
                 matched[row['subject']] = dict(team=latest.team, history=history[history.team.eq(latest.team)])
             except ValueError as exc:
                 result.errors[key] = str(exc)
+                failed_players[row['subject']] = str(exc)
         if matched:
             matched = dict(sorted(matched.items()))
             club_data = {club: rows for club, rows in teams.groupby('team')}
@@ -165,13 +170,13 @@ class PaceGameEnvironmentMarketService:
                                'implementation': signature, 'config': asdict(config)}
                 result.forecasts[key] = PaceForecast.from_samples(values, diagnostics)
         evaluations = []
+        indexed_quotes = quote_index(snapshot['rows'])
         for row in snapshot['rows']:
             if not row['market_key'].startswith('player_'):
                 continue
             price = result.selection(row)
             opposite = {'Over': 'Under', 'Under': 'Over'}.get(row['selection'])
-            quotes = [r['odds'] for r in snapshot['rows'] if prop_key(r) == prop_key(row)
-                      and r['line'] == row['line'] and r['selection'] == opposite]
+            quotes = indexed_quotes.get((*prop_key(row), row['line'], opposite), [])
             evaluations.append(dict(subject=row['subject'], market=row['market_key'], line=row['line'], selection=row['selection'],
                 **compare_price(price, row['odds'], quotes[0] if len(quotes) == 1 else None),
                 win=price.win if price else None, loss=price.loss if price else None, push=price.push if price else None,

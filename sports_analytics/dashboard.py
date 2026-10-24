@@ -1,6 +1,7 @@
 """Dash presentation layer. Load data when the user opens or changes a scope."""
 
 from datetime import date, datetime
+from concurrent.futures import ThreadPoolExecutor
 import csv
 import math
 import re
@@ -28,6 +29,11 @@ from .comparison_callbacks import register as register_comparison_callbacks
 from .in_game_data import InGameService
 from .in_game_view import layout as in_game_layout
 from .in_game_callbacks import register as register_in_game_callbacks
+from .kalshi import KalshiService
+from .kalshi_view import layout as kalshi_layout, route as kalshi_route
+from .kalshi_callbacks import register as register_kalshi_callbacks
+from .polymarket import PolymarketService
+from . import polymarket_view
 from .research_config import form_parameters
 from .historical_view import historical_route,statistics_kind,navigation as historical_navigation
 from .historical_links import history_target,matches_dataset,target_entity,target_metric,market_metrics
@@ -266,9 +272,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                api_usage_log=None, ppp_service=None, epa_service=None, nba_market_service=None, nba_ppp_service=None,
                nba_epa_service=None, elo_service=None, nba_elo_service=None, ncaaf_market_service=None,
                whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None,
-               ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None,in_game_service=None):
+               ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None,in_game_service=None,kalshi_service=None,
+               polymarket_service=None):
     service = service or DataService()
     in_game_service = in_game_service or InGameService(data=service)
+    kalshi_service = kalshi_service or KalshiService()
+    polymarket_service = polymarket_service or PolymarketService()
     backtesting_service=backtesting_service or BacktestingService(data=service)
     career_service = career_service or CareerService(service.path.with_name("career.sqlite3"))
     schedule_service = schedule_service or ScheduleService(service.path.with_name("schedules.sqlite3"))
@@ -298,7 +307,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                                                   data_directory / "market_data", usage_log=api_usage_log)
     market_services = {"NFL": nfl_market_service, "NBA": nba_market_service, "NCAAF": ncaaf_market_service}
     app = Dash(__name__, assets_folder=str(Path(__file__).parent / "assets"),
-               title="Sports Analytics", update_title="Loading…")
+               title="Sports Analytics", update_title=None)
 
     def historical_target(location_hash):
         target=history_target(location_hash)
@@ -364,6 +373,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     html.A('Historical Data',id='historical-page-link',href='#historical-team',className='sport-page-link active'),
                     html.Div(id='historical-navigation',className='historical-navigation backtesting-model-links'),
                     html.A('FanDuel Market',id='market-page-link',href='#nba-games',className='sport-page-link'),
+                    html.A('Kalshi Market',id='kalshi-page-link',href='#nba-kalshi-market',className='sport-page-link'),
+                    html.A('Polymarket Market',id='polymarket-page-link',href='#nba-polymarket-market',className='sport-page-link'),
                     html.A([html.Span('↺',className='navigation-icon',**{'aria-hidden':'true'}),'Backtesting'],
                            id='backtesting-page-link',href='#backtesting',className='sport-page-link'),
                     html.Div(id='backtesting-navigation',className='backtesting-navigation',style={'display':'none'}),
@@ -544,6 +555,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                         backtesting_results_layout()],
                                  id='backtesting-page',className='backtesting-page',style={'display':'none'}),
                     in_game_layout(),
+                    kalshi_layout(),
+                    polymarket_view.layout(),
                 ], className="page-content"),
             ], id="sport-pages", className="page-shell"),
             html.Section([
@@ -634,18 +647,21 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         market = page == "market" and not odds and not research
         backtesting = research or (page == 'backtesting' and not odds)
         in_game = page == 'in-game' and sport in {'NBA','NFL'}
+        kalshi = page == 'kalshi' and sport in SOURCES
+        polymarket = page == 'polymarket' and sport in SOURCES
+        exchange = 'Polymarket' if polymarket else 'Kalshi' if kalshi else None
         intro = ('STRATEGY & RESEARCH','Study the method. Test your parameters.',
                  'Explore forecasting strategies and run reproducible historical experiments across NBA, NFL and NCAAF.') if research else ("THE ODDS API", "Your monthly credits at a glance.",
                  "Monitor your account's credit usage and connection status.") if odds else (
                 'THE BACKTESTING LAB','Explore your forecasting models.',
                 f'Game Outcome and Player Stats evaluation methods for {sport}.') if backtesting else (
-                "ON THE COURT / ON THE FIELD" if in_game else "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
-                f'{sport} · Visualized In-Game Data' if in_game else "The next game starts here." if market else f'{sport} · {"Player" if kind=="player" else "Team"} Statistics',
-                'See recorded shots and offensive plays on an interactive court or field.' if in_game else "Explore upcoming NBA, NFL, and college football matchups." if market else
+                'THE '+exchange.upper()+' EXCHANGE' if exchange else "ON THE COURT / ON THE FIELD" if in_game else "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
+                f'{sport} · {exchange} Market' if exchange else f'{sport} · Visualized In-Game Data' if in_game else "The next game starts here." if market else f'{sport} · {"Player" if kind=="player" else "Team"} Statistics',
+                f'Browse game contracts and current exchange quotes from {exchange}’s public API.' if exchange else 'See recorded shots and offensive plays on an interactive court or field.' if in_game else "Explore upcoming NBA, NFL, and college football matchups." if market else
                 ('Explore saved college player performances and game logs.' if sport=='NCAAF' else
                  'Explore historical player performances and career statistics.') if kind=='player' else
                 'Explore historical team performances and statistics.')
-        return ({"display": "none" if market or odds or backtesting or in_game else "grid"}, {"display": "block" if market else "none"},
+        return ({"display": "none" if market or odds or backtesting or in_game or exchange else "grid"}, {"display": "block" if market else "none"},
                 f"{sport} · Upcoming games", FANDUEL_LINKS.get(sport, FANDUEL_LINKS["NBA"]), not market,
                 *intro, {"display": "none" if odds else "grid"}, {"display": "block" if odds else "none"}, not odds,
                 {'display':'block' if backtesting else 'none'})
@@ -925,6 +941,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
 
     @app.callback(Output("sport", "value"), Output("workspace-page", "value"), Input("market-url", "hash"))
     def restore_game_route(location_hash):
+        if kalshi_route(location_hash):return kalshi_route(location_hash)[0],'kalshi'
+        if polymarket_view.route(location_hash):return polymarket_view.route(location_hash)[0],'polymarket'
         in_game = re.fullmatch(r'#(nba|nfl)-in-game-data', location_hash or '')
         if in_game:return in_game[1].upper(),'in-game'
         if location_hash=='#research' or research_view.route(location_hash):return 'RESEARCH','backtesting'
@@ -1226,8 +1244,16 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         snapshot=saved_snapshot(location_hash,selection)
         if not snapshot:return html.P('That saved snapshot is unavailable. Choose a snapshot and run Quick Filtering again.',className='saved-market-empty'),no_update
         snapshot={**snapshot,'sport':market_game_sport(location_hash)}
-        game,game_error=forecast_game_markets(snapshot,method)
-        players,player_error,player_history=forecast_player_markets(snapshot,player_method)
+        if snapshot['sport']=='NCAAF':
+            # College preparation shares writable source files between methods.
+            game,game_error=forecast_game_markets(snapshot,method)
+            players,player_error,player_history=forecast_player_markets(snapshot,player_method)
+        else:
+            with ThreadPoolExecutor(max_workers=2,thread_name_prefix='market-filter') as executor:
+                game_task=executor.submit(forecast_game_markets,snapshot,method)
+                player_task=executor.submit(forecast_player_markets,snapshot,player_method)
+                game,game_error=game_task.result()
+                players,player_error,player_history=player_task.result()
         ranked=rank_markets(snapshot,game,players,criteria,method,player_method)
         context=[location_hash,selection]
         previous=previous_history if previous_history and previous_history.get('context')==context else {}
@@ -1667,4 +1693,6 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
 
     register_comparison_callbacks(app,backtesting_service)
     register_in_game_callbacks(app,in_game_service)
+    register_kalshi_callbacks(app,kalshi_service)
+    register_kalshi_callbacks(app,polymarket_service,view=polymarket_view,provider='Polymarket')
     return app

@@ -13,3 +13,11 @@ def market_spec(sport, market_key):
 
 def prop_key(row):
     return row['subject'], row['market_key'].removesuffix('_alternate')
+
+
+def quote_index(rows):
+    """Retain duplicates: an ambiguous opposite price must not be de-vigged."""
+    quotes = {}
+    for row in rows:
+        quotes.setdefault((*prop_key(row), row['line'], row['selection']), []).append(row['odds'])
+    return quotes

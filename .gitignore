@@ -26,6 +26,8 @@ data/cache/
 data/backtesting/
 market_data/*.csv
 data/market_data/*.csv
+data/kalshi_market/
+data/polymarket_market/
 data/API Log/*.csv
 data/API Log/*.lock
 data/API Log/*.tmp

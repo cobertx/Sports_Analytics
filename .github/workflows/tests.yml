@@ -46,3 +46,7 @@ jobs:
         run: python scripts/check_in_game.py
       - name: Check cache refresh isolation and equivalent filtering
         run: python scripts/check_performance.py
+      - name: Check public Kalshi markets, polling and saved snapshots
+        run: python scripts/check_kalshi.py
+      - name: Check public Polymarket discovery, order books and snapshots
+        run: python scripts/check_polymarket.py

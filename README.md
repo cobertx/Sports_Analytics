@@ -122,6 +122,77 @@ alignment or coverage call. Exact raw packages and charting values are included
 in event details/CSV exports. Sources and timestamps are displayed with attribution
 to FTN Data or NFL NextGenStats via nflverse under CC BY-SA 4.0.
 
+NBA, NFL and NCAAF also have a separate **Kalshi Market** page. It reads Kalshi's
+[public REST market-data API](https://docs.kalshi.com/getting_started/quick_start_market_data)
+directly; no Kalshi API key, account connection, paid odds subscription or The Odds
+API credits are required for these public reads. Choose a game window, open a
+game card and select a market category. Provider milestone links associate each
+game with its winner, spread, total, player and other contracts; no fuzzy team
+matching or synthetic contracts are used. Coverage depends on what Kalshi lists.
+Game cards and detail headers use the same local team logos as FanDuel. Each
+category displays expandable market groups with selection ladders and Yes/No
+buy/sell quotes; longer groups have a **Show more** control. The sortable,
+filterable quote table and CSV export remain under **Detailed quote table & CSV export**.
+
+Game discovery refreshes once a minute while the page is visible. The selected
+game/category polls every **5 seconds** by default, with **2, 10, 30 seconds** or
+**Paused** available. Polling stops on other pages and when viewing a saved
+snapshot. This is periodic REST data, not a continuous streaming connection or
+a latency guarantee. The provider's metadata update time is not used as a quote
+timestamp: the page shows when each API response was fetched, and failed pulls
+explicitly identify previously fetched data. The server shares a two-second
+quote cache across browser sessions and handles cursor pagination.
+
+Quotes show Yes/No bids and asks, last trade, fractional contract volume, open
+interest and contract status. Dollar-string/fixed-point fields take precedence
+over legacy integer cents. Missing prices remain unavailable. Values in the
+market groups and table are cents per contract; they are not forecasting-model probabilities or
+guaranteed executable prices. Full settlement rules and contract notional are
+available below the table and in quote tooltips; ties, protected props and other
+settlement rules can differ from sportsbook bets.
+
+**Pull Live Markets / Save snapshot** checks the selected category and saves
+JSON and CSV under ignored `data/kalshi_market/<sport>/<game>/<category>/`.
+The View dropdown reopens previous snapshots without networking; the table also
+exports its displayed records as CSV. Automatic polls update a bounded shared
+response cache under `data/kalshi_market/.cache/`, rather than producing a file
+every few seconds. This exchange cache is separate from model inputs so quote
+updates do not invalidate saved model/backtesting calculations. This page only
+reads public market data; it has no order-placement or account-access integration.
+
+For lower-latency streaming, Kalshi's
+[WebSocket API](https://docs.kalshi.com/getting_started/quick_start_websockets)
+requires a Kalshi API key ID, timestamp and RSA-signed handshake using the
+account's private key on the server, including for public ticker channels.
+That authenticated streaming connection is not configured by this public REST
+page. No extra dependencies or credentials are needed for the implemented page.
+Run `python scripts/check_kalshi.py` for offline pricing, cache, pagination,
+snapshot, navigation and polling checks.
+
+NBA, NFL and NCAAF also have a **Polymarket Market** page with the same logo
+cards, matchup headers, category tabs, expandable selections and detailed CSV
+table. It uses Polymarket's [public Gamma API](https://docs.polymarket.com/market-data/discover-markets)
+to discover current league series and group companion events by the exact
+provider game ID. Scheduled start times come from the event's `startTime`.
+Existing local logos are preferred; provider logos cover additional college teams.
+
+Live bids and asks come from [batched CLOB order books](https://docs.polymarket.com/market-data/prices-order-books),
+using each outcome's actual token ID (or Protocol V2 position ID). Outcome names
+are retained, including team names and Over/Under. Empty books stay unavailable;
+Gamma reference prices are not substituted. Prices are cents per outcome share;
+volume is USD from metadata and may update less frequently than quotes.
+These public reads require no account, API key, wallet or additional dependency.
+
+Game discovery refreshes every minute. Selected-category quotes poll every five
+seconds by default, with 2/10/30-second and pause options. Leaving the page or
+viewing an archive stops quote polling. **Pull Live Markets / Save snapshot**
+saves full JSON and CSV under ignored `data/polymarket_market/<sport>/<game>/<category>/`.
+Automatic refreshes use a bounded shared cache in `data/polymarket_market/.cache/`;
+failed refreshes label previously fetched data with its original timestamp.
+Saved snapshots reopen without API requests. Only public market-data endpoints
+are connected; the page does not place orders. Run
+`python scripts/check_polymarket.py` for offline discovery, pricing, snapshot and UI checks.
+
 The separate **Odds API** tab connects to your [The Odds API](https://the-odds-api.com/) account and shows monthly credit usage as a donut chart, with used, unused, and total credits. Add `ODDS_API_KEY=your_api_key_here` to the ignored `.env` file and restart `python index.py`. The key stays on the server and is never placed in browser components or stored in the usage cache.
 
 Usage comes from the provider's `x-requests-used` and `x-requests-remaining` headers on `GET /v4/sports/`, which [does not consume usage credits](https://the-odds-api.com/liveapi/guides/v4/#get-sports). Counters cover the subscription's current quota cycle across all sports; the app does not infer a calendar-month reset date. Usage loads when Odds API is opened, refreshes every five minutes while visible, and can be checked immediately using **Connect / Refresh usage**. The server shares a five-minute memory cache for the account. A failed refresh labels any saved snapshot explicitly; missing keys and invalid responses show setup/errors rather than invented credit values.
@@ -577,6 +648,14 @@ and stale-data notices still apply. Statistic filtering operates across numeric
 columns together, and WHP quote audits index opposing selections once while
 preserving the rule that duplicate opposing quotes are ambiguous.
 `scripts/check_performance.py` checks these behaviors without source downloads.
+
+Market pages reuse unchanged saved snapshots across callbacks. New live pulls,
+CSV/database edits, account changes and credit-log changes invalidate those reads.
+WHP also reuses recent forecasts after checking the actual historical inputs,
+model code and saved quotes; changing filtering thresholds does not require a refit.
+Player identity resolution runs once per player, and UO/OAM/PGE audits index
+opposing quotes once. Quick Filtering computes NBA/NFL game and player forecasts
+concurrently; NCAAF source preparation remains sequential because it shares files.
 
 GitHub Actions installs the project, checks dependencies, compiles source and runs this offline check on Python 3.11 and 3.13. It does not require local source caches, credentials, or test folders, and makes no external data/odds requests. Local `test/` and `tests/` folders are ignored by Git. If you maintain local tests, run them separately with `python -m unittest discover -s tests -v`.
 

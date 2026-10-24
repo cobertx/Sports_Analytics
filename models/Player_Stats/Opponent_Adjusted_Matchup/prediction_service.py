@@ -12,7 +12,7 @@ from sports_analytics.data import DataSourceError
 from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
 from models.Player_Stats.Usage_Opportunity.prediction_service import UsageMarketForecast
-from models.Player_Stats.Usage_Opportunity.markets import market_spec,prop_key
+from models.Player_Stats.Usage_Opportunity.markets import market_spec,prop_key,quote_index
 from models.Player_Stats.Usage_Opportunity.nba_model import simulate_nba
 from models.Player_Stats.Usage_Opportunity.nfl_model import simulate_nfl
 from .config import MODEL_VERSION,MatchupConfig
@@ -118,7 +118,8 @@ class OpponentAdjustedMarketService:
             model.fit(feature_rows(sport,players,teams))
             atomic_json(fit_path,dict(identity=fit_identity,records=model.records,
                                      historical=[[*key,value] for key,value in model.historical.items()]))
-        result,matched=MatchupMarketForecast(),{}
+        result,matched,failed_players=MatchupMarketForecast(),{},{}
+        players['_whp_name']=players.entity_name.map(identity_name)
         for row in snapshot['rows']:
             if not row['market_key'].startswith('player_'):
                 continue
@@ -128,12 +129,16 @@ class OpponentAdjustedMarketService:
                 continue
             if row['subject'] in matched:
                 continue
+            if row['subject'] in failed_players:
+                result.errors[key]=failed_players[row['subject']]
+                continue
             try:
                 history=match_player(players,snapshot,row['subject'],cutoff)
                 club=str(history.iloc[-1].team)
                 matched[row['subject']]=dict(team=club,history=history[history.team.eq(club)])
             except ValueError as exc:
                 result.errors[key]=str(exc)
+                failed_players[row['subject']]=str(exc)
         if matched:
             matched=dict(sorted(matched.items()))
             seed=int(sha256(f'{sport}:{snapshot["game_id"]}:{config.baseline.seed}'.encode()).hexdigest()[:16],16)
@@ -178,12 +183,13 @@ class OpponentAdjustedMarketService:
                     'limitations':'Box-score schedule adjustment. No inferred tactical, injury, route or tracking data. Sparse components remain neutral; NFL TD/order props are unsupported.'}
                 result.forecasts[key]=MatchupForecast.from_samples(values,diagnostics)
         evaluations=[]
+        indexed_quotes=quote_index(snapshot['rows'])
         for row in snapshot['rows']:
             if not row['market_key'].startswith('player_'):
                 continue
             price=result.selection(row)
             opposite={'Over':'Under','Under':'Over'}.get(row['selection'])
-            quotes=[r['odds'] for r in snapshot['rows'] if prop_key(r)==prop_key(row) and r['line']==row['line'] and r['selection']==opposite]
+            quotes=indexed_quotes.get((*prop_key(row),row['line'],opposite),[])
             evaluations.append(dict(subject=row['subject'],market=row['market_key'],line=row['line'],selection=row['selection'],
                 **compare_price(price,row['odds'],quotes[0] if len(quotes)==1 else None),
                 win=price.win if price else None,loss=price.loss if price else None,push=price.push if price else None,

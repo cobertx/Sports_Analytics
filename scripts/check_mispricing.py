@@ -6,6 +6,7 @@ from unittest import TestCase, main
 from unittest.mock import Mock, patch
 import sys
 import tempfile
+from threading import Barrier
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
@@ -181,6 +182,25 @@ class MispricingChecks(TestCase):
                 else:
                     self.assertIn('Top 3 by edge',str(data));self.assertIn('Remaining qualifying markets',str(data))
                     self.assertIn('EPA',str(data));self.assertIn('PGE',str(data))
+
+    def test_quick_filter_computes_independent_game_and_player_forecasts_concurrently(self):
+        barrier=Barrier(2,timeout=5)
+        def game(snapshot):
+            barrier.wait()
+            return GameForecast()
+        def player(snapshot):
+            barrier.wait()
+            return PlayerForecast()
+        self.game_services['PPP'].forecast.side_effect=game
+        self.player_services['WHP'].forecast.side_effect=player
+        criteria=criteria_values(75,5)
+        for sport in ['NBA','NFL']:
+            self.saved['sport']=sport
+            location=f'#{sport.lower()}-game-123';selection=self.saved['pulled_at']
+            request=filter_context(location,selection,'PPP','WHP',criteria)
+            rendered,_=self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,
+                                                     'PPP','WHP',criteria,None)
+            self.assertIn('5 qualifying selections',str(rendered))
 
 
 if __name__=='__main__':main()

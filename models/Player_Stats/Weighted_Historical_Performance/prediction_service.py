@@ -1,9 +1,12 @@
 """Saved-history to saved-market integration, independent of the Odds API."""
 
 from dataclasses import asdict, dataclass, field
+from collections import OrderedDict
+from copy import deepcopy
 from hashlib import sha256
 import json
 from pathlib import Path
+import threading
 
 import numpy as np
 import pandas as pd
@@ -12,6 +15,7 @@ from sports_analytics.data import DataSourceError
 from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
 from sports_analytics.display_time import format_eastern
+from models.replay import fingerprint as history_fingerprint
 from .core import MODEL_VERSION, WHPConfig, WHPForecast, WeightedHistoricalPerformance, eligible_history
 from .errors import WHPError
 from .historical_data import PlayerHistoryRepository, atomic_json, identity_name
@@ -54,6 +58,8 @@ class PlayerMarketForecast:
 class WHPMarketService:
     def __init__(self, repository=None):
         self.repository = repository or PlayerHistoryRepository()
+        self._memory = OrderedDict()
+        self._memory_lock = threading.Lock()
 
     def prepare(self, snapshot, refresh=False):
         return self.repository.prepare(snapshot["sport"], snapshot["commence_time"],
@@ -100,6 +106,17 @@ class WHPMarketService:
         config = WHPConfig.for_sport(sport)
         implementation = sha256(b"".join((Path(__file__).parent/name).read_bytes() for name in
             ["core.py", "weights.py", "distributions.py", "opportunity.py", "markets.py", "market_comparison.py", "prediction_service.py", "historical_data.py"])).hexdigest()
+        # Check the actual history contents on every request, including revised
+        # observations with unchanged dates. Criteria do not change a forecast.
+        cache_key = sha256(repr((implementation, asdict(config), history_fingerprint(data),
+            str(self.repository.root), {key: snapshot.get(key) for key in
+            ('sport', 'game_id', 'home_team', 'away_team', 'pulled_at', 'commence_time', 'rows')})).encode()).hexdigest()
+        with self._memory_lock:
+            cached = self._memory.get(cache_key)
+            if cached is not None and cached[1].is_file():
+                self._memory.move_to_end(cache_key)
+                return deepcopy(cached[0])
+        players, failed_players = {}, {}
         for row in snapshot["rows"]:
             if not row["market_key"].startswith("player_") or prop_key(row) in result.forecasts or prop_key(row) in result.errors:
                 continue
@@ -109,7 +126,16 @@ class WHPMarketService:
                 result.errors[key] = "WHP does not model first/last scorer order or unsupported prop definitions."
                 continue
             try:
-                player = self._player(data, snapshot, row["subject"], cutoff)
+                subject = row['subject']
+                if subject in failed_players:
+                    raise WHPError(failed_players[subject])
+                if subject not in players:
+                    try:
+                        players[subject] = self._player(data, snapshot, subject, cutoff)
+                    except WHPError as exc:
+                        failed_players[subject] = str(exc)
+                        raise
+                player = players[subject].copy()
                 if not set(spec.fields) <= set(player):
                     raise WHPError("Missing historical target columns: " + ", ".join(set(spec.fields) - set(player)) +
                                    ". Missing statistics are not treated as zero.")
@@ -170,5 +196,11 @@ class WHPMarketService:
         audit = {"sport": sport, "game_id": snapshot["game_id"], "snapshot": snapshot["pulled_at"],
                  "cutoff": cutoff.isoformat(), "implementation": implementation, "evaluations": evaluations}
         digest = sha256(json.dumps(audit, sort_keys=True).encode()).hexdigest()
-        atomic_json(self.repository.root / "evaluations" / f"{digest}.json", audit)
+        audit_path = self.repository.root / "evaluations" / f"{digest}.json"
+        atomic_json(audit_path, audit)
+        with self._memory_lock:
+            self._memory[cache_key] = (deepcopy(result), audit_path)
+            self._memory.move_to_end(cache_key)
+            if len(self._memory) > 8:
+                self._memory.popitem(last=False)
         return result
