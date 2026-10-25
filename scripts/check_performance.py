@@ -4,16 +4,23 @@ from copy import deepcopy
 from contextlib import closing
 from dataclasses import asdict
 import os
+import sqlite3
 from pathlib import Path
 import sys
 import tempfile
 from unittest import TestCase, main
 from unittest.mock import Mock, patch
+from types import SimpleNamespace
 import zlib
 
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from dash import no_update
+from dash.exceptions import PreventUpdate
+from sports_analytics.dashboard import create_app
+from sports_analytics.historical_links import market_metrics
+from sports_analytics.backtesting_service import BacktestingService, input_csv
 from sports_analytics.data import DataSourceError, Query
 from sports_analytics.metrics import relevant_metrics
 from sports_analytics.service import DataService
@@ -68,6 +75,18 @@ class PerformanceChecks(TestCase):
         self.save(revised)
         pd.testing.assert_frame_equal(self.service.cached(self.key).frame, revised)
         self.assertEqual(self.service._decode.cache_info().misses, 2)
+
+    def test_read_cache_tracks_sqlite_wal_commits_and_does_not_mask_corruption(self):
+        self.service.read(self.key)
+        with closing(sqlite3.connect(self.service.path)) as writer:
+            writer.execute('PRAGMA journal_mode=WAL')
+            self.service.read(self.key)
+            revised=self.frame.assign(pts=[77.,88.])
+            payload=zlib.compress(revised.to_json(orient='table',date_format='iso',index=False).encode())
+            writer.execute('UPDATE datasets SET payload=? WHERE key=?',(payload,self.key));writer.commit()
+            pd.testing.assert_frame_equal(self.service.read(self.key).frame,revised)
+            writer.execute('UPDATE datasets SET payload=? WHERE key=?',(b'corrupt',self.key));writer.commit()
+            with self.assertRaises(DataSourceError):self.service.read(self.key)
 
     def test_expiry_refresh_and_stale_fallback_still_work(self):
         self.service.read(self.key)
@@ -128,6 +147,125 @@ class PerformanceChecks(TestCase):
                        and r['line'] == row['line'] and r['selection'] == opposite]
             expected = compare_price(None, row['odds'], matches[0] if len(matches) == 1 else None)
             self.assertEqual({k: actual[k] for k in expected}, expected)
+
+
+class PagePerformanceChecks(TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name)
+        self.service=DataService(self.root/'sports.sqlite3')
+        self.query=Query('NBA',2025,'player')
+        self.frame=pd.DataFrame(dict(entity_id=['001']*8,entity_name=['Player One']*8,team=['BOS']*8,
+            opponent=['DET']*8,position=['G']*8,game_id=list(map(str,range(8))),matchup=['BOS @ DET']*8,
+            pts=list(range(20,28)),reb=[5]*8,ast=[6]*8,sport=['NBA']*8,season=[2025]*8,week=[None]*8,
+            event_date=pd.date_range('2025-11-01',periods=8,tz='UTC')))
+        with patch('sports_analytics.service.fetch',return_value=self.frame):self.service.load(self.query,refresh=True)
+        self.career=Mock()
+        self.app=create_app(service=self.service,career_service=self.career)
+        self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in self.app.callback_map.values() if m.get('callback')}
+        self.network=patch('requests.sessions.Session.request',side_effect=AssertionError('No external HTTP'))
+        self.network.start();self.addCleanup(self.network.stop)
+
+    def load(self,previous=None,trigger='workspace-page'):
+        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id=trigger)):
+            return self.cb['load_data'](1,0,'NBA',2025,'player','regular',None,None,'historical',previous)
+
+    def test_reopening_unchanged_history_does_not_rebuild_dependents_and_refresh_still_works(self):
+        first=self.load()[0]
+        with patch('sports_analytics.service.fetch',side_effect=AssertionError('A fresh cache must not download')):
+            self.assertIs(self.load(first)[0],no_update)
+        with patch('sports_analytics.service.fetch',return_value=self.frame.assign(pts=99)) as fetch:
+            second=self.load(first,'refresh')[0]
+        fetch.assert_called_once_with(self.query)
+        self.assertNotEqual(second['revision'],first['revision'])
+        self.assertTrue(self.service.read(second['key']).frame.pts.eq(99).all())
+        self.assertIs(self.load(second)[0],no_update)
+
+    def test_hidden_historical_controls_and_career_do_no_io_on_page_changes(self):
+        dataset=self.load()[0]
+        with patch.object(self.service,'read',wraps=self.service.read) as read:
+            for route,page in [('#nfl-games','market'),('#nba-kalshi-market','kalshi'),('#nba-polymarket-market','polymarket'),
+                               ('#backtesting-player-stats-whp','backtesting'),('#research','backtesting'),('#nba-in-game-data','in-game')]:
+                calls=[('select_options',(dataset,None,'001',route)),('select_player_teams',(dataset,None,route)),
+                    ('select_categories',(dataset,'001',None,'scoring','pts',route)),
+                    ('select_metrics',(dataset,'001',None,'scoring','pts',route)),
+                    ('analyze_career',(dataset,'001','pts',page,route,'NBA'))]
+                for name,args in calls:
+                    with self.assertRaises(PreventUpdate,msg=name+': '+route):self.cb[name](*args)
+            read.assert_not_called();self.career.load.assert_not_called()
+
+    def test_derived_historical_metrics_are_shared_and_external_sql_edits_invalidate_them(self):
+        dataset=self.load()[0]
+        with patch('sports_analytics.dashboard.market_metrics',wraps=market_metrics) as derive:
+            self.cb['select_player_teams'](dataset,None,'#historical-player')
+            self.cb['select_options'](dataset,None,'001','#historical-player')
+            self.cb['select_categories'](dataset,'001',None,None,'pts','#historical-player')
+            self.cb['select_metrics'](dataset,'001',None,'scoring','pts','#historical-player')
+            chart=self.cb['analyze'](dataset,'001','pts',3,None,'#historical-player','historical')
+            self.assertEqual(derive.call_count,1)
+            self.assertEqual(list(chart[0].data[0].y),list(range(20,28)))
+            payload=zlib.compress(self.frame.assign(pts=77).to_json(orient='table',date_format='iso',index=False).encode())
+            with self.service.connect() as db:db.execute('UPDATE datasets SET payload=? WHERE key=?',(payload,dataset['key']))
+            revised=self.cb['analyze'](dataset,'001','pts',3,None,'#historical-player','historical')
+            self.assertEqual(derive.call_count,2)
+            self.assertEqual(list(revised[0].data[0].y),[77]*8)
+
+    def test_router_emits_only_changed_values_and_http_does_not_reset_sport(self):
+        route=self.cb['restore_game_route']
+        self.assertEqual(route('#nba-kalshi-market','NBA','market'),(no_update,'kalshi'))
+        self.assertEqual(route('#nba-game-123','NBA','market'),(no_update,no_update))
+        self.assertEqual(route('#historical-team','NBA','historical'),(no_update,no_update))
+        self.assertEqual(route('#nfl-games','NBA','historical'),('NFL','market'))
+        key,meta=next((k,m) for k,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__=='restore_game_route')
+        values={'market-url':'#nba-kalshi-market','sport':'NBA','workspace-page':'market'}
+        with self.app.server.test_client() as client:
+            response=client.post('/_dash-update-component',json=dict(output=key,
+                outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
+                inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
+                state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['market-url.hash']))
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.get_json()['response'],{'workspace-page':{'value':'kalshi'}})
+
+
+class SavedInputPerformanceChecks(TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name)
+        patcher=patch('sports_analytics.backtesting_service.ROOT',self.root);patcher.start();self.addCleanup(patcher.stop)
+        self.service=BacktestingService(root=self.root/'reports',data=DataService(self.root/'sports.sqlite3'))
+        self.directory=self.root/'data/modeling/nfl';self.directory.mkdir(parents=True)
+        self.path=self.directory/'team_games_2025_regular.csv'
+        self.frame=pd.DataFrame(dict(game_id=['0001','0001'],team=['A','B'],points=[30,20],
+            event_date=['2025-09-01','2025-09-01'],available_at=['2025-09-02','2025-09-02']))
+        self.frame.to_csv(self.path,index=False)
+        input_csv.cache_clear();self.addCleanup(input_csv.cache_clear)
+        self.addCleanup(self.service._phase_map.cache_clear)
+
+    def test_repeated_model_options_and_phase_maps_parse_once_without_shared_mutations(self):
+        with patch('sports_analytics.backtesting_service.pd.read_csv',wraps=pd.read_csv) as read:
+            original,_=self.service.game_inputs('NFL','ppp')
+            original.loc[0,'points']=-999
+            first_map=self.service.phase_map('NFL');first_map['0001']='postseason'
+            self.service.options('NFL','game-outcome','ppp')
+            next_frame,_=self.service.game_inputs('NFL','elo')
+            self.assertEqual(read.call_count,1)
+        self.assertEqual(next_frame.iloc[0].points,30)
+        self.assertEqual(self.service.phase_map('NFL'),{'0001':'regular'})
+
+    def test_input_edits_additions_removals_and_replacements_invalidate_saved_reads(self):
+        self.service.game_inputs('NFL','ppp')
+        self.frame.assign(points=[40,10]).to_csv(self.path,index=False)
+        self.assertEqual(self.service.game_inputs('NFL','ppp')[0].iloc[0].points,40)
+        post=self.directory/'team_games_2025_postseason.csv'
+        self.frame.assign(game_id='0002').to_csv(post,index=False)
+        self.assertEqual(self.service.phase_map('NFL'),{'0001':'regular','0002':'postseason'})
+        post.unlink()
+        self.assertEqual(self.service.phase_map('NFL'),{'0001':'regular'})
+        stamp=self.path.stat();replacement=self.path.with_suffix('.tmp')
+        self.frame.assign(points=[50,10]).to_csv(replacement,index=False)
+        os.utime(replacement,ns=(stamp.st_atime_ns,stamp.st_mtime_ns));replacement.replace(self.path)
+        self.assertEqual(self.service.game_inputs('NFL','ppp')[0].iloc[0].points,50)
+
 
 
 class MarketPerformanceChecks(TestCase):

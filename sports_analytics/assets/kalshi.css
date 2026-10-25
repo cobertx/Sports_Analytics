@@ -5,13 +5,12 @@
 .kalshi-game-card .game-card-footer small { color: #93a5bd; font-size: 11px; }
 .kalshi-matchup-header > .market-link { display: block; width: fit-content; margin: 0 auto 18px; }
 .kalshi-market-lines { overflow-x: auto; }
-.kalshi-market .kalshi-quote-line { display: grid; grid-template-columns: minmax(230px,1fr) repeat(2,90px) repeat(2,95px); gap: 12px; min-width: 670px; }
-.kalshi-quote-line .market-selection { display: block; }
+.kalshi-market .polymarket-line-comparison { grid-template-columns: minmax(230px,1fr) 82px minmax(145px,.5fr); min-width: 500px; }
 .kalshi-market .kalshi-price { width: 82px; }
-.polymarket-price small { font-size: 9px; font-weight: 400; color: #a6c7dd; text-align: center; overflow-wrap: anywhere; }
-.polymarket-price strong { font-size: 12px; }
-.kalshi-outcome-labels,.kalshi-quote-meta { display: block; font-size: 10px; color: #8fa7bd; line-height: 1.6; margin-top: 3px; }
-.kalshi-quote-line.market-outcome { border-bottom: 1px solid #303335; padding-top: 10px; padding-bottom: 10px; }
+.kalshi-contract .market-selection { display: block; }
+.kalshi-contract > .market-outcome { padding: 10px 12px; }
+.kalshi-contract + .kalshi-contract { border-top: 1px solid #303335; }
+.kalshi-outcome-labels { display: block; font-size: 10px; color: #8fa7bd; line-height: 1.6; margin-top: 3px; }
 .kalshi-detail-table { padding: 20px 22px; margin-top: 22px; }
 .kalshi-detail-table > summary { cursor: pointer; color: #d7e5f0; font-size: 13px; }
 .kalshi-detail-table[open] > summary { margin-bottom: 18px; }

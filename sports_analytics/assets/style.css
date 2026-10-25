@@ -128,7 +128,7 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .ppp-comparison-grid .ppp-chart { min-width: 0; margin: 0; }
 @media (max-width: 1050px) { .ppp-comparison-grid { grid-template-columns: 1fr; } }
 .market-criteria { padding: 18px 20px; margin-bottom: 18px; }
-.criteria-controls { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(130px, 1fr) auto auto; align-items: end; gap: 16px; }
+.criteria-controls { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(130px, 1fr) auto; align-items: end; gap: 16px; }
 .criteria-controls .field { margin: 0; }
 .criteria-controls .field input { width: 100%; background: #f3f6fb; color: #000; }
 .apply-criteria-button { border: 1px solid #57dbc4; border-radius: 6px; padding: 11px 18px; background: #193b3c; color: #57dbc4; font-size: 12px; font-weight: 600; }
@@ -244,3 +244,5 @@ footer { color: #64758d; font-size: 10px; margin-top: 30px; border-top: 1px soli
 @media (max-width: 1150px) { .page-shell { grid-template-columns: 165px minmax(0, 1fr); gap: 16px; } .workspace { gap: 16px; } .game-grid { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .page-shell { grid-template-columns: 1fr; } .page-toolbar { position: static; } .page-navigation { display: flex; gap: 6px; } .page-navigation label { flex: 1; margin: 0; } .market-heading { align-items: start; flex-direction: column; } .market-controls { flex-wrap: wrap; } }
 @media (max-width: 600px) { main { padding: 25px 16px 18px; } header { padding: 16px; } .sport-tab { font-size: 11px; padding: 14px 5px !important; } .dataset-builder { padding: 18px; } .dataset-actions { padding-top: 0; flex-basis: 100%; } .analysis-filters { grid-template-columns: 1fr; gap: 0; } .kpi-grid { grid-template-columns: 1fr; gap: 10px; } .kpi { padding: 16px; } .kpi strong { font-size: 25px; } .panel-heading .eyebrow { display: none; } }
+
+.quick-filter-section { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }

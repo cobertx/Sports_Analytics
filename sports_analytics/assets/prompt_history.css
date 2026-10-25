@@ -1,0 +1,7 @@
+.market-history-button { display: inline-flex; align-items: center; width: fit-content; margin: 5px 0 0; padding: 5px 9px; border: 1px solid #3d6374; border-radius: 4px; background: #142a38; color: #aee1e0; font-size: 11px; font-weight: 500; text-decoration: none; cursor: pointer; }
+.market-history-button:hover { background: #1c3d4b; color: #fff; }
+.market-history-button:disabled { cursor: default; opacity: .5; }
+.market-history-button.market-history-link { color: #aee1e0; text-decoration: none; }
+.market-prompt > span { display: block; }
+.market-history-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.market-history-actions > div { display: flex; flex-direction: column; align-items: flex-start; }

@@ -120,6 +120,23 @@ class PolymarketChecks(TestCase):
         self.assertEqual(paused['rows'][0]['status'],'Not accepting orders')
         self.assertIsNone(paused['rows'][0]['yes_ask'])
 
+    def test_summary_reads_all_metadata_once_batches_books_and_archives_by_category(self):
+        game=self.game();self.client.reset_mock()
+        snapshot=self.service.all_quotes(game,refresh=True,save=True)
+        self.assertEqual(len(snapshot['rows']),3)
+        self.assertEqual({row['category'] for row in snapshot['rows']},{'Game Lines','Player Props'})
+        self.assertEqual(self.client.json.call_count,1)
+        self.assertEqual(self.client.session.post.call_count,1)
+        self.assertEqual({row['token_id'] for row in self.client.session.post.call_args.kwargs['json']},
+                         {'11','12','13','14','15','16'})
+        for selected in game['categories']:
+            filename=self.service.history(game,selected)[0]
+            saved=self.service.saved(game,selected,filename)
+            self.assertTrue(all(row['category']==selected for row in saved['rows']))
+        requests=self.client.json.call_count;posts=self.client.session.post.call_count
+        self.assertEqual(self.service.all_quotes(game)['rows'],snapshot['rows'])
+        self.assertEqual((self.client.json.call_count,self.client.session.post.call_count),(requests,posts))
+
     def test_book_levels_empty_sides_zero_prices_and_invalid_values(self):
         self.assertEqual(book_prices(dict(bids=[dict(price='0',size='1')],asks=[])),(0.,None,None))
         for value in ['NaN','Infinity','-1','1.1']:
@@ -215,7 +232,7 @@ class PolymarketChecks(TestCase):
         for key,meta in callbacks.items():
             outputs=meta['output'] if isinstance(meta['output'],list) else [meta['output']]
             for output in outputs:
-                prop=(output.component_id,output.component_property)
+                prop=(output.component_id_str(),output.component_property)
                 self.assertNotIn(prop,owners)
                 owners[prop]=key
         edges={key:{owners[(item['id'],item['property'])] for item in meta['inputs']
@@ -231,6 +248,9 @@ class PolymarketChecks(TestCase):
         values={'workspace-page':'polymarket','sport':'NBA','polymarket-context':game,'polymarket-category':'Game Lines',
                 'polymarket-snapshot':'live','polymarket-quote-timer':0,'polymarket-pull':1,'polymarket-frequency':5,
                 'polymarket-rules-signature':None}
+        values.update({'polymarket-detail-table':False,'polymarket-rules-panel':False})
+        values['market-url']=view.href('NBA',game['id'])
+        values.update({'polymarket-cache-poll':0,'polymarket-cache-state':None})
         with app.server.test_client() as client:
             for name,changed in [('polymarket_quotes','polymarket-pull.n_clicks'),('polymarket_table','polymarket-quotes.data')]:
                 key,meta=next((k,m) for k,m in app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
@@ -242,11 +262,12 @@ class PolymarketChecks(TestCase):
                 data=response.get_json()['response']
                 if name=='polymarket_quotes':values['polymarket-quotes']=data['polymarket-quotes']['data']
                 else:
-                    self.assertIn('sportsbook-market',str(data));self.assertIn('Outcome 1 buy',str(data))
+                    self.assertIn('sportsbook-market',str(data));self.assertIn('Market odds',str(data))
+                    self.assertIn('Market implied probability',str(data));self.assertNotIn('Outcome 1 buy',str(data))
                     self.assertIn('Celtics',str(data));self.assertNotIn('Yes buy',str(data))
         snapshot=values['polymarket-quotes']
         shown=cb['polymarket_table'](snapshot,game,'Game Lines')
-        updated=cb['polymarket_table'](snapshot,game,'Game Lines',shown[-1])
+        updated=cb['polymarket_table'](snapshot,game,'Game Lines',False,False,shown[-1])
         self.assertIs(updated[2],no_update)
         self.assertEqual(cb['polymarket_table'](snapshot,game,'Player Props'),([],[],[],[],None))
 

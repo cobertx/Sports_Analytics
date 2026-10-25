@@ -183,15 +183,16 @@ class KalshiChecks(TestCase):
     def test_price_polls_preserve_open_rules_and_clear_wrong_game_tables(self):
         _, cb = self.app()
         snapshot = self.service.quotes(self.game)
-        shown = cb['kalshi_table'](snapshot, self.game, 'Game Lines')
+        shown = cb['kalshi_table'](snapshot, self.game, 'Game Lines', True, True)
         self.assertEqual(shown[0][0]['yes_bid'], 49)
         snapshot['rows'][0]['yes_bid'] = .48
-        updated = cb['kalshi_table'](snapshot, self.game, 'Game Lines', shown[-1])
-        self.assertEqual(updated[0][0]['yes_bid'], 48)
+        snapshot['rows'][0]['yes_ask'] = .52
+        updated = cb['kalshi_table'](snapshot, self.game, 'Game Lines', True, True, shown[-1])
+        operations=updated[0].to_plotly_json()['operations']
+        self.assertIn(dict(operation='Assign',location=[0,'yes_bid'],params={'value':48}),operations)
         self.assertIs(updated[1], no_update); self.assertIs(updated[2], no_update)
         self.assertEqual(cb['kalshi_table'](snapshot, self.game, 'Passing Props'), ([], [], [], [], None))
-        self.assertEqual(shown[3][0].key,updated[3][0].key)
-        self.assertEqual(shown[3][0].open,updated[3][0].open)
+        self.assertTrue(all('open' not in operation['location'] for operation in updated[3].to_plotly_json()['operations']))
 
     def test_cards_and_detail_headers_use_existing_logos_for_all_sports(self):
         app,_=self.app()
@@ -234,11 +235,12 @@ class KalshiChecks(TestCase):
                          ['Game winner','Alternate spreads','Total points'])
         self.assertTrue(all(s.className=='sportsbook-market kalshi-market' for s in sections))
         self.assertEqual([s.open for s in sections],[True,True,False])
-        outcomes=[c for c in components(sections) if getattr(c,'className',None)=='market-outcome kalshi-quote-line']
-        self.assertEqual(len(outcomes),len(snapshot['rows']))
-        self.assertEqual(outcomes[-8].children[0].children[0].children,'Over 0.5 points')
-        prices=[c for c in components(outcomes[-8]) if getattr(c,'className',None)=='market-price kalshi-price']
-        self.assertEqual([p.children for p in prices],['51¢','0¢'])
+        outcomes=[c for c in components(sections) if getattr(c,'className',None)=='market-outcome market-line-comparison']
+        self.assertEqual(len(outcomes),2*len(snapshot['rows']))
+        self.assertEqual(outcomes[-16].children[0].children[0].children,'Over 0.5 points — Yes')
+        prices=[c for c in components(outcomes[-16:-14]) if getattr(c,'className',None)=='market-price kalshi-price']
+        self.assertEqual([p.children for p in prices],['-104','+∞'])
+        self.assertIn('Market odds',str(sections));self.assertIn('Market implied probability',str(sections))
         more=[c for c in components(sections) if getattr(c,'className',None)=='more-market-lines']
         self.assertEqual(len(more),1);self.assertFalse(more[0].open)
         self.assertIn('Show more · 2 selections',str(more[0]))
@@ -267,7 +269,7 @@ class KalshiChecks(TestCase):
         owners = {}
         for key, meta in callbacks.items():
             outputs = meta['output'] if isinstance(meta['output'], list) else [meta['output']]
-            for output in outputs: owners[(output.component_id, output.component_property)] = key
+            for output in outputs: owners[(output.component_id_str(), output.component_property)] = key
         edges = {key: set() for key in callbacks}
         for key, meta in callbacks.items():
             for item in meta['inputs']:
@@ -282,6 +284,8 @@ class KalshiChecks(TestCase):
         app, _ = self.app()
         values = {'workspace-page': 'kalshi', 'sport': 'NFL', 'kalshi-context': self.game, 'kalshi-category': 'Game Lines',
                   'kalshi-snapshot': 'live', 'kalshi-quote-timer': 0, 'kalshi-pull': 1, 'kalshi-frequency': 5}
+        values['market-url']=view.href('NFL',GAME)
+        values.update({'kalshi-cache-poll':0,'kalshi-cache-state':None})
         key, meta = next((k, m) for k, m in app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__ == 'kalshi_quotes')
         def post(changed):
             return app.server.test_client().post('/_dash-update-component', json=dict(output=key,
@@ -297,7 +301,8 @@ class KalshiChecks(TestCase):
         response = post('kalshi-snapshot.value')
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertIn('SAVED SNAPSHOT', response.get_json()['response']['kalshi-quote-status']['children'])
-        values.update({'kalshi-quotes':saved,'kalshi-rules-signature':None})
+        values.update({'kalshi-quotes':saved,'kalshi-rules-signature':None,'kalshi-detail-table':False,'kalshi-rules-panel':False})
+        values.update({'kalshi-models':None,'kalshi-applied-criteria':None,'kalshi-game-method':'PPP','kalshi-player-method':'WHP'})
         key,meta=next((k,m) for k,m in app.callback_map.items() if m.get('callback')
                       and m['callback'].__wrapped__.__name__=='kalshi_table')
         response=post('kalshi-quotes.data')

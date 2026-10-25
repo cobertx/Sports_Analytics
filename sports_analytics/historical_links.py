@@ -1,6 +1,7 @@
 """Market-to-history links and exact, recorded-statistic selection helpers."""
 
 import re
+import math
 import unicodedata
 from urllib.parse import parse_qs, urlencode
 
@@ -20,7 +21,7 @@ NBA_COMBINATIONS = {
 }
 
 
-def history_href(sport, kind, name, market="", snapshot=None):
+def history_href(sport, kind, name, market="", snapshot=None, *, prompt=None):
     parameters = dict(sport=sport, name=name, market=market)
     stamp = (snapshot or {}).get("commence_time") or ((snapshot or {}).get("game") or {}).get("start")
     if stamp:
@@ -30,6 +31,8 @@ def history_href(sport, kind, name, market="", snapshot=None):
             parameters["season"] = day.year - (day.month < (7 if sport == "NBA" else 3))
         except (TypeError, ValueError, AttributeError, OverflowError):
             pass
+    if prompt:
+        parameters.update(prompt)
     return f"#historical-{kind}?" + urlencode(parameters)
 
 
@@ -46,6 +49,24 @@ def history_target(location_hash):
     if sport not in {"NBA", "NFL", "NCAAF"} or not name.strip() or len(name) > 200:
         return None
     result = dict(sport=sport, kind=match[1], name=name, market=values.get("market", [""])[0])
+    if 'line' in values:
+        try:line=float(values['line'][0])
+        except ValueError:return None
+        compare=values.get('compare',[''])[0]
+        if not math.isfinite(line) or compare not in {'gt','ge','lt','le','eq','ne'}:return None
+        result.update(line=line,compare=compare,push=values.get('push',['0'])[0]=='1')
+    for key in ('prompt','as_of','origin','note'):
+        if key in values:
+            value=values[key][0]
+            if len(value)>500:return None
+            result[key]=value
+    if result.get('as_of'):
+        try:
+            stamp=pd.Timestamp(result['as_of'])
+            if pd.isna(stamp) or stamp.tzinfo is None:return None
+        except (ValueError,TypeError):return None
+    if result.get('origin') and not re.fullmatch(r'#'+sport.lower()+r'-(?:game-\d+|(?:kalshi|polymarket)-game-[A-Z0-9_.-]+)',result['origin']):
+        return None
     if "season" in values:
         try:
             result["season"] = int(values["season"][0])
@@ -109,7 +130,8 @@ def target_metric(target, available, frame=None):
     if target["kind"] == "team":
         candidates = (["game_total"] if key in {"totals", "alternate_totals"} else
                       ["scoring_margin"] if key in {"spreads", "alternate_spreads"} else [])
-        candidates += ["pts", "pf", "points"]
+        if not candidates or 'line' not in target:
+            candidates += [{'NBA':'pts','NFL':'pf','NCAAF':'points'}[target['sport']]] if 'line' in target else ["pts", "pf", "points"]
     else:
         spec = stat_spec(target["sport"], key)
         if spec and len(spec.fields) > 1:
@@ -122,6 +144,7 @@ def target_metric(target, available, frame=None):
             # Scorer-order history is not provided by a box score. Show labeled
             # touchdown counts rather than fabricate first/last scorer records.
             candidates = ["touchdowns", "receiving_tds", "rushing_tds", "special_teams_tds"]
+            if 'line' in target:candidates=['touchdowns']
             if frame is not None:
                 candidates = ['touchdowns'] + sorted(candidates[1:], reverse=True,
                     key=lambda field: pd.to_numeric(frame[field],errors='coerce').sum() if field in frame else -1)

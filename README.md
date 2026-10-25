@@ -8,15 +8,82 @@ and [EPA guide](models/Game_Outcome/EPA/EPA_Implementation_Guide.pdf), plus the
 windows, minimum game counts, new-season carryover, formulas, calibration and
 saved-model behavior. The source research PDFs are retained separately.
 
-Each sport has three sections in the left toolbar. **Historical Data** opens nested **Team Statistics** and **Player Statistics** pages for NBA/NFL (NCAAF's standard menu has Team Statistics), replacing the team/player radio selector. These pages contain the historical filters, charts, career histories, and game log. **FanDuel Market** shows upcoming game cards; **Backtesting** opens a model overview and nested model pages. Switching pages preserves the historical controls. Historical subpages use `#historical-team` and `#historical-player`, apply to the selected sport tab, and support browser back/forward navigation.
+Each sport's left toolbar groups **FanDuel**, **Kalshi**, **Polymarket** and **Market Summary** under **Market Data**. **Historical Data** opens nested **Team Statistics** and **Player Statistics** pages for NBA/NFL (NCAAF's standard menu has Team Statistics). These pages contain the historical filters, charts, career histories, and game log. **Backtesting** opens a model overview and nested model pages. Switching pages preserves the historical controls. Historical subpages use `#historical-team` and `#historical-player`, apply to the selected sport tab, and support browser back/forward navigation.
+
+Each sport's **Backtesting → Performance Summary** (`#backtesting-performance`)
+compares model accuracy for a selected game market or player statistic and one team or
+all teams. Choose an evaluation period/game limit, then click **Load performance / Run
+missing simulations**. Compatible saved reports load immediately; missing methods run
+independently in the shared progress monitor and continue after navigation. Missing
+source inputs or unsupported statistics are reported per model. This page uses saved
+historical inputs and does not pull odds or download source data.
+Reports must match the scope, statistic/reference line, postseason setting, Model Default
+lookback and current default parameters. Summaries persist under `data/backtesting/performance/`;
+method JSON/CSV results remain in the normal sport/method folders. Accuracy metrics use
+the identical evaluated observations shared by completed models by default; the sample selector
+can also show every evaluated observation per model. The table shows sample and skip
+counts alongside MAE, RMSE, bias, tolerance accuracy, interval coverage and baseline MAE.
+Winner accuracy/Brier/log loss use the home-winner event; total-point summaries omit these
+unrelated event scores. Player event scores require a shared reference line. Each row links
+to its complete saved report. Error tolerance can be changed without refitting.
+
+**Market Summary** (`#nba-market-summary`, `#nfl-market-summary`, `#ncaaf-market-summary`)
+shows upcoming games with team logos, then compares selections in tables grouped by
+Game Lines, Player Props and Other Markets. FanDuel, Kalshi and Polymarket each have a
+column; each row is a selection at a particular line. Each quote shows American odds,
+market implied probability, calculated probability, model fair odds and edge. Green highlights
+the lowest implied probability among matching source quotes. Missing quotes show a dash.
+Equivalent integer thresholds share a row; different push rules and unverified contracts stay
+separate. Original wording and Historical Data links remain available for each source.
+Choose PPP/EPA/ELO for game outcomes and
+WHP/UO/OAM/PGE for player props. Exchange buying prices are also shown in cents.
+Saved FanDuel quotes load without spending credits; **Pull Live Markets** refreshes all providers
+and saves snapshots, with the FanDuel credit cost shown beside the button. Public exchange
+quotes require no paid connection. **Recalculate estimates** reruns the selected methods without
+pulling odds. Each method runs once for the combined game rather than once per provider.
+Providers are matched by both teams and scheduled start; ambiguous matches stay unavailable.
+Models share the earliest quote timestamp, capped at game start, so older saved prices do not
+use newer history. Sportsbook estimates exclude pushes; binary exchange estimates retain
+their actual equality outcome. Unsupported targets or ambiguous settlement rules keep their
+quotes visible with unavailable model values. Provider failures do not hide other providers.
 
 Player prop headings show **Player name - Market**, for example **Jerry Jeudy - Alt Receiving Yds**.
 Click the player name to open Historical Data with that player, sport, game season and relevant
 statistic selected. NBA combination props show the exact sum of their recorded components.
-History links appear only in player market headings and the game's matchup header.
-Selection rows, Game Lines and Mispricing Filter tables use plain team/player names.
+Team/player name links stay in player market headings and the game's matchup
+header. Each supported selection in FanDuel, Kalshi and Polymarket also has a
+**Historical Data** button, including selections in mispricing results. It opens
+the relevant player or team's statistic with the exact prompt line and direction.
+The chart draws a dashed threshold, colors hits/misses/pushes, and displays the
+hit count and rate. The game log includes each prompt outcome, and **Back to
+market** reopens the originating game. Counts use recorded earlier game dates in
+the selected season/filter scope; the linked game and future games are excluded.
+Spreads/winners use team scoring margin, totals use combined points, and player
+props use the corresponding recorded statistic or exact component sum. Binary
+No thresholds retain equality on the proper side; sportsbook pushes remain
+separate. Missing statistics are not zeros. Prompts without an exact connected
+history target have a disabled button with an explanation; scorer-order links
+show labeled touchdown-count references without a scorer-order hit rate.
 Matchup-header links select points scored. Missing
 components remain unavailable, and missing or ambiguous names never select an unrelated player.
+Current-season NBA history uses the published [ESPN box scores via SportsDataverse](https://github.com/sportsdataverse/sportsdataverse-data/releases/tag/espn_nba_player_boxscores)
+before the slower NBA Stats endpoint. One completed appearance is enough to show the game log,
+statistic and prompt hit count; rolling forecasts still require their full history window.
+NBA player IDs are retained when verified against the NBA API client registry; unmatched IDs
+remain provider-qualified. DNPs, incomplete games and other season phases are excluded.
+Market links load their requested season/player scope directly, and simultaneous callbacks
+share one download. Current-season NBA caches are checked after 15 minutes; Refresh still bypasses them.
+Historical page navigation reads compatible local data immediately, then refreshes expired
+data in a bounded background worker. The page applies the updated revision when ready;
+the original retrieval timestamp and any refresh failure remain visible. Historical model
+and backtest callers keep their normal synchronous freshness checks.
+Upcoming schedules and public Kalshi/Polymarket pages also reuse their SQLite caches under
+`data/` while automatic updates run. Slow or unavailable APIs do not hold cached page loads
+open. Updates for the same resource are deduplicated, failed updates back off for 30 seconds,
+and manual Refresh / Pull Live Markets still requests a fresh response. Live exchange quotes
+keep their original timestamps and label background updates; a brief cache check publishes
+completed updates promptly, then resumes normal polling. Polymarket discovery uses stable, broad request dates plus
+exact local time-window filtering, so reopening a game list can reuse its saved response.
 NCAAF player links open a saved-history player view using prepared college boxes without
 downloading data; career summaries remain NBA/NFL only. First/last touchdown props show available
 touchdown counts, with an explanation that scorer order is unavailable in box scores.
@@ -26,15 +93,18 @@ to that player's exact market. The return location is retained per sport for the
 browser tab's session. **Back to upcoming games** still opens the schedule.
 
 Each saved game also has a **Mispricing Filter** tab beside Game Lines and the player-prop tabs.
-It contains the Game Outcome and Player Forecast method selectors, Estimated Probability and
-Edge thresholds, **Apply Criteria**, and **Quick Filtering**. Quick Filtering applies the current
-thresholds and evaluates game lines and player props across the selected snapshot with the chosen
-methods. The first table shows up to three selections with the highest estimated edge; the next
+**Apply Criteria** keeps its single Game Outcome and Player Forecast selectors and probability/edge
+thresholds for highlighting market tabs. **Quick Filtering** has independent thresholds and
+multi-select method dropdowns. Select at least one method of each type. Game selections must pass
+both thresholds under every selected game method; player selections must pass under every selected
+player method. A missing estimate from any required method excludes that selection. Each method's
+probability and edge are displayed, and ranking uses the lowest edge across the required methods.
+The first table shows up to three selections with the highest qualifying edge; the next
 table shows all remaining matches in descending edge order. Both thresholds must be exceeded.
 Edge is measured in percentage points and uses the same push-adjusted model probabilities as
 the market tabs. Duplicate selections appear once, and unavailable model estimates/prices are
-excluded with a count. Changing the game, snapshot, selected methods or applied criteria requires
-another Quick Filtering run so old rankings are not displayed for new settings.
+excluded with a count. Changing the game, snapshot or Quick Filtering inputs requires another run.
+Changing Apply Criteria does not change Quick Filtering settings or results.
 
 Under **Backtesting**, expand **Game Outcome** for PPP, EPA and ELO / Power Rating,
 or **Player Stats** for Weighted Historical Performance, Usage & Opportunity,
@@ -130,9 +200,38 @@ game card and select a market category. Provider milestone links associate each
 game with its winner, spread, total, player and other contracts; no fuzzy team
 matching or synthetic contracts are used. Coverage depends on what Kalshi lists.
 Game cards and detail headers use the same local team logos as FanDuel. Each
-category displays expandable market groups with selection ladders and Yes/No
-buy/sell quotes; longer groups have a **Show more** control. The sortable,
+category displays expandable market groups with selection ladders and separate
+Yes/No rows styled like FanDuel: **Market odds**, **Market implied probability**, **Calculated
+probability**, **Model fair odds** and **Edge**. Implied probability uses that
+side's ask divided by its payout; No asks are not inferred from Yes asks. Missing
+asks remain unavailable. Longer groups have a **Show more** control. The sortable,
 filterable quote table and CSV export remain under **Detailed quote table & CSV export**.
+Quotes render as soon as they are fetched, independently of historical model fitting.
+Calculated probabilities and criteria highlights fill in on the existing rows when ready,
+preserving open market groups. Missing or slow model history does not hide market odds.
+
+Each game's **Mispricing Filter** tab offers PPP/EPA/ELO game methods and
+WHP/UO/OAM/PGE player methods. **Apply Criteria** retains its single-method selectors and
+thresholds. **Quick Filtering** has independent thresholds and multi-select method dropdowns,
+requiring both thresholds to pass under every selected method for that market type. Both sections
+scan all linked live categories, show the
+top three qualifying selections by edge, then the remaining matches. Applied
+criteria also highlight matching rows in the category tabs. Quick Filtering shows each method's
+probability/edge and ranks by the lowest edge. Edges are percentage
+point differences before trading fees. Inactive contracts and missing estimates
+are excluded. Filtering a saved snapshot uses only that archived category; it
+never fetches or mixes in live prices.
+
+Calculated probabilities reuse the existing historical forecasting services with
+an explicit away/home matchup and a cutoff no later than kickoff. Integer
+threshold equality belongs to its binary settlement side, rather than being
+removed as a sportsbook push. Supported full-game winners, spreads, totals and
+mapped player stats receive estimates. Unmatched players, unsupported periods,
+team totals, range/scalar or protected contracts, and partial-payout tie rules
+retain their quotes with unavailable model probabilities. Forecasts do not use
+live score state. Price polling reuses calculated probabilities; changed contract
+definitions or forecast methods trigger calculation, and explicit scans can retry
+missing historical data.
 
 Game discovery refreshes once a minute while the page is visible. The selected
 game/category polls every **5 seconds** by default, with **2, 10, 30 seconds** or
@@ -142,6 +241,22 @@ a latency guarantee. The provider's metadata update time is not used as a quote
 timestamp: the page shows when each API response was fetched, and failed pulls
 explicitly identify previously fetched data. The server shares a two-second
 quote cache across browser sessions and handles cursor pagination.
+
+Price polls update changed quote cells in place, preserving expanded market groups.
+Unchanged game lists, headers and category controls are retained during refreshes.
+The detailed table and settlement rules load when expanded, using the current
+snapshot without another API request. Slow requests suppress overlapping quote
+polls; game discovery does not block requests for unrelated quotes. These display
+optimizations also apply to the shared Polymarket presentation.
+
+Switching between FanDuel, Kalshi and Polymarket shows the selected market locally
+in the browser, without waiting for data or model callbacks. Each provider keeps
+its last game controls, snapshot, expanded markets and results mounted. A new game
+shows a loading status until its matching context arrives. Hidden market pages
+skip quote rendering and forecast work. Returning to a current game list reuses
+the displayed catalog for up to one minute for exchanges and five minutes for
+FanDuel; timer updates, changed sport/window and explicit refreshes still check
+the source. Refresh indicators leave existing game cards visible and usable.
 
 Quotes show Yes/No bids and asks, last trade, fractional contract volume, open
 interest and contract status. Dollar-string/fixed-point fields take precedence
@@ -179,8 +294,12 @@ Existing local logos are preferred; provider logos cover additional college team
 Live bids and asks come from [batched CLOB order books](https://docs.polymarket.com/market-data/prices-order-books),
 using each outcome's actual token ID (or Protocol V2 position ID). Outcome names
 are retained, including team names and Over/Under. Empty books stay unavailable;
-Gamma reference prices are not substituted. Prices are cents per outcome share;
-volume is USD from metadata and may update less frequently than quotes.
+Gamma reference prices are not substituted. Each outcome has a separate FanDuel-style
+row showing **Market odds** in American format and **Market implied probability**.
+For both exchanges, implied probability is the outcome's own ask divided by its payout;
+the other outcome's quote is never inferred as its complement. Raw bid/ask prices in
+cents remain in the expandable detailed table and CSV export. Volume is USD from
+metadata and may update less frequently than quotes.
 These public reads require no account, API key, wallet or additional dependency.
 
 Game discovery refreshes every minute. Selected-category quotes poll every five
@@ -620,7 +739,16 @@ remain visible during a rerun and if that rerun fails. Page references persist
 for the browser tab's session; completed reports are restored from local disk.
 Identical active requests reuse the existing job. Each completed run saves its
 own report and CSV exports.
-Expand **Previous simulations** on a backtesting page, choose a saved run, and
+Each sport has **Backtesting → Backtest Summary**
+(`#backtesting-summary`), combining all saved Game Outcome and Player Stats methods for that sport,
+including Research simulations. The newest-first table supports column filters and sorting;
+click **Open results** to load that run's full charts, metrics, original parameters and CSV export.
+Game results can switch between margin and total. Reports are read directly from their saved JSON,
+without fitting models, preparing historical inputs or calling APIs. Links include the sport and run ID
+so a particular report can be reopened after an app restart. **Refresh saved simulations** picks up
+newly completed background runs. Existing per-method **Previous simulations** selectors remain available.
+
+Within an individual method page, choose a saved run and
 click **Open simulation** to restore its results. The list is specific to that
 sport and strategy and includes older runs saved before CSV exports were added.
 Opening a historical run leaves any active jobs running in the background.
@@ -651,6 +779,12 @@ preserving the rule that duplicate opposing quotes are ambiguous.
 
 Market pages reuse unchanged saved snapshots across callbacks. New live pulls,
 CSV/database edits, account changes and credit-log changes invalidate those reads.
+Page navigation only updates the sport/workspace when they actually change, avoiding
+unrelated page callbacks. Hidden historical selectors and career charts skip loading.
+Reopening unchanged historical data preserves its selectors/charts while still checking
+source freshness. Derived historical statistics, parsed backtesting CSVs and season-phase
+lookups are reused in bounded memory caches. Changed CSVs, added/removed files and SQLite
+database/WAL updates invalidate the relevant cached reads; refresh controls remain active.
 WHP also reuses recent forecasts after checking the actual historical inputs,
 model code and saved quotes; changing filtering thresholds does not require a refit.
 Player identity resolution runs once per player, and UO/OAM/PGE audits index

@@ -12,6 +12,7 @@ from dash import dcc,html
 ROOT=Path(__file__).resolve().parents[1]
 SPORTS={'NBA','NFL','NCAAF'}
 GROUPS={'game-outcome':'Game Outcome','player-stats':'Player Stats'}
+PERFORMANCE_ROUTE='#backtesting-performance'
 
 
 @dataclass(frozen=True)
@@ -92,19 +93,33 @@ def backtesting_route(value):
     return (match[1],match[2]) if match else None
 
 
+def summary_route(value):
+    if value=='#backtesting-summary':return dict(sport=None,run_id=None)
+    match=re.fullmatch(r'#backtesting-summary-(nba|nfl|ncaaf)-(game-outcome|player-stats)-([a-z]+)-([0-9a-f]{64})',value or '')
+    if match and find_model(match[1].upper(),(match[2],match[3])):
+        return dict(sport=match[1].upper(),group=match[2],model=match[3],run_id=match[4])
+    return None
+
+
 def find_model(sport,route):
     return next((model for model in available_models(sport) if route==(model.group,model.key)),None)
 
 
 def navigation(sport,location_hash):
     route=backtesting_route(location_hash)
-    return [html.Details([
+    summary=bool(summary_route(location_hash))
+    return [html.A('Backtest Summary',href='#backtesting-summary',
+                   className='backtesting-model-link'+(' active' if summary else ''),
+                   **{'aria-current':'page' if summary else 'false'}),
+            html.A('Performance Summary',href=PERFORMANCE_ROUTE,
+                   className='backtesting-model-link'+(' active' if location_hash==PERFORMANCE_ROUTE else ''),
+                   **{'aria-current':'page' if location_hash==PERFORMANCE_ROUTE else 'false'}),*[html.Details([
         html.Summary(label),
         html.Div([html.A(model_name(model,sport),href=model.href,
             className='backtesting-model-link'+(' active' if route==(group,model.key) else ''),
             **{'aria-current':'page' if route==(group,model.key) else 'false'})
             for model in available_models(sport,group)],className='backtesting-model-links'),
-    ],open=bool(route and route[0]==group),className='backtesting-nav-group') for group,label in GROUPS.items()]
+    ],open=bool(route and route[0]==group),className='backtesting-nav-group') for group,label in GROUPS.items()]]
 
 
 def model_config(model,sport):
@@ -190,5 +205,6 @@ def model_page(sport,model):
 
 
 def page(sport,location_hash):
+    if summary_route(location_hash) or location_hash==PERFORMANCE_ROUTE:return []
     model=find_model(sport,backtesting_route(location_hash))
     return model_page(sport,model) if model else overview(sport)

@@ -12,6 +12,11 @@ from .display_time import format_eastern
 from .market_view import logo_badge, NBA_LOGO_FILES, NFL_LOGO_FILES, NCAAF_LOGO_FILES
 from .nba_markets import NBA_TEAM_CODES
 from .nfl_markets import NFL_TEAM_CODES
+from .mispricing import quick_controls
+from .kalshi_analysis import FILTER, implied
+from .market_view import probability_text
+from models.Game_Outcome.PPP.PPP import fair_american_odds
+from .prompt_history import button as history_button
 
 MULTIWORD_MASCOTS = {'Crimson Tide', 'Sun Devils', 'Red Wolves', 'Black Knights', 'Golden Bears',
     'Blue Devils', 'Yellow Jackets', 'Fighting Illini', "Ragin' Cajuns", 'Golden Gophers',
@@ -19,21 +24,31 @@ MULTIWORD_MASCOTS = {'Crimson Tide', 'Sun Devils', 'Red Wolves', 'Black Knights'
     'Horned Frogs', 'Red Raiders', 'Green Wave', 'Golden Hurricane', 'Demon Deacons', 'Trail Blazers'}
 
 
-@lru_cache(maxsize=256)
-def team_identity(name, sport):
-    """Resolve exact local name/code aliases, leaving ambiguous cities unbranded."""
-    normalize = lambda value: re.sub(r'[^a-z0-9]', '', value.casefold())
+def normalize_team(value):
+    return re.sub(r'[^a-z0-9]','',value.casefold())
+
+
+@lru_cache(maxsize=3)
+def team_aliases(sport):
+    """Index static logo aliases once, retaining every ambiguous match."""
     files = {'NBA': NBA_LOGO_FILES, 'NFL': NFL_LOGO_FILES, 'NCAAF': NCAAF_LOGO_FILES}.get(sport, {})
     codes = {'NBA': NBA_TEAM_CODES, 'NFL': NFL_TEAM_CODES}.get(sport, {})
-    matches = []
+    aliases_by_name={}
     for canonical in sorted({Path(filename).stem for filename in files.values()}):
         mascot = next((value for value in MULTIWORD_MASCOTS if canonical.endswith(' '+value)), canonical.split()[-1])
         city = canonical[:-(len(mascot)+1)]
         code = codes.get(canonical, '')
         aliases = {canonical, code, city, mascot, f'{code} {mascot}',
                    f'{"".join(word[0] for word in city.split())} {mascot}',city.replace(' State',' St')} - {''}
-        if normalize(name) in {normalize(alias) for alias in aliases}:
-            matches.append((canonical, code))
+        for alias in {normalize_team(alias) for alias in aliases}:
+            aliases_by_name.setdefault(alias,[]).append((canonical,code))
+    return aliases_by_name
+
+
+@lru_cache(maxsize=256)
+def team_identity(name, sport):
+    """Resolve exact local name/code aliases, leaving ambiguous cities unbranded."""
+    matches=team_aliases(sport).get(normalize_team(name),[])
     if len(matches) == 1:
         canonical, code = matches[0]
         return dict(name=canonical, abbreviation=code or ''.join(word[0] for word in canonical.split())[:4])
@@ -111,11 +126,19 @@ def layout(provider='Kalshi'):
                 [('Volume (USD)' if polymarket else 'Contracts traded', 'volume'), ('24h volume', 'volume_24h'), ('Open interest', 'open_interest')]
                 if not polymarket or key!='open_interest']
     columns += [dict(name='Status', id='status'), dict(name='Market ID' if polymarket else 'Ticker', id='ticker'), dict(name='Quote fetched (UTC)', id='quote_fetched_at')]
+    if not polymarket:
+        percent=Format(precision=2,scheme=Scheme.percentage)
+        columns[4:4]=[dict(name=side.title()+' '+label,id=side+'_'+key,type='numeric',format=percent)
+                      for side in ('yes','no') for label,key in [('market implied','implied'),
+                          ('calculated probability','probability'),('edge','edge')]]
     return html.Section([
         dcc.Store(id=f'{prefix}-games'), dcc.Store(id=f'{prefix}-context'), dcc.Store(id=f'{prefix}-quotes'),
         dcc.Store(id=f'{prefix}-rules-signature'),
+        *([dcc.Store(id='kalshi-models'),dcc.Store(id='kalshi-applied-criteria'),
+           dcc.Store(id='kalshi-filter-quotes'), dcc.Store(id='kalshi-quick-scan')] if not polymarket else []),
         dcc.Interval(id=f'{prefix}-list-timer', interval=60000, disabled=True),
         dcc.Interval(id=f'{prefix}-quote-timer', interval=5000, disabled=True),
+        dcc.Store(id=f'{prefix}-cache-state'),dcc.Interval(id=f'{prefix}-cache-poll',interval=1500,disabled=True),
         html.Section([
             html.Div([html.Div([html.Div('PUBLIC EXCHANGE DATA', className='eyebrow accent'),
                 html.H2(provider+' Market'), html.P(f'Browse game contracts and pull current outcome quotes directly from {provider}.')]),
@@ -129,8 +152,9 @@ def layout(provider='Kalshi'):
             html.Div([field('Game window', dcc.Dropdown(id=f'{prefix}-days', options=[dict(label='Today / next 24 hours', value=1),
                 dict(label='Next 7 days', value=7), dict(label='Next 14 days', value=14)], value=7, clearable=False)),
                 html.Button('Refresh games', id=f'{prefix}-list-refresh', n_clicks=0, className='export-button')], className='market-controls'),
-            dcc.Loading(html.Div([html.Div(id=f'{prefix}-list-status', role='status', className='load-status'),
-                                 html.Div(id=f'{prefix}-game-cards')]), color='#57dbc4'),
+            dcc.Loading(html.Div(id=f'{prefix}-list-status', role='status', className='load-status'),
+                        color='#57dbc4',delay_show=500,overlay_style={'visibility':'visible'}),
+            html.Div(id=f'{prefix}-game-cards'),
         ], id=f'{prefix}-list'),
         html.Section([
             html.Div([html.A(f'← Back to {provider} games', id=f'{prefix}-back', className='back-to-games'),
@@ -144,12 +168,16 @@ def layout(provider='Kalshi'):
                     dict(label='Every 30 seconds', value=30), dict(label='Paused', value=0)], value=5, clearable=False)),
             ], className='kalshi-detail-controls'),
             dcc.Tabs(id=f'{prefix}-category', value='Game Lines', children=[], className='market-category-tabs'),
-            dcc.Loading(html.Div(id=f'{prefix}-quote-status', className='load-status', role='status'), color='#57dbc4'),
-            html.P(('Prices are cents per outcome share. Outcome labels identify each side; bids and asks come from their actual order books. '
-                    'Volume is USD from event metadata and refreshes separately from prices. ' if polymarket else 'Prices are cents per contract. ')+
-                   'Bid = current quoted selling price; ask = current quoted buying price. '
-                   'Quotes are not model probabilities or guaranteed fills. Last trade can be old. '
-                   'Read each contract’s settlement rules, payout and fees.', className='kalshi-connection-note'),
+            filter_panel() if not polymarket else None,
+            html.Div(id=f'{prefix}-quote-status', className='load-status', role='status'),
+            html.Div(id='kalshi-model-status',className='forecast-history',role='status') if not polymarket else None,
+            html.P('Market odds use American format, converted from each outcome’s quoted buying price divided by its payout. '
+                   'Market implied probability uses that same price; each outcome has its own quote. '
+                   'Raw bids, asks and last trades in cents are available in the detailed quote table. '
+                   'Quotes are before fees and subject to available liquidity. Read each contract’s settlement rules.', className='kalshi-connection-note'),
+            html.P('Market implied = ask price / contract payout. Edge = calculated probability minus market implied, before fees. '
+                   'Yes and No have their own buying costs. Estimates describe full-game outcomes; live game state is not modeled.',
+                   className='ppp-comparison-note') if not polymarket else None,
             html.Div(id=f'{prefix}-market-sections'),
             html.Details([html.Summary('Detailed quote table & CSV export'),
               dash_table.DataTable(id=f'{prefix}-table', columns=columns, data=[], page_size=20, sort_action='native',
@@ -158,8 +186,10 @@ def layout(provider='Kalshi'):
                 style_cell={'backgroundColor': '#111d2e', 'color': '#b8c8dc', 'border': '1px solid #243249',
                             'padding': '11px', 'fontFamily': 'Segoe UI', 'fontSize': '12px', 'textAlign': 'left',
                             'minWidth': '95px', 'maxWidth': '290px', 'whiteSpace': 'normal', 'height': 'auto'},
-                style_header={'backgroundColor': '#17253a', 'fontWeight': '600'})], className='panel kalshi-detail-table'),
-            html.Details([html.Summary('Contract rules, payout & settlement'), html.Div(id=f'{prefix}-rules')], className='panel kalshi-rules'),
+                style_header={'backgroundColor': '#17253a', 'fontWeight': '600'})],
+                id=f'{prefix}-detail-table',open=False,className='panel kalshi-detail-table'),
+            html.Details([html.Summary('Contract rules, payout & settlement'), html.Div(id=f'{prefix}-rules')],
+                         id=f'{prefix}-rules-panel',open=False,className='panel kalshi-rules'),
         ], id=f'{prefix}-detail', style={'display': 'none'}, className='sportsbook-view kalshi-sportsbook'),
         html.Details([html.Summary('API connection & update speed'),
             html.P([f'This page uses {provider}’s ', html.A('public market-data REST API',
@@ -230,55 +260,104 @@ def game_header(game, provider='Kalshi', event_url=None):
 
 def categories(game):
     available = {category(game['sport'], t) for t in game['events']} if game else set()
-    return [value for value in CATEGORIES if value in available]
+    return [value for value in CATEGORIES if value in available]+([FILTER] if game else [])
+
+
+def filter_panel():
+    return html.Section([
+        html.H2(FILTER),html.H3('Apply Criteria'),
+        html.P('Choose the methods and thresholds used to highlight selections in the market tabs.',className='ppp-comparison-note'),
+        html.Div([
+            field('Game Outcome Forecast Method',dcc.Dropdown(id='kalshi-game-method',value='PPP',clearable=False,
+                options=[dict(label=label,value=value) for label,value in [('PPP','PPP'),('EPA','EPA'),('ELO / Power Rating','ELO')]])),
+            field('Player Forecast Method',dcc.Dropdown(id='kalshi-player-method',value='WHP',clearable=False,
+                options=[dict(label=label,value=value) for label,value in [('Weighted Historical Performance (WHP)','WHP'),
+                    ('Usage & Opportunity (UO)','UO'),('Opponent-Adjusted Matchup (OAM)','OAM'),('Pace & Game Environment (PGE)','PGE')]])),
+        ],className='forecast-methods'),
+        html.Div([
+            field('Estimated Probability (%)',dcc.Input(id='kalshi-probability-threshold',type='number',value=75,min=0,max=100,step='any')),
+            field('Edge (percentage points)',dcc.Input(id='kalshi-edge-threshold',type='number',value=5,min=-100,max=100,step='any')),
+            html.Button('Apply Criteria',id='kalshi-apply-criteria',n_clicks=0,className='apply-criteria-button'),
+        ],className='criteria-controls'),
+        html.Div('Both thresholds must be exceeded. These criteria also highlight qualifying selections in the market tabs.',
+                 id='kalshi-criteria-status',className='criteria-status',role='status'),
+        dcc.Loading(html.Div(id='kalshi-filter-results'),delay_show=500,overlay_style={'visibility':'visible'},color='#57dbc4'),
+        quick_controls('kalshi', 'kalshi-quick-results'),
+    ],id='kalshi-filter-panel',className='panel market-criteria',style={'display':'none'})
+
+
+def market_groups(snapshot):
+    groups = OrderedDict()
+    for row in (snapshot or {}).get('rows', []):
+        groups.setdefault(row['event_ticker'], []).append(row)
+    return groups
+
+
+def market_rows(rows):
+    if any(row.get('line') is not None for row in rows):
+        return sorted(rows,key=lambda row:(row.get('line') is None,row.get('line') or 0,row['ticker']))
+    return rows
+
+
+def odds_text(probability):
+    value=fair_american_odds(probability)
+    if value is not None:return f'{value:+.0f}'
+    return '+∞' if probability==0 else '−∞' if probability==1 else '—'
+
+
+def comparison_rows(row,snapshot=None,provider='Kalshi'):
+    polymarket=provider=='Polymarket'
+    result=[]
+    for side in ('yes','no'):
+        probability=row.get(side+'_probability');market=implied(row,side)
+        edge=probability-market if probability is not None and market is not None else None
+        label=row.get(side+'_label') or side.title()
+        result.append(html.Div([
+            html.Div([html.Span(row['title']+' — '+(label if polymarket else side.title()),className='market-selection'),
+                      html.Small(label,className='kalshi-outcome-labels') if not polymarket else None,
+                      history_button(snapshot or {},row,provider,side)],
+                     title=f"{row['ticker']} · Payout/notional ${row['notional']:g} · {row['status']}"),
+            html.Span(odds_text(market),className='market-price kalshi-price',
+                      title='American odds equivalent of this outcome’s quoted buying price / payout, before fees.'),
+            html.Span(probability_text(market),className='market-probability'),
+            *([] if polymarket else [
+                html.Span(probability_text(probability),className='market-probability',title=row.get('model_method','')+': '+row.get('model_detail','Estimate unavailable')),
+                html.Span(odds_text(probability),className='market-probability'),
+                html.Span(f'{100*edge:+.2f} pp' if edge is not None else '—',className='market-edge'),
+            ]),
+        ],**({'id':dict(type='kalshi-comparison-row',sport=snapshot['sport'],game=snapshot['game_id'],ticker=row['ticker'],side=side)}
+             if not polymarket and snapshot else {}),
+            className='market-outcome market-line-comparison'+(' polymarket-line-comparison' if polymarket else '')+
+            (' market-criteria-match' if row.get(side+'_match') else ''),
+            key=row['ticker']+'-'+side))
+    return result
 
 
 def market_sections(snapshot, provider='Kalshi'):
     """Sportsbook-style market ladders, retaining the exchange's binary quotes."""
-    groups = OrderedDict()
+    groups = market_groups(snapshot)
     polymarket = provider=='Polymarket'
-    sides = ('Outcome 1','Outcome 2') if polymarket else ('Yes','No')
-    for row in (snapshot or {}).get('rows', []):
-        groups.setdefault(row['event_ticker'], []).append(row)
     if not groups:
         return html.P('No contracts are available in this category.',className='saved-market-empty')
 
-    def cents(value):
-        return f'{value*100:.2f}'.rstrip('0').rstrip('.')+'¢' if value is not None else '—'
-
     def outcome(row):
-        def buy(side):
-            label = row.get(side+'_label') or side.title()
-            return html.Span([html.Small(label),html.Strong(cents(row.get(side+'_ask')))] if polymarket else cents(row.get(side+'_ask')),
-                className='market-price kalshi-price'+(' polymarket-price' if polymarket else ''),
-                title=f"Buy {label if polymarket else side.title()+': '+label}. Quoted ask per outcome; subject to available liquidity and fees.")
-        return html.Div([
-            html.Div([html.Span(row['title'],className='market-selection'),
-                html.Small(f"{sides[0]}: {row['yes_label']} · {sides[1]}: {row['no_label']}",className='kalshi-outcome-labels'),
-                html.Small(f"Last {row['yes_label'] if polymarket else 'Yes'} trade {cents(row.get('last_price'))} · "
-                           f"Volume {row['volume']:g}" if row.get('volume') is not None else
-                           f"Last {row['yes_label'] if polymarket else 'Yes'} trade {cents(row.get('last_price'))}",className='kalshi-quote-meta')],
-                title=f"{row['ticker']} · Payout/notional ${row['notional']:g} · {row['status']}"),
-            buy('yes'), buy('no'),
-            html.Span(cents(row.get('yes_bid')),className='market-probability'),
-            html.Span(cents(row.get('no_bid')),className='market-probability'),
-        ],className='market-outcome kalshi-quote-line',key=row['ticker'])
+        return html.Div(comparison_rows(row,snapshot,provider),className='kalshi-contract',key=row['ticker'])
 
     sections = []
     names = {'GAME':'Game winner', 'SPREAD':'Alternate spreads', 'TOTAL':'Total points', 'TEAMTOTAL':'Team totals'}
     for index,(event,rows) in enumerate(groups.items()):
         family = event.split('-',1)[0].removeprefix('KX'+snapshot['sport'])
         title = rows[0].get('section') or names.get(family) or (rows[0]['event_title'] or rows[0]['title']).replace(':',' -',1)
-        if any(row.get('line') is not None for row in rows):
-            rows = sorted(rows,key=lambda row:(row.get('line') is None,row.get('line') or 0,row['ticker']))
+        rows = market_rows(rows)
         # Stable keys and unchanged open props preserve native accordion state
         # while live quote values update, including the nested "Show more" list.
         sections.append(html.Details([
             html.Summary([html.Strong(title),html.Span('⌄',className='market-chevron',**{'aria-hidden':'true'})]),
             html.Div([
                 html.Div([html.Span(label) for label in
-                    ['Selection',sides[0]+' buy (ask)',sides[1]+' buy (ask)',sides[0]+' sell (bid)',sides[1]+' sell (bid)']],
-                    className='market-comparison-heading kalshi-quote-line'),
+                    (['Selection','Market odds','Market implied probability','Calculated probability','Model fair odds','Edge'] if not polymarket else
+                     ['Selection','Market odds','Market implied probability'])],
+                    className='market-comparison-heading market-line-comparison'+(' polymarket-line-comparison' if polymarket else '')),
                 html.Div([outcome(row) for row in rows[:6]],className='market-outcomes'),
                 html.Details([html.Summary([
                     html.Span(f'Show more · {len(rows)-6} selections',className='market-show-more'),
@@ -290,17 +369,20 @@ def market_sections(snapshot, provider='Kalshi'):
     return sections
 
 
-def table(snapshot, include_rules=True, provider='Kalshi'):
+def table(snapshot, include_rules=True, provider='Kalshi', *, build_rows=True, build_tooltips=None):
     rows, tips, rules = [], [], []
+    if build_tooltips is None: build_tooltips=include_rules
     for original in (snapshot or {}).get('rows', []):
-        row = dict(original)
-        for key in ['yes_bid', 'yes_ask', 'no_bid', 'no_ask', 'last_price']:
-            row[key] = 100 * original[key] if original.get(key) is not None else None
-        row['quote_fetched_at'] = (snapshot or {}).get('fetched_at')
-        rows.append(row)
+        if build_rows:
+            row = dict(original)
+            for key in ['yes_bid', 'yes_ask', 'no_bid', 'no_ask', 'last_price']:
+                row[key] = 100 * original[key] if original.get(key) is not None else None
+            row['quote_fetched_at'] = (snapshot or {}).get('fetched_at')
+            rows.append(row)
+        if build_tooltips:
+            detail = f"{original['rules_primary']}\n{original['rules_secondary']}\nContract payout/notional: ${original['notional']:g}"
+            tips.append({key: dict(value=detail, type='text') for key in ['title', 'yes_label', 'no_label', 'ticker']})
         if not include_rules: continue
-        detail = f"{original['rules_primary']}\n{original['rules_secondary']}\nContract payout/notional: ${original['notional']:g}"
-        tips.append({key: dict(value=detail, type='text') for key in ['title', 'yes_label', 'no_label', 'ticker']})
         rules.append(html.Details([html.Summary(original['title']), html.P(('Market ID: ' if provider=='Polymarket' else 'Ticker: ') + original['ticker']),
             html.P(f"Contract notional: ${original['notional']:g} · Status: {original['status']}"),
             html.P(original['rules_primary']), html.P(original['rules_secondary'])]))

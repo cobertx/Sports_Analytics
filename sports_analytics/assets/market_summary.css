@@ -1,0 +1,51 @@
+.market-data-navigation > summary { cursor: pointer; padding: 10px 12px; margin-bottom: 4px; color: var(--muted); border-radius: 6px; }
+.market-data-navigation.active > summary,.market-screen .market-data-navigation > summary { background: #102e32; color: var(--accent); }
+.market-provider-pages { margin: 2px 0 7px 12px; padding-left: 8px; border-left: 1px solid var(--line); }
+.market-provider-pages .sport-page-link { font-size: 12px; padding: 9px 6px; }
+.market-summary-page { gap: 20px; min-width: 0; }
+.summary-heading { padding: 0 20px 12px; }
+.summary-heading > .field { padding: 0 4px; }
+.summary-comparison-note { margin: 12px 0 20px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.summary-category { margin-top: 26px; min-width: 0; }
+.summary-category-heading { font-size: 16px; letter-spacing: .03em; margin: 0 0 12px; color: var(--accent); }
+.summary-market { overflow: hidden; }
+.summary-table-scroll { overflow-x: auto; width: 100%; }
+.summary-table-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.summary-table { width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 12px; }
+.summary-table-caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.summary-table thead th { padding: 18px 14px; background: #132434; border-bottom: 1px solid #304355; text-align: center; }
+.summary-table thead th:first-child { width: 27%; text-align: left; }
+.summary-table th:first-child { position: sticky; left: 0; z-index: 1; }
+.summary-table thead th:first-child { z-index: 2; }
+.summary-source-name { display: inline-block; font-size: 14px; font-weight: 700; border-bottom: 3px solid; padding: 6px 10px 9px; }
+.summary-source-fanduel { color: #75baff; border-color: #3295ed; }
+.summary-source-kalshi { color: #8debab; border-color: #43c775; }
+.summary-source-polymarket { color: #b7b6ff; border-color: #8582ff; }
+.summary-table tbody > tr > th,.summary-table tbody > tr > td { padding: 12px; border-bottom: 1px solid #243249; vertical-align: middle; }
+.summary-table tbody > tr:last-child > th,.summary-table tbody > tr:last-child > td { border-bottom: 0; }
+.summary-selection { background: #111e2b; text-align: left; font-weight: 600; font-size: 13px; }
+.summary-selection small { display: block; color: var(--muted); font-weight: 400; margin-top: 7px; }
+.summary-source-cell { background: #0d1825; }
+.summary-quote { padding: 12px; background: #14293b; border: 1px solid #294359; border-radius: 8px; }
+.summary-quote.summary-best { background: #10352f; border-color: #34836b; }
+.summary-price-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.summary-price { font-size: 21px; font-variant-numeric: tabular-nums; color: #f2f7ff; }
+.summary-best .summary-price { color: #6ce6b1; }
+.summary-best-label { font-size: 9px; text-transform: uppercase; font-weight: 700; letter-spacing: .03em; color: #86e5bb; }
+.summary-implied { margin-top: 5px; color: #cfdae7; font-size: 11px; font-variant-numeric: tabular-nums; }
+.summary-quote-detail { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.summary-model-values { margin: 12px 0; padding-top: 9px; border-top: 1px solid #ffffff15; }
+.summary-model-values > div { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 5px 0; }
+.summary-model-values dt { font-weight: 400; font-size: 10px; color: var(--muted); }
+.summary-model-values dd { margin: 0; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; }
+.summary-model-values dd small { display: block; color: var(--muted); font-size: 9px; }
+.summary-quote .market-history-button { margin: 2px 0 0; font-size: 10px; }
+.summary-missing { text-align: center; font-size: 20px; color: #667b90; background: #0d1825; }
+#summary-game-cards .game-card-hit { background: transparent; border: 0; width: 100%; }
+#summary-detail .forecast-methods { align-items: end; }
+@media (max-width:700px) {
+  #market-data-navigation { grid-row: 1; grid-column: 2; min-width: 0; }
+  #market-data-navigation > summary { text-align: center; font-size: 12px; }
+  #market-data-navigation .sport-page-link { display: flex; }
+  .market-provider-pages { margin-left: 0; padding-left: 0; border: 0; }
+}

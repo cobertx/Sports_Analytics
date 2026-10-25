@@ -173,6 +173,8 @@ class CareerService:
 
     def load(self, sport, entity, name, metric, phase):
         self._validate_sport(sport)
+        if sport=='NBA' and str(entity).startswith('espn:'):
+            raise DataSourceError('Season game history is available. Career summaries need a verified NBA player identity for this player.')
         years = self.available_seasons(sport, entity, name)
         points, failed = [], []
         with ThreadPoolExecutor(max_workers=self.workers) as pool:

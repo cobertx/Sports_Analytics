@@ -42,7 +42,7 @@ class MarketHistoryChecks(TestCase):
         self.frame=player_frame()
         self.service=Mock(path=Path(self.directory.name)/'cache.sqlite3')
         self.service.read.side_effect=lambda key:SimpleNamespace(frame=self.frame)
-        self.service.load.side_effect=lambda query,refresh=False:SimpleNamespace(
+        self.service.load.side_effect=lambda query,refresh=False,local_first=False:SimpleNamespace(
             key='fixture',frame=self.frame,status='cached',fetched_at='2026-10-20T12:00:00Z',notice='')
         self.backtesting=Mock(root=Path(self.directory.name)/'reports')
         self.backtesting.player_inputs.side_effect=lambda sport:self.frame

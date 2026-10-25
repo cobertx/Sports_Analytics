@@ -57,7 +57,9 @@ class Comparisons:
 
     def read(self,context,identity,*,strict=False):
         try:
-            result=json.loads(self.path(context,identity).read_text(encoding='utf-8'))
+            # Share the writer lock: replacing an open manifest can briefly deny
+            # Windows readers access, which otherwise looks like a missing run.
+            with self.lock:result=json.loads(self.path(context,identity).read_text(encoding='utf-8'))
             if result.get('context')!=context or result.get('id')!=identity:return None
             if not isinstance(result.get('entries'),dict):return None
             selected_methods(context['group'],list(result['entries']))
@@ -69,7 +71,7 @@ class Comparisons:
         except (ValueError,TypeError,AttributeError):return None
 
     def save(self,manifest):
-        atomic_json(self.path(manifest['context'],manifest['id']),manifest)
+        with self.lock:atomic_json(self.path(manifest['context'],manifest['id']),manifest)
         return manifest
 
     def history(self,context):

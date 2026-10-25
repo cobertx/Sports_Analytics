@@ -10,6 +10,7 @@ import sqlite3
 
 from .data import DataSourceError, HttpClient
 from .display_time import EASTERN
+from .cache_refresh import RefreshQueue
 
 ROUTES = {"NBA": "basketball/nba", "NFL": "football/nfl", "NCAAF": "football/college-football"}
 SCHEDULE_LINKS = {sport: f"https://www.espn.com/{route.split('/')[-1]}/schedule" for sport, route in ROUTES.items()}
@@ -24,6 +25,7 @@ class Schedule:
     fetched_at: str
     stale_days: list[str]
     failed_days: list[str]
+    updating: bool = False
 
 
 def scheduled_games(events, now, end):
@@ -62,10 +64,12 @@ def scheduled_games(events, now, end):
 
 
 class ScheduleService:
-    def __init__(self, path, ttl_minutes=5, workers=4):
+    def __init__(self, path, ttl_minutes=5, workers=4,background=False):
         self.path = Path(path)
         self.ttl = timedelta(minutes=ttl_minutes)
         self.workers = workers
+        self.background=background
+        self._refresh=RefreshQueue(workers=workers)
 
     def _day(self, sport, day, now, refresh):
         key = f"{sport}:{day:%Y%m%d}"
@@ -82,6 +86,12 @@ class ScheduleService:
                     return cached, saved[0], False
             except (ValueError, TypeError):
                 cached = None
+        if cached is not None and not refresh and self.background:
+            def update():
+                _,_,stale=self._day(sport,day,now,True)
+                if stale:raise DataSourceError('ESPN refresh failed; saved schedules are still available.')
+            state=self._refresh.request(key,update)
+            return cached,saved[0],bool(state['error'])
         try:
             # The public feed supports single dates; date ranges may return HTTP 400.
             params = {"dates": day.strftime("%Y%m%d"), "limit": 1000}
@@ -110,7 +120,7 @@ class ScheduleService:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path, timeout=30)) as db, db:
             db.execute("CREATE TABLE IF NOT EXISTS schedules (key TEXT PRIMARY KEY, fetched_at TEXT, payload TEXT)")
-        events, stamps, stale, failed = [], [], [], []
+        events, stamps, stale, failed, updating_days = [], [], [], [], []
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             tasks = {pool.submit(self._day, sport, day, now, refresh): day for day in dates}
             for task in as_completed(tasks):
@@ -121,8 +131,11 @@ class ScheduleService:
                     stamps.append(stamp)
                     if was_stale:
                         stale.append(day)
+                    elif self.background and not refresh and now-datetime.fromisoformat(stamp)>=self.ttl:
+                        updating_days.append(day)
                 except DataSourceError:
                     failed.append(day)
         if len(failed) == len(dates):
             raise DataSourceError("Upcoming games could not be loaded from ESPN. Check connectivity and refresh to retry.")
-        return Schedule(scheduled_games(events, now, end), min(stamps), sorted(stale), sorted(failed))
+        updating=bool(updating_days) or any(self._refresh.pending(f'{sport}:{day:%Y%m%d}') for day in dates)
+        return Schedule(scheduled_games(events, now, end), min(stamps), sorted(stale), sorted(failed),updating)

@@ -1,5 +1,6 @@
 """Offline common-cohort, persistent replay and Dash comparison regressions."""
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor,TimeoutError
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase,main
@@ -67,6 +68,25 @@ class ComparisonChecks(TestCase):
         self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__
                  for m in self.application.callback_map.values() if m.get('callback')}
         return self.application
+
+    def test_readers_wait_for_manifest_replacement_and_receive_the_completed_update(self):
+        from sports_analytics.comparison import atomic_json
+        manifest=self.manager.new(self.context,dict(ppp=dict(state='running')),{},'new')
+        updated=deepcopy(manifest);updated['entries']['ppp']['state']='completed'
+        entered,release=Event(),Event()
+        def saving(path,data):
+            entered.set()
+            if not release.wait(5):raise AssertionError('Manifest write was not released')
+            atomic_json(path,data)
+        with patch('sports_analytics.comparison.atomic_json',side_effect=saving),ThreadPoolExecutor(max_workers=2) as pool:
+            writer=pool.submit(self.manager.save,updated)
+            try:
+                self.assertTrue(entered.wait(2))
+                reader=pool.submit(self.manager.read,self.context,manifest['id'])
+                with self.assertRaises(TimeoutError):reader.result(timeout=.05)
+            finally:release.set()
+            writer.result(timeout=3)
+            self.assertEqual(reader.result(timeout=3),updated)
 
     def test_navigation_and_page_controls_for_both_groups_and_every_sport(self):
         self.app()

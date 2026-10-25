@@ -29,15 +29,27 @@ jobs:
         run: python scripts/check_project.py
       - name: Check backtesting equivalence and cache isolation
         run: python scripts/check_backtesting.py
+      - name: Check sport backtest summaries and saved result reopening
+        run: python scripts/check_backtesting_summary.py
+      - name: Check sport performance summaries and missing simulations
+        run: python scripts/check_performance_summary.py
       - name: Check research settings and experiment replay
         run: python scripts/check_research.py
       - name: Check market links and relevant historical statistics
         run: python scripts/check_market_history.py
+      - name: Check prompt history thresholds and observed hit counts
+        run: python scripts/check_prompt_history.py
+      - name: Check current-season NBA history and single-game market links
+        run: python scripts/check_nba_history.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: Check market return navigation events
         run: node scripts/check_market_navigation.js
+      - name: Check native exchange panel toggles
+        run: node scripts/check_exchange_panels.js
+      - name: Check immediate market transitions
+        run: node scripts/check_market_transitions.js
       - name: Check mispricing ranking and market filter controls
         run: python scripts/check_mispricing.py
       - name: Check research methodology comparisons and shared cohorts
@@ -46,7 +58,17 @@ jobs:
         run: python scripts/check_in_game.py
       - name: Check cache refresh isolation and equivalent filtering
         run: python scripts/check_performance.py
+      - name: Check immediate local reads and nonblocking background refreshes
+        run: python scripts/check_loading_speed.py
       - name: Check public Kalshi markets, polling and saved snapshots
         run: python scripts/check_kalshi.py
+      - name: Check incremental exchange updates and nonblocking quote reads
+        run: python scripts/check_exchange_updates.py
+      - name: Check Kalshi probability comparison and mispricing filters
+        run: python scripts/check_kalshi_analysis.py
+      - name: Check retained market views and navigation cache scope
+        run: python scripts/check_market_transitions.py
       - name: Check public Polymarket discovery, order books and snapshots
         run: python scripts/check_polymarket.py
+      - name: Check combined market summary, matching and forecast settlement
+        run: python scripts/check_market_summary.py

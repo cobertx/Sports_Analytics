@@ -1,6 +1,6 @@
 """Public Gamma discovery and CLOB book reads; no wallet or trading endpoints."""
 from collections import OrderedDict
-from contextlib import closing
+from contextlib import closing,contextmanager
 from datetime import datetime, timedelta, timezone
 import csv
 import hashlib
@@ -16,6 +16,7 @@ import requests
 from .data import DataSourceError, HttpClient
 from .kalshi import CATEGORIES, numeric, parse_time
 from .nfl_model_data import atomic_text
+from .cache_refresh import RefreshQueue
 
 GAMMA = 'https://gamma-api.polymarket.com'
 CLOB = 'https://clob.polymarket.com'
@@ -64,13 +65,27 @@ def book_prices(book):
 
 
 class PolymarketService:
-    def __init__(self, directory=None, archive=None, client=None, now=None):
+    def __init__(self, directory=None, archive=None, client=None, now=None,background=False):
         self.directory = Path(directory or ROOT/'data/polymarket_market/.cache')
         self.archive = Path(archive or ROOT/'data/polymarket_market')
         self.client = client or HttpClient()
         self.now = now or (lambda: datetime.now(timezone.utc))
         self._memory = OrderedDict()
         self._lock = RLock()
+        self._requests={}
+        self.background=background
+        self._refresh=RefreshQueue()
+
+    @contextmanager
+    def _request_slot(self,key):
+        with self._lock:
+            slot=self._requests.setdefault(key,[RLock(),0]);slot[1]+=1
+        try:
+            with slot[0]:yield
+        finally:
+            with self._lock:
+                slot[1]-=1
+                if not slot[1]:del self._requests[key]
 
     def _connect(self):
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -109,8 +124,8 @@ class PolymarketService:
                 raise DataSourceError('Invalid Polymarket sports response.')
             elif not all(isinstance(row,dict) for row in data):
                 raise DataSourceError('Invalid Polymarket sports metadata.')
-        with self._lock:
-            saved = self._memory.get(key)
+        def read_saved():
+            with self._lock:saved = self._memory.get(key)
             if saved is None:
                 with closing(self._connect()) as db:
                     row = db.execute('SELECT fetched_at,payload FROM responses WHERE key=?', (key,)).fetchone()
@@ -119,6 +134,21 @@ class PolymarketService:
                         data = json.loads(row[1]); validate(data)
                         saved = dict(data=data, fetched_at=row[0], notice='')
                     except (ValueError, DataSourceError): pass
+            if saved is not None:self._remember(key,saved)
+            return saved
+        if self.background and not refresh:
+            saved=read_saved()
+            stamp=parse_time(saved['fetched_at']) if saved else None
+            if saved and stamp and 0<=(self.now()-stamp).total_seconds():
+                if (self.now()-stamp).total_seconds()<ttl:return saved
+                def update():
+                    result=self._request(url,params,body=body,ttl=ttl,refresh=True)
+                    if result['notice']:raise DataSourceError(result['notice'])
+                state=self._refresh.request(key,update)
+                return {**saved,'updating':not bool(state['error']),
+                        'notice':state['error'] or 'Saved Polymarket data shown; updating in the background.'}
+        with self._request_slot(key):
+            saved=read_saved()
             stamp = parse_time(saved['fetched_at']) if saved else None
             if saved and stamp and not refresh and 0 <= (self.now()-stamp).total_seconds() < ttl:
                 self._remember(key, saved)
@@ -146,16 +176,18 @@ class PolymarketService:
             return saved
 
     def _remember(self, key, result):
-        self._memory[key] = result
-        self._memory.move_to_end(key)
-        while len(self._memory) > 32: self._memory.popitem(last=False)
+        with self._lock:
+            self._memory[key] = result
+            self._memory.move_to_end(key)
+            while len(self._memory) > 32: self._memory.popitem(last=False)
 
-    def _events(self, params, refresh=False):
+    def _events(self, params, refresh=False,updates=None):
         events, notices, stamps, seen = {}, [], [], set()
         cursor = None
         for _ in range(30):
             response = self._request(GAMMA+'/events/keyset',
                 {**params, 'limit':100, **({'after_cursor':cursor} if cursor else {})}, ttl=60, refresh=refresh)
+            if updates is not None and response.get('updating'):updates.append(True)
             for event in response['data']['events']:
                 if not isinstance(event, dict) or not str(event.get('id', '')).isdigit():
                     raise DataSourceError('Invalid Polymarket event identifier.')
@@ -176,8 +208,12 @@ class PolymarketService:
         if not league or not str(league.get('series', '')).isdigit():
             raise DataSourceError('Polymarket has no current event series for this sport.')
         lower, upper = self.now()-timedelta(hours=12), self.now()+timedelta(days=days)
+        # Stable request bounds permit reuse; filter against the exact window below.
+        query_lower=self.now().replace(hour=0,minute=0,second=0,microsecond=0)-timedelta(days=1)
+        query_upper=upper.replace(hour=0,minute=0,second=0,microsecond=0)+timedelta(days=1)
+        updates=[]
         events, stamp, notices = self._events(dict(series_id=str(league['series']), closed='false',
-            start_time_min=lower.isoformat(), start_time_max=upper.isoformat(), order='startTime', ascending='true'), refresh)
+            start_time_min=query_lower.isoformat(), start_time_max=query_upper.isoformat(), order='startTime', ascending='true'), refresh,updates)
         if metadata['notice']: notices.append(metadata['notice'])
         grouped = {}
         for event in events:
@@ -199,18 +235,20 @@ class PolymarketService:
                 slug=main['slug'], title=title, matchup_title=matchup_title, start=main['startTime'],
                 teams=[{k:t.get(k) for k in ['name','alias','abbreviation','ordering','logo']} for t in main.get('teams',[])],
                 events=[str(e['id']) for e in related], categories=[c for c in CATEGORIES if c in choices]))
-        return dict(sport=sport, games=sorted(games,key=lambda g:(g['start'],g['id'])), fetched_at=stamp, notices=notices)
+        return dict(sport=sport, games=sorted(games,key=lambda g:(g['start'],g['id'])), fetched_at=stamp, notices=notices,updating=bool(updates))
 
     def quotes(self, game, selected='Game Lines', refresh=False, save=False):
         self._validate_game(game, selected)
+        updates=[]
         events, metadata_stamp, notices = self._events(dict(game_id=game['provider_game_id'],
-            series_id=game['series_id'], closed='false'), refresh)
+            series_id=game['series_id'], closed='false'), refresh,updates)
         rows, tokens = [], set()
         for event in events:
             if str(event.get('gameId')) != game['provider_game_id'] or not event.get('slug','').startswith(SPORTS[game['sport']]+'-'):
                 raise DataSourceError('Polymarket returned an event outside this game.')
             for market in event.get('markets', []):
-                if market.get('closed') or market.get('archived') or category(market)!=selected: continue
+                selected_category=category(market)
+                if market.get('closed') or market.get('archived') or (selected!='All Markets' and selected_category!=selected): continue
                 labels = array(market.get('outcomes'))
                 assets = array(market.get('positionIds') if market.get('version')=='v2' else market.get('clobTokenIds'))
                 if len(labels)!=2:
@@ -223,11 +261,11 @@ class PolymarketService:
                 kind = market.get('sportsMarketType') or 'Other markets'
                 question = market.get('question') or market.get('slug') or str(market['id'])
                 section = kind.replace('_',' ').title()
-                if selected in {'Player Props','Passing Props','Receiving Props','Rushing Props','Touchdowns & Scoring'}:
+                if selected_category in {'Player Props','Passing Props','Receiving Props','Rushing Props','Touchdowns & Scoring'}:
                     section = question.split(':',1)[0]+' - '+section if ':' in question else question
                 group_key=hashlib.sha256(section.encode()).hexdigest()[:16]
                 rows.append(dict(ticker=str(market['id']), event_ticker=str(event['id'])+'-'+group_key,
-                    event_title=section, section=section, category=selected, title=question,
+                    event_title=section, section=section, category=selected_category, title=question,sports_market_type=kind,
                     event_id=str(event['id']),condition_id=market.get('conditionId'),market_version=market.get('version'),
                     yes_label=str(labels[0]), no_label=str(labels[1]), yes_token=assets[0], no_token=assets[1],
                     tradable=tradable, status='Open' if tradable else 'Not accepting orders', notional=1,
@@ -243,6 +281,7 @@ class PolymarketService:
             batch = tokens[offset:offset+100]
             try:
                 response = self._request(CLOB+'/books', body=[dict(token_id=t) for t in batch], refresh=refresh)
+                if response.get('updating'):updates.append(True)
                 for book in response['data']:
                     if str(book['asset_id']) not in batch: raise DataSourceError('Polymarket returned an unexpected outcome book.')
                     books[str(book['asset_id'])] = book
@@ -261,13 +300,21 @@ class PolymarketService:
                 if side=='yes': row['last_price']=last
         result = dict(sport=game['sport'],game_id=game['id'],category=selected,rows=rows,
             fetched_at=min(stamps) if stamps else None, metadata_fetched_at=metadata_stamp,
-            notices=list(dict.fromkeys(notices)),saved=None)
+            notices=list(dict.fromkeys(notices)),saved=None,updating=bool(updates))
         if save: result['saved']=self.save(result)
         return result
 
+    def all_quotes(self, game, refresh=False, save=False):
+        """Read metadata once and batch all outcome books; archive by normal category."""
+        snapshot=self.quotes(game,'All Markets',refresh=refresh)
+        if save:
+            for selected in dict.fromkeys(row['category'] for row in snapshot['rows']):
+                self.save({**snapshot,'category':selected,'rows':[row for row in snapshot['rows'] if row['category']==selected]})
+        return snapshot
+
     @staticmethod
     def _validate_game(game, selected):
-        if (game.get('sport') not in SPORTS or selected not in CATEGORIES or
+        if (game.get('sport') not in SPORTS or selected not in (*CATEGORIES,'All Markets') or
                 not all(isinstance(game.get(k),str) and game[k].isdigit() for k in ['id','provider_game_id','series_id'])):
             raise ValueError('Choose a Polymarket game and category.')
 

@@ -77,7 +77,8 @@ class MispricingChecks(TestCase):
         panel=next(c for c in components(self.app.layout) if getattr(c,'id',None)=='mispricing-filter-panel')
         ids=[getattr(c,'id',None) for c in components(panel)]
         for control in ['market-probability-threshold','market-edge-threshold','market-apply-criteria',
-                        'market-forecast-method','player-forecast-method','market-quick-filter']:
+                        'market-forecast-method','player-forecast-method','market-quick-filter',
+                        'market-quick-game-methods','market-quick-player-methods','market-quick-probability','market-quick-edge']:
             self.assertEqual(ids.count(control),1)
             self.assertEqual(sum(getattr(c,'id',None)==control for c in components(self.app.layout)),1)
         for sport in ['NBA','NFL','NCAAF']:
@@ -118,8 +119,8 @@ class MispricingChecks(TestCase):
         rendered=results(saved,ranked,criteria_values(99,0),['Player history unavailable'])
         self.assertIn('No qualifying markets.',str(rendered));self.assertIn('Player history unavailable',str(rendered))
         with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-quick-filter')):
-            response=self.cb['apply_market_criteria'](0,None,5,FILTER_CATEGORY,1,'#nfl-game-123','saved','PPP','WHP')
-        self.assertIs(response[0],no_update);self.assertIs(response[3],no_update)
+            response=self.cb['request_quick_filter'](1,None,5,['PPP'],['WHP'],'#nfl-game-123','saved')
+        self.assertIs(response[0],no_update)
 
     def test_quick_filter_runs_each_selected_engine_once_for_all_categories(self):
         for sport in ['NBA','NFL','NCAAF']:
@@ -127,8 +128,8 @@ class MispricingChecks(TestCase):
                 for service in [*self.game_services.values(),*self.player_services.values()]:service.reset_mock()
                 location=f'#{sport.lower()}-game-123';selection=self.saved['pulled_at']
                 with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-quick-filter')):
-                    criteria,status,category,request=self.cb['apply_market_criteria'](0,75,5,FILTER_CATEGORY,1,location,selection,'EPA',player_method)
-                rendered,history=self.cb['quick_filter_markets'](request,category,location,selection,'EPA',player_method,criteria,None)
+                    request,status=self.cb['request_quick_filter'](1,75,5,['EPA'],[player_method],location,selection)
+                rendered,history=self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,['EPA'],[player_method],75,5,None)
                 self.assertIn('Top 3 by edge',str(rendered));self.assertIn('Remaining qualifying markets',str(rendered))
                 self.assertEqual(history['game']['EPA']['latest_date'],'2026-10-18')
                 self.assertEqual(history['player'][player_method]['latest_date'],'2026-10-19')
@@ -145,7 +146,7 @@ class MispricingChecks(TestCase):
 
     def test_changed_context_drops_stale_rankings_and_partial_failures_keep_other_markets(self):
         criteria=criteria_values(75,5);location='#nfl-game-123';selection=self.saved['pulled_at']
-        request=filter_context(location,selection,'EPA','WHP',criteria)
+        request=filter_context(location,selection,['EPA'],['WHP'],criteria)
         for category,loc,selected,method,player,applied in [
             ('Game',location,selection,'EPA','WHP',criteria),
             (FILTER_CATEGORY,'#nfl-game-456',selection,'EPA','WHP',criteria),
@@ -153,35 +154,107 @@ class MispricingChecks(TestCase):
             (FILTER_CATEGORY,location,selection,'PPP','WHP',criteria),
             (FILTER_CATEGORY,location,selection,'EPA','UO',criteria),
             (FILTER_CATEGORY,location,selection,'EPA','WHP',criteria_values(80,5))]:
-            rendered,history=self.cb['quick_filter_markets'](request,category,loc,selected,method,player,applied,None)
+            rendered,history=self.cb['quick_filter_markets'](request,category,loc,selected,[method],[player],100*applied['probability'],100*applied['edge'],None)
             self.assertIn('Click Quick Filtering',str(rendered));self.assertIs(history,no_update)
         self.game_services['EPA'].forecast.assert_not_called();self.player_services['WHP'].forecast.assert_not_called()
         self.player_services['WHP'].forecast.side_effect=DataSourceError('No saved player history.')
-        rendered,history=self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,'EPA','WHP',criteria,None)
+        rendered,history=self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,['EPA'],['WHP'],75,5,None)
         self.assertIn('2 qualifying selections',str(rendered));self.assertIn('7 unavailable quotes excluded',str(rendered))
         self.assertIn('Player estimates are unavailable',str(rendered))
 
     def test_real_dash_http_button_applies_and_renders_all_market_results(self):
         values={'market-apply-criteria':0,'market-probability-threshold':75,'market-edge-threshold':5,
             'market-category':FILTER_CATEGORY,'market-quick-filter':1,'market-url':'#nfl-game-123',
-            'market-snapshot':self.saved['pulled_at'],'market-forecast-method':'EPA','player-forecast-method':'PGE',
-            'market-forecast-history':None}
+            'market-snapshot':self.saved['pulled_at'],'market-quick-game-methods':['EPA','PPP'],'market-quick-player-methods':['PGE','WHP'],
+            'market-quick-probability':75,'market-quick-edge':5,
+            'market-forecast-history':None,'workspace-page':'market'}
         with self.app.server.test_client() as client:
-            for name in ['apply_market_criteria','quick_filter_markets']:
+            for name in ['request_quick_filter','quick_filter_markets']:
                 key,meta=next((k,m) for k,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
                 response=client.post('/_dash-update-component',json=dict(output=key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
                     inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
                     state=[dict(**item,value=values[item['id']]) for item in meta['state']],
-                    changedPropIds=['market-quick-filter.n_clicks'] if name=='apply_market_criteria' else ['mispricing-request.data']))
+                    changedPropIds=['market-quick-filter.n_clicks'] if name=='request_quick_filter' else ['mispricing-request.data']))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 data=response.get_json()['response']
-                if name=='apply_market_criteria':
-                    values['market-applied-criteria']=data['market-applied-criteria']['data']
+                if name=='request_quick_filter':
+                    self.assertNotIn('market-applied-criteria',data)
                     values['mispricing-request']=data['mispricing-request']['data']
                 else:
                     self.assertIn('Top 3 by edge',str(data));self.assertIn('Remaining qualifying markets',str(data))
                     self.assertIn('EPA',str(data));self.assertIn('PGE',str(data))
+
+    def test_multiple_methods_require_unanimous_pass_and_keep_market_types_independent(self):
+        class LowerGame(GameForecast):
+            def spread(self,team,line):return MarketProbability(.75,.25,0)
+            def total(self,line,side):return MarketProbability(.70,.30,0)
+        class LowerPlayers(PlayerForecast):
+            def selection(self,row):
+                if row['subject']=='Player 6':return None
+                return MarketProbability(.74,.26,0)
+        self.game_services['ELO'].forecast.return_value=LowerGame()
+        self.player_services['OAM'].forecast.return_value=LowerPlayers()
+        location='#nfl-game-123';selection=self.saved['pulled_at']
+        def run(methods,players):
+            request,_=self.cb['request_quick_filter'](1,75,5,methods,players,location,selection)
+            return self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,methods,players,75,5,None)
+        rendered,_=run(['PPP','ELO'],['WHP'])
+        self.assertIn('3 qualifying selections',str(rendered)) # Game methods disagree; player methods are independent.
+        rendered,_=run(['PPP'],['WHP','OAM'])
+        self.assertIn('2 qualifying selections',str(rendered)) # No player passes both methods, including a missing estimate.
+        self.assertIn('1 unavailable quotes excluded',str(rendered))
+        rendered,_=run(['PPP','ELO'],['WHP','OAM'])
+        self.assertIn('0 qualifying selections',str(rendered))
+
+    def test_all_methods_fit_once_and_quick_inputs_do_not_change_applied_criteria(self):
+        methods=['PPP','EPA','ELO'];players=['WHP','UO','OAM','PGE']
+        selection=self.saved['pulled_at']
+        for sport in ['NBA','NFL','NCAAF']:
+            for service in [*self.game_services.values(),*self.player_services.values()]:service.reset_mock()
+            location=f'#{sport.lower()}-game-123'
+            request,_=self.cb['request_quick_filter'](1,75,5,methods+['PPP'],players,location,selection)
+            self.assertEqual(request['game_method'],methods)
+            rendered,history=self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,methods,players,75,5,None)
+            for service in [*self.game_services.values(),*self.player_services.values()]:service.forecast.assert_called_once()
+            self.assertEqual(set(history['game']),set(methods));self.assertEqual(set(history['player']),set(players))
+            self.assertIn('Lowest probability',str(rendered));self.assertIn('Lowest edge (pp)',str(rendered))
+            self.assertIn('PGE: 90.00% / +40.00 pp',str(rendered))
+        applied,_,_=self.cb['apply_market_criteria'](1,90,10,FILTER_CATEGORY)
+        self.assertEqual(applied,dict(probability=.9,edge=.1))
+        self.assertEqual(request['criteria'],dict(probability=.75,edge=.05))
+        apply_meta=next(m for m in self.app.callback_map.values() if m.get('callback') and m['callback'].__wrapped__.__name__=='apply_market_criteria')
+        quick_meta=next(m for m in self.app.callback_map.values() if m.get('callback') and m['callback'].__wrapped__.__name__=='quick_filter_markets')
+        self.assertNotIn('market-quick-filter',{item['id'] for item in apply_meta['inputs']})
+        self.assertNotIn('market-applied-criteria',{item['id'] for item in quick_meta['inputs']})
+
+    def test_consensus_ranking_uses_lowest_edge_and_excludes_exact_edge_threshold(self):
+        class LowerGame(GameForecast):
+            def spread(self,team,line):return MarketProbability(.76,.24,0)
+            def total(self,line,side):return MarketProbability(.79,.21,0)
+        self.game_services['EPA'].forecast.return_value=LowerGame()
+        self.saved['rows']=self.saved['rows'][-2:]
+        location='#nfl-game-123';selection=self.saved['pulled_at']
+        def run(edge):
+            request,_=self.cb['request_quick_filter'](1,75,edge,['PPP','EPA'],['WHP'],location,selection)
+            return self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,['PPP','EPA'],['WHP'],75,edge,None)[0]
+        output=run(5)
+        body=next(c for c in components(output) if c.__class__.__name__=='Tbody')
+        self.assertIn('Over',str(body.children[0])) # Total's minimum edge is 29 pp versus spread's 26 pp.
+        self.assertIn('EPA: 79.00% / +29.00 pp',str(body.children[0]))
+        self.assertIn('1 qualifying selections',str(run(26)))
+        self.assertIn('0 qualifying selections',str(run(29)))
+
+    def test_quick_method_validation_and_selected_model_failure_exclude_incomplete_estimates(self):
+        selection=self.saved['pulled_at'];location='#nfl-game-123'
+        for methods,players in [([],['WHP']),(['PPP'],[]),(['BAD'],['WHP']),(['PPP'],'WHP')]:
+            response=self.cb['request_quick_filter'](1,75,5,methods,players,location,selection)
+            self.assertIs(response[0],no_update);self.assertIn('Select at least one supported',response[1])
+        self.game_services['EPA'].forecast.side_effect=DataSourceError('No team history')
+        request,_=self.cb['request_quick_filter'](1,75,5,['PPP','EPA'],['WHP'],location,selection)
+        rendered,_=self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,['PPP','EPA'],['WHP'],75,5,None)
+        self.assertIn('3 qualifying selections',str(rendered));self.assertIn('EPA forecast: No team history',str(rendered))
+
 
     def test_quick_filter_computes_independent_game_and_player_forecasts_concurrently(self):
         barrier=Barrier(2,timeout=5)
@@ -197,9 +270,9 @@ class MispricingChecks(TestCase):
         for sport in ['NBA','NFL']:
             self.saved['sport']=sport
             location=f'#{sport.lower()}-game-123';selection=self.saved['pulled_at']
-            request=filter_context(location,selection,'PPP','WHP',criteria)
+            request=filter_context(location,selection,['PPP'],['WHP'],criteria)
             rendered,_=self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,
-                                                     'PPP','WHP',criteria,None)
+                                                     ['PPP'],['WHP'],75,5,None)
             self.assertIn('5 qualifying selections',str(rendered))
 
 

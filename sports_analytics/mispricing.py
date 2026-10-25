@@ -1,13 +1,88 @@
 """Rank saved game and player selections with the same probabilities as market tabs."""
 
 import math
+from concurrent.futures import ThreadPoolExecutor
 
-from dash import html
+from dash import dcc, html
 
 from .market_view import MARKET_NAMES, _line_values, criteria_match, probability_text, selection_text
+from .prompt_history import button as history_button
 
 
 FILTER_CATEGORY = 'Mispricing'
+GAME_METHODS = ('PPP', 'EPA', 'ELO')
+PLAYER_METHODS = ('WHP', 'UO', 'OAM', 'PGE')
+ALL_PROBABILITIES = dict(probability=-1, edge=-2)
+
+
+def quick_controls(prefix, result_id):
+    def field(label, control):
+        return html.Div([html.Label(label, htmlFor=control.id), control], className='field')
+    return html.Section([
+        html.H3('Quick Filtering'),
+        html.P('Each game market must pass both thresholds under every selected Game Outcome method. '
+               'Each player market must pass under every selected Player Forecast method. '
+               'These inputs are independent of Apply Criteria.', className='ppp-comparison-note'),
+        html.Div([
+            field('Game Outcome methods', dcc.Dropdown(id=prefix+'-quick-game-methods', multi=True,
+                options=[dict(label=label,value=value) for label,value in
+                         [('PPP','PPP'),('EPA','EPA'),('ELO / Power Rating','ELO')]], value=['PPP'], clearable=True)),
+            field('Player Forecast methods', dcc.Dropdown(id=prefix+'-quick-player-methods', multi=True,
+                options=[dict(label=label,value=value) for label,value in
+                         [('Weighted Historical Performance (WHP)','WHP'),('Usage & Opportunity (UO)','UO'),
+                          ('Opponent-Adjusted Matchup (OAM)','OAM'),('Pace & Game Environment (PGE)','PGE')]], value=['WHP'], clearable=True)),
+        ], className='forecast-methods'),
+        html.Div([
+            field('Estimated Probability (%)', dcc.Input(id=prefix+'-quick-probability', type='number', value=75, min=0, max=100, step='any')),
+            field('Edge (percentage points)', dcc.Input(id=prefix+'-quick-edge', type='number', value=5, min=-100, max=100, step='any')),
+            html.Button('Quick Filtering', id=prefix+'-quick-filter', n_clicks=0, className='apply-criteria-button quick-filter-button'),
+        ], className='criteria-controls'),
+        html.Div(id=prefix+'-quick-status', className='criteria-status', role='status'),
+        dcc.Loading(html.Div(id=result_id), delay_show=500, overlay_style={'visibility':'visible'}, color='#57dbc4'),
+    ], className='quick-filter-section')
+
+
+def selected_methods(game_methods, player_methods):
+    def validate(values, supported):
+        if not isinstance(values, list) or not values or any(value not in supported for value in values):
+            raise ValueError('Select at least one supported Game Outcome method and one Player Forecast method.')
+        return list(dict.fromkeys(values))
+    return validate(game_methods, GAME_METHODS), validate(player_methods, PLAYER_METHODS)
+
+
+def run_forecasts(tasks, sport):
+    # College preparation writes shared historical files. Keep those fits serial.
+    if sport == 'NCAAF':
+        return {key: task() for key, task in tasks.items()}
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix='market-filter') as executor:
+        pending = {key: executor.submit(task) for key, task in tasks.items()}
+        return {key: task.result() for key, task in pending.items()}
+
+
+def consensus_rankings(groups, criteria, selection_key):
+    """Intersect available estimates within each market type, then apply strict criteria."""
+    matches=[]; evaluated=unavailable=0
+    for rankings in groups:
+        indexed=[(method, {selection_key(item): item for item in ranked['matches']}) for method, ranked in rankings]
+        available=set.intersection(*(set(items) for _, items in indexed))
+        evaluated+=len(available)
+        first=rankings[0][1]
+        unavailable+=first['evaluated']+first['unavailable']-len(available)
+        for key in sorted(available):
+            estimates=[dict(method=method, probability=items[key]['probability'], edge=items[key]['edge']) for method, items in indexed]
+            probability=min(item['probability'] for item in estimates)
+            edge=min(item['edge'] for item in estimates)
+            if criteria_match(probability, edge, criteria):
+                matches.append({**indexed[0][1][key], 'probability':probability, 'edge':edge,
+                                'method':', '.join(method for method, _ in indexed), 'estimates':estimates})
+    matches.sort(key=lambda item:(-item['edge'], -item['probability'], selection_key(item)))
+    return dict(matches=matches, evaluated=evaluated, unavailable=unavailable, consensus=True)
+
+
+def method_details(item):
+    if 'estimates' not in item:return item['method']
+    return [html.Div(f"{value['method']}: {probability_text(value['probability'])} / {100*value['edge']:+.2f} pp")
+            for value in item['estimates']]
 
 
 def criteria_values(probability, edge):
@@ -55,14 +130,16 @@ def rank_markets(snapshot, game_forecast, player_forecast, criteria, method='PPP
 
 
 def results(snapshot, ranked, criteria, errors=()):
+    consensus=ranked.get('consensus',False)
     def table(items,start):
         return html.Div(html.Table([
             html.Thead(html.Tr([html.Th(label,scope='col') for label in
-                ['Rank','Selection','Market','Method','Market odds','Market implied','Estimated probability','Edge (pp)']])),
+                ['Rank','Selection','Market','Method (probability / edge)' if consensus else 'Method','Market odds','Market implied',
+                 'Lowest probability' if consensus else 'Estimated probability','Lowest edge (pp)' if consensus else 'Edge (pp)']])),
             html.Tbody([html.Tr([
-                html.Td(start+i),html.Td(selection_text(item['row'])),
+                html.Td(start+i),html.Td([selection_text(item['row']),history_button(snapshot,item['row'])]),
                 html.Td(MARKET_NAMES.get(item['row']['market_key'],(item['row']['market'],))[0]),
-                html.Td(item['method']),html.Td(f"{item['row']['odds']:+g}"),
+                html.Td(method_details(item)),html.Td(f"{item['row']['odds']:+g}"),
                 html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),
                 html.Td(f"{item['edge']*100:+.2f}",className='mispricing-edge'),
             ]) for i,item in enumerate(items)] or [html.Tr(html.Td('No qualifying markets.',colSpan=8))]),
@@ -80,5 +157,7 @@ def results(snapshot, ranked, criteria, errors=()):
         html.Section([html.H3('Remaining qualifying markets'),table(matches[3:],4)],className='mispricing-remaining'),
         html.P('Ranked by estimated probability minus market implied probability, highest first. '
                'Estimates use the selected game/player methods and exclude pushes, matching the market tabs. '
-               'Alternate lines are separate selections.',className='ppp-comparison-note'),
+               'Alternate lines are separate selections. '+
+               ('Every selected method must pass both thresholds. Ranking uses the lowest edge across those methods; '
+                'missing estimates from any selected method exclude that selection.' if consensus else ''),className='ppp-comparison-note'),
     ],className='mispricing-results')

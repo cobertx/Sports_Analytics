@@ -16,6 +16,7 @@ from .nfl_markets import NFL_TEAM_CODES
 from .nba_markets import NBA_TEAM_CODES
 from .parlay import quote_key
 from .historical_links import history_href
+from .prompt_history import button as history_button
 
 NFL_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NFL" / "Team Logos"
 NFL_LOGO_FILES = {path.stem.casefold(): path.name for path in NFL_LOGO_DIRECTORY.glob("*.png")}
@@ -333,7 +334,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                     detail += " " + forecast.detail(row)
                 fair = f"{estimate.odds:+.0f}" if estimate and estimate.odds is not None else "—"
                 return html.Div([
-                    html.Span(selection, className="market-selection"),
+                    html.Div([html.Span(selection),history_button(snapshot,row)],className="market-selection market-prompt"),
                     price_button,
                     html.Span(probability_text(implied), className="market-probability", title="Raw break-even probability; includes bookmaker margin"),
                     html.Span(probability_text(estimate.probability) if estimate else "—", className="ppp-probability", title=detail),
@@ -343,7 +344,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 ], className="market-outcome market-line-comparison" + (" market-criteria-match" if matches[id(row)] else ""))
             return html.Div([
                 html.Span(initials, className="player-marker", **{"aria-hidden": "true"}),
-                html.Span(selection, className="market-selection"),
+                html.Div([html.Span(selection),history_button(snapshot,row)],className="market-selection market-prompt"),
                 price_button,
             ], className="market-outcome")
         sections.append(html.Details([

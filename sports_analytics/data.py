@@ -361,6 +361,13 @@ def load_ncaaf(query, client):
 
 def fetch(query, client=None):
     client = client or HttpClient()
+    current_nba_season=date.today().year-(date.today().month<7)
+    if query.sport=='NBA' and query.season>=current_nba_season:
+        # The current NBA Stats release can lag behind opening night, while
+        # stats.nba.com may time out. Published ESPN boxes include single games.
+        from .nba_espn import load as load_nba_espn
+        try:return load_nba_espn(query,client)
+        except DataSourceError:pass
     if query.sport == "NBA" and 1996 <= query.season < date.today().year:
         try:
             return load_nba_archive(query, client)

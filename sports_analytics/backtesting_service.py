@@ -31,6 +31,21 @@ PREDICTIVE_Z=NormalDist().inv_cdf((1+PREDICTIVE_INTERVAL)/2)
 CALIBRATION_BINS=50
 
 
+def file_revision(path):
+    stamp=path.stat()
+    return str(path.resolve()),stamp.st_size,stamp.st_mtime_ns,stamp.st_ctime_ns,stamp.st_ino
+
+
+@lru_cache(maxsize=16)
+def input_csv(revision,dtypes,columns):
+    return pd.read_csv(revision[0],dtype=dict(dtypes),usecols=columns)
+
+
+def read_input_csv(path,dtype,columns=None):
+    # Cache parsing, never mutable caller frames. File edits invalidate immediately.
+    return input_csv(file_revision(path),tuple(dtype.items()),tuple(columns) if columns else None).copy(deep=True)
+
+
 def valid_report_page(sport,group,key):
     return (sport in {'NBA','NFL','NCAAF'} and group in {'game-outcome','player-stats'}
             and key in ({'ppp','epa','elo'} if group=='game-outcome' else {'whp','uo','oam','pge'}))
@@ -67,6 +82,7 @@ def report_summary(path,size,modified,sport,group,key):
             label=result['records'][0]['label'].split(' · ')[0]
         return dict(run_id=result['run_id'],created_at=created.isoformat(),
             workspace=context.get('workspace','backtesting'),
+            entity=context.get('entity'),team_filter=context.get('team_filter'),
             entity_label=label,
             market=context.get('market'),limit=context.get('limit') or len(result['records']),
             lookback=context.get('lookback'),include_playoffs=context.get('include_playoffs'),line=context.get('line'),
@@ -304,7 +320,7 @@ class BacktestingService:
         frames=[]
         for path in paths:
             phase=next((p for p in ['regular','postseason'] if path.stem.endswith('_'+p)),None)
-            frames.append(season_phases(pd.read_csv(path,dtype={'game_id':str}),sport,default=phase))
+            frames.append(season_phases(read_input_csv(path,{'game_id':str}),sport,default=phase))
         frame=pd.concat(frames,ignore_index=True)
         frame=season_phases(frame,sport,self.phase_map(sport))
         frame=frame.drop_duplicates(['game_id','team'],keep='last')
@@ -323,7 +339,7 @@ class BacktestingService:
         frames=[]
         if sport=='NCAAF':
             for path in sorted((ROOT/'data/modeling/ncaaf').glob('player_games_*.csv'),key=lambda p:p.stat().st_mtime_ns):
-                frames.append(pd.read_csv(path,dtype={'entity_id':str,'game_id':str}))
+                frames.append(read_input_csv(path,{'entity_id':str,'game_id':str}))
         else:
             with self.data.connect() as db:
                 saved=db.execute('SELECT key, query FROM datasets').fetchall()
@@ -333,13 +349,13 @@ class BacktestingService:
                     cached=self.data.cached(key)
                     if cached is not None:frames.append(season_phases(cached.frame,sport,default=query.get('season_type')))
         imported=ROOT/'data/modeling/player_stats/whp/imports'/f'{sport.lower()}.csv'
-        if imported.exists():frames.append(pd.read_csv(imported,dtype={'entity_id':str,'game_id':str}))
+        if imported.exists():frames.append(read_input_csv(imported,{'entity_id':str,'game_id':str}))
         if not frames:raise DataSourceError(f'No saved {sport} player history. Load a player in Historical Data or prepare player inputs first.')
         frame=pd.concat(frames,ignore_index=True)
         # Recover dates from the saved NFL schedule, as the forecast repository does.
         schedule=ROOT/'data/modeling/nfl/raw/games.csv'
         if sport=='NFL' and schedule.exists():
-            dates=pd.read_csv(schedule,dtype={'game_id':str},usecols=['game_id','gameday']).drop_duplicates('game_id').set_index('game_id').gameday
+            dates=read_input_csv(schedule,{'game_id':str},['game_id','gameday']).drop_duplicates('game_id').set_index('game_id').gameday
             frame['event_date']=pd.to_datetime(frame.event_date,utc=True,errors='coerce',format='mixed').fillna(
                 pd.to_datetime(frame.game_id.astype(str).map(dates),utc=True,errors='coerce'))
         frame=model_frame(frame)
@@ -350,14 +366,23 @@ class BacktestingService:
 
     def phase_map(self,sport):
         """Recover phase metadata for older prepared files without downloading."""
+        directory=ROOT/'data/modeling'/sport.lower()
+        paths=list(directory.glob('team_games_*.csv'))
+        if sport=='NFL' and (directory/'raw/games.csv').exists():paths.append(directory/'raw/games.csv')
+        if sport=='NCAAF':paths.extend((directory/'raw').glob('games_*.json'))
+        revision=tuple(file_revision(path) for path in paths)
+        return dict(self._phase_map(sport,revision))
+
+    @lru_cache(maxsize=8)
+    def _phase_map(self,sport,revision):
         known={};directory=ROOT/'data/modeling'/sport.lower()
         for path in directory.glob('team_games_*.csv'):
-            data=pd.read_csv(path,dtype={'game_id':str})
+            data=read_input_csv(path,{'game_id':str})
             phase=next((p for p in ['regular','postseason'] if path.stem.endswith('_'+p)),None)
             data=season_phases(data,sport,default=phase)
             known.update(data[data.season_type.ne('unknown')].set_index('game_id').season_type.to_dict())
         if sport=='NFL' and (directory/'raw/games.csv').exists():
-            data=season_phases(pd.read_csv(directory/'raw/games.csv',dtype={'game_id':str}),sport)
+            data=season_phases(read_input_csv(directory/'raw/games.csv',{'game_id':str}),sport)
             known.update(data[data.season_type.ne('unknown')].set_index('game_id').season_type.to_dict())
         if sport=='NCAAF':
             for path in (directory/'raw').glob('games_*.json'):
@@ -446,7 +471,7 @@ class BacktestingService:
         marker=directory/'last_run.json'
         if marker.exists():
             try:
-                name=json.loads(marker.read_text(encoding='utf-8'))['report']
+                with self._jobs_lock:name=json.loads(marker.read_text(encoding='utf-8'))['report']
                 if len(name)==69 and name.endswith('.json') and all(c in '0123456789abcdef' for c in name[:-5]):
                     paths.insert(0,directory/name)
             except (ValueError,KeyError,OSError,TypeError):pass
@@ -520,7 +545,7 @@ class BacktestingService:
             if saved.get('identity')==identity:
                 result={**saved['result'],'run_id':cache.stem}
                 self.ensure_exports(result)
-                atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
+                with self._jobs_lock:atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
                 if progress:progress(len(games),len(games),'Loaded saved results')
                 return result
         result=dict(context={k:identity[k] for k in ['sport','group','model','entity','market','start','end','limit','tolerance','line','include_playoffs','lookback','interval_level']},
@@ -538,7 +563,9 @@ class BacktestingService:
         if progress:progress(len(games),len(games),'Saving reports')
         self.ensure_exports(result)
         atomic_json(cache,dict(identity=identity,result=result))
-        atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
+        # Simulations overlap, but Windows cannot replace the same latest-run
+        # marker concurrently. Serialize this tiny metadata write only.
+        with self._jobs_lock:atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
         return result
 
     @replay_scope
