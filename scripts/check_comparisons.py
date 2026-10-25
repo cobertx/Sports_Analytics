@@ -64,7 +64,10 @@ class ComparisonChecks(TestCase):
         self.context=dict(sport='NBA',group='game-outcome')
 
     def app(self):
-        self.application=create_app(backtesting_service=self.backend)
+        # These HTTP tests advance jobs by polling. Reuse the no-watcher
+        # fixture so a daemon cannot hold its temporary manifest at cleanup.
+        with patch('sports_analytics.comparison_callbacks.Comparisons',return_value=self.manager):
+            self.application=create_app(backtesting_service=self.backend)
         self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__
                  for m in self.application.callback_map.values() if m.get('callback')}
         return self.application

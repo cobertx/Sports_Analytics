@@ -1,0 +1,15 @@
+.information-menu > summary { cursor: pointer; padding: 10px 12px; margin-bottom: 4px; color: var(--muted); border-radius: 6px; font-size: 13px; }
+.information-menu.active > summary { background: #102e32; color: var(--accent); }
+.information-page { display: grid; gap: 20px; min-width: 0; }
+.information-heading,.information-news,.information-weather { padding: 22px; }
+.information-heading > p,.information-note { color: var(--muted); line-height: 1.7; font-size: 12px; }
+.information-sources { display: grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); gap: 12px; margin: 18px 0; }
+.information-source { background: #142739; border: 1px solid #2a4155; padding: 16px; border-radius: 8px; }
+.information-source a,.information-article a,.information-weather a { color: var(--accent); }
+.information-source p { margin-bottom: 0; color: var(--muted); line-height: 1.6; font-size: 12px; }
+.information-article { padding: 20px 0; border-top: 1px solid var(--line); }
+.information-article h3 { font-size: 16px; line-height: 1.6; margin: 8px 0; }
+.information-article small,.information-news-meta { color: var(--muted); font-size: 11px; }
+.information-news-meta { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.information-alert { margin: 12px 0; border-left: 3px solid #f2bd6b; padding: 12px 16px; background: #28261e; }
+@media (max-width:700px) { .information-menu { grid-column: 1/-1; } .information-menu > summary { text-align: center; } }

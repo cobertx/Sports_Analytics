@@ -10,6 +10,63 @@ saved-model behavior. The source research PDFs are retained separately.
 
 Each sport's left toolbar groups **FanDuel**, **Kalshi**, **Polymarket** and **Market Summary** under **Market Data**. **Historical Data** opens nested **Team Statistics** and **Player Statistics** pages for NBA/NFL (NCAAF's standard menu has Team Statistics). These pages contain the historical filters, charts, career histories, and game log. **Backtesting** opens a model overview and nested model pages. Switching pages preserves the historical controls. Historical subpages use `#historical-team` and `#historical-player`, apply to the selected sport tab, and support browser back/forward navigation.
 
+**P&L History** is the top-level tab after **Strategy & Research** (`#pnl-history`). It
+tracks real, locally recorded USD bets and account cash flows. No sportsbook/exchange
+account is connected, and bet-slip selections are not treated as placed bets.
+Use **Import sportsbook / exchange CSV statements** to upload a bet-history or
+closed-position summary, map its columns and preview the normalized rows before saving.
+Common column names are suggested; confirm their meaning against your statement.
+Choose whether returns include the stake, contain profit before fees, or contain profit
+after fees. The importer handles explicit negative-debit conventions, common U.S. date
+formats and ISO timestamps. Individual exchange fills must first be grouped into position
+summaries with total cost and settlement receipts. Other currencies require conversion
+before import. Each imported row needs a stable external ID and placement date; closed
+bets also need their settlement date. Repeated identical imports are skipped; conflicting
+IDs or invalid rows reject the entire import without partially writing it.
+
+The page shows bet history, an account-filtered cash ledger, cash/bankroll and realized
+P&L charts, open stakes, ROI and win rate. Add an opening balance per account and all
+deposits/withdrawals for a reconciled recorded cash balance. Stakes debit cash when placed;
+gross returns less settlement fees credit cash at settlement. Placement/fill fees debit
+cash and realized P&L when placed; the import settings distinguish these from settlement
+fees. Deposits/withdrawals/adjustments do
+not count as betting profit. Open stakes are valued at cost; no mark-to-market equity is
+inferred. ROI divides closed-bet net P&L by settled stakes;
+win rate uses only Won/Lost bets. Manual records and settlement corrections are also
+available. Corrections replace the previous settlement and retain its audit history.
+Export history and a blank CSV template from the page. The private ledger and audit
+trail persist in ignored `data/pnl/history.sqlite3`. Display times use America/Indianapolis;
+ambiguous DST timestamps require an explicit UTC offset. Run `python scripts/check_pnl.py`
+for offline accounting, import/preview, persistence, duplicate protection and UI checks.
+
+**Information Variable** appears in the NBA and NFL side menus. NBA has **Injury News**
+and **Roster News**; NFL has **Injury & Roster News** and **Weather News**. The primary
+sources are the [NBA official injury reports](https://official.nba.com/),
+[NBA transactions](https://www.nba.com/players/transactions),
+[NFL injury reports](https://www.nfl.com/injuries/) and [NFL transactions](https://www.nfl.com/transactions/).
+Those records open at the league source; they are not scraped into a claimed live status database.
+The pages also show attributed ESPN headlines from its public NBA/NFL news feed, with
+publication times, publisher team tags and search. Keyword filtering is approximate and
+the feed is limited; absence of a headline is not proof that a player is healthy or on a roster.
+Only headline metadata and links are saved, not article bodies. No credentials are required.
+
+NFL Weather News uses the [National Weather Service public API](https://www.weather.gov/documentation/services-web-api)
+for hourly temperature, wind, precipitation chance and active alerts. Its U.S. forecast and
+alert data are free and require no API key. NFL city presets are approximate city centers,
+not stadium points; custom coordinates allow a venue-specific point lookup. Roof status
+must be confirmed separately. All displayed times use America/Indianapolis. International
+fixtures are outside this NWS feed; a UK Met Office forecast link is provided for London.
+Unknown precipitation is not zero, and a failed alert lookup is not reported as no alerts.
+The page displays the forecast issue time and local retrieval time.
+
+News and weather snapshots live under ignored `data/information_variable/`. The page
+reads locally and queues downloads in two bounded background workers, polling briefly
+while pending. Automatic updates check news every five minutes and weather every ten
+minutes while the page is active. Manual Refresh retries immediately; duplicate in-flight
+requests share one fetch. Failure retains the original data/timestamp and shows the error.
+These pages do not change model forecasts or backtesting inputs. Run
+`python scripts/check_information.py` for offline source, cache, filter and navigation checks.
+
 Each sport's **Backtesting → Performance Summary** (`#backtesting-performance`)
 compares model accuracy for a selected game market or player statistic and one team or
 all teams. Choose an evaluation period/game limit, then click **Load performance / Run

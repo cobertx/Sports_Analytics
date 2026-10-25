@@ -12,7 +12,8 @@ def register(app, service):
     @app.callback(Output('workspace-page', 'value', allow_duplicate=True),
                   Input('sport', 'value'), State('workspace-page', 'value'), prevent_initial_call=True)
     def in_game_supported_page(sport, page):
-        if page == 'in-game' and sport not in {'NBA', 'NFL'}:
+        if page=='pnl' and sport!='PNL':return 'historical'
+        if page in {'in-game','information'} and sport not in {'NBA', 'NFL'}:
             return 'historical'
         raise PreventUpdate
 

@@ -10,10 +10,10 @@ class RefreshQueue:
         self.lock=Lock();self.jobs=OrderedDict();self.retry_seconds=retry_seconds
         self.workers=workers;self.tasks=Queue(maxsize=32);self.threads=[];self.closed=False
 
-    def request(self,key,work):
+    def request(self,key,work,*,force=False):
         with self.lock:
             prior=self.jobs.get(key)
-            if prior and (prior['pending'] or monotonic()<prior['retry_at']):return dict(prior)
+            if prior and (prior['pending'] or (not force and monotonic()<prior['retry_at'])):return dict(prior)
             if self.closed:return dict(pending=False,error='Automatic updates stopped.',retry_at=0)
             if sum(job['pending'] for job in self.jobs.values())>=32:
                 return dict(pending=False,error='Updates are busy; retry shortly.',retry_at=0)
@@ -43,7 +43,10 @@ class RefreshQueue:
             self.tasks.task_done()
 
     def pending(self,key):
-        with self.lock:return bool(self.jobs.get(key,{}).get('pending'))
+        return self.state(key)['pending']
+
+    def state(self,key):
+        with self.lock:return dict(self.jobs.get(key,dict(pending=False,error=None,retry_at=0)))
 
     def shutdown(self,wait=True):
         with self.lock:

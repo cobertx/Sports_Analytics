@@ -60,6 +60,10 @@ jobs:
         run: python scripts/check_performance.py
       - name: Check immediate local reads and nonblocking background refreshes
         run: python scripts/check_loading_speed.py
+      - name: Check information sources, local news and weather freshness
+        run: python scripts/check_information.py
+      - name: Check personal P&L ledger and statement imports
+        run: python scripts/check_pnl.py
       - name: Check public Kalshi markets, polling and saved snapshots
         run: python scripts/check_kalshi.py
       - name: Check incremental exchange updates and nonblocking quote reads

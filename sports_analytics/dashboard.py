@@ -68,6 +68,10 @@ from .market_navigation import remembered_market
 from .mispricing import (FILTER_CATEGORY, criteria_values, filter_context, rank_markets, results as mispricing_results,
                          quick_controls, selected_methods, run_forecasts, consensus_rankings, ALL_PROBABILITIES)
 from .display_time import eastern_datetime, format_eastern
+from .information import InformationService,route as information_route
+from .information_view import layout as information_layout,navigation as information_navigation,register as register_information
+from .pnl import Ledger
+from .pnl_view import layout as pnl_layout,register as register_pnl
 from .usage_log import ApiUsageLog, SPORTS as USAGE_SPORTS, usage_summary
 from .ppp_service import PPPMarketService
 from .epa_service import EPAMarketService
@@ -284,8 +288,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                nba_epa_service=None, elo_service=None, nba_elo_service=None, ncaaf_market_service=None,
                whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None,
                ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None,in_game_service=None,kalshi_service=None,
-               polymarket_service=None):
+               polymarket_service=None,information_service=None,ledger=None):
     service = service or DataService()
+    information_service=information_service or InformationService()
+    ledger=ledger or Ledger()
     in_game_service = in_game_service or InGameService(data=service)
     kalshi_service = kalshi_service or KalshiService(background=True)
     polymarket_service = polymarket_service or PolymarketService(background=True)
@@ -380,6 +386,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 dcc.Tab(label="NCAAF · College Football", value="NCAAF", className="sport-tab", selected_className="sport-tab selected"),
                 dcc.Tab(label="Odds API", value="ODDS_API", className="sport-tab", selected_className="sport-tab selected"),
                 dcc.Tab(label='Strategy & Research',value='RESEARCH',className='sport-tab',selected_className='sport-tab selected'),
+                dcc.Tab(label='P&L History',value='PNL',className='sport-tab',selected_className='sport-tab selected'),
             ], className="sport-tabs"),
             html.Div([
                 html.Nav([
@@ -398,6 +405,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                            id='backtesting-page-link',href='#backtesting',className='sport-page-link'),
                     html.Div(id='backtesting-navigation',className='backtesting-navigation',style={'display':'none'}),
                     html.A('Visualized In-Game Data', id='in-game-page-link', href='#nba-in-game-data', className='sport-page-link'),
+                    information_navigation(),
                 ], className="page-toolbar", **{"aria-label": "Sport pages"}),
                 html.Div([
                     html.Div([html.Span('Loading the selected market…',className='market-transition-loading'),
@@ -580,6 +588,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     kalshi_layout(),
                     polymarket_view.layout(),
                     market_summary_layout(),
+                    information_layout(),
                 ], className="page-content"),
             ], id="sport-pages", className="page-shell"),
             html.Section([
@@ -651,6 +660,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                            target="_blank", rel="noopener noreferrer"),
                 ], className="panel odds-setup"),
             ], id="odds-api-page", style={"display": "none"}),
+            pnl_layout(),
             html.Footer("NBA / NFL / NCAAF · Displayed times in EDT (UTC−4)")
         ]),
         slip_layout(),
@@ -673,28 +683,31 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Input("workspace-page", "value"), Input("sport", "value"),Input('entity-type','value'))
     def navigate(page, sport,kind='team'):
         odds = sport == "ODDS_API"
+        personal=sport=='PNL'
         research=sport=='RESEARCH'
-        market = page == "market" and not odds and not research
-        backtesting = research or (page == 'backtesting' and not odds)
+        market = page == "market" and not odds and not research and not personal
+        backtesting = research or (page == 'backtesting' and not odds and not personal)
         in_game = page == 'in-game' and sport in {'NBA','NFL'}
         kalshi = page == 'kalshi' and sport in SOURCES
         polymarket = page == 'polymarket' and sport in SOURCES
         summary = page == 'market-summary' and sport in SOURCES
+        information=page=='information' and sport in {'NBA','NFL'}
         exchange = 'Polymarket' if polymarket else 'Kalshi' if kalshi else None
-        intro = ('STRATEGY & RESEARCH','Study the method. Test your parameters.',
+        intro = ('P&L HISTORY','Your betting history and recorded balances.',
+                 'Track actual stakes, settlements and cash transfers across your accounts.') if personal else ('STRATEGY & RESEARCH','Study the method. Test your parameters.',
                  'Explore forecasting strategies and run reproducible historical experiments across NBA, NFL and NCAAF.') if research else ("THE ODDS API", "Your monthly credits at a glance.",
                  "Monitor your account's credit usage and connection status.") if odds else (
                 'THE BACKTESTING LAB','Explore your forecasting models.',
                 f'Game Outcome and Player Stats evaluation methods for {sport}.') if backtesting else (
-                'MARKET DATA' if summary else 'THE '+exchange.upper()+' EXCHANGE' if exchange else "ON THE COURT / ON THE FIELD" if in_game else "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
-                f'{sport} · Market Summary' if summary else f'{sport} · {exchange} Market' if exchange else f'{sport} · Visualized In-Game Data' if in_game else "The next game starts here." if market else f'{sport} · {"Player" if kind=="player" else "Team"} Statistics',
-                'Compare market odds, implied probabilities and model forecasts across all three providers.' if summary else f'Browse game contracts and current exchange quotes from {exchange}’s public API.' if exchange else 'See recorded shots and offensive plays on an interactive court or field.' if in_game else "Explore upcoming NBA, NFL, and college football matchups." if market else
+                'INFORMATION VARIABLE' if information else 'MARKET DATA' if summary else 'THE '+exchange.upper()+' EXCHANGE' if exchange else "ON THE COURT / ON THE FIELD" if in_game else "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
+                f'{sport} · Information Variable' if information else f'{sport} · Market Summary' if summary else f'{sport} · {exchange} Market' if exchange else f'{sport} · Visualized In-Game Data' if in_game else "The next game starts here." if market else f'{sport} · {"Player" if kind=="player" else "Team"} Statistics',
+                'Read official league reports, attributed news and NFL weather information.' if information else 'Compare market odds, implied probabilities and model forecasts across all three providers.' if summary else f'Browse game contracts and current exchange quotes from {exchange}’s public API.' if exchange else 'See recorded shots and offensive plays on an interactive court or field.' if in_game else "Explore upcoming NBA, NFL, and college football matchups." if market else
                 ('Explore saved college player performances and game logs.' if sport=='NCAAF' else
                  'Explore historical player performances and career statistics.') if kind=='player' else
                 'Explore historical team performances and statistics.')
-        return ({"display": "none" if market or odds or backtesting or in_game or exchange or summary else "grid"}, {"display": "block" if market else "none"},
+        return ({"display": "none" if market or odds or backtesting or in_game or exchange or summary or information or personal else "grid"}, {"display": "block" if market else "none"},
                 f"{sport} · Upcoming games", FANDUEL_LINKS.get(sport, FANDUEL_LINKS["NBA"]), not market,
-                *intro, {"display": "none" if odds else "grid"}, {"display": "block" if odds else "none"}, not odds,
+                *intro, {"display": "none" if odds or personal else "grid"}, {"display": "block" if odds else "none"}, not odds,
                 {'display':'block' if backtesting else 'none'})
 
     @app.callback(Output('historical-navigation','children'),Output('historical-navigation','style'),
@@ -977,7 +990,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             # Re-emitting an unchanged sport wakes every sport-dependent page.
             return (no_update if next_sport==sport else next_sport,
                     no_update if next_page==page else next_page)
+        if location_hash=='#pnl-history':return destination('PNL','pnl')
         if market_summary.route(location_hash):return destination(market_summary.route(location_hash),'market-summary')
+        if information_route(location_hash):return destination(information_route(location_hash)['sport'],'information')
         if kalshi_route(location_hash):return destination(kalshi_route(location_hash)[0],'kalshi')
         if polymarket_view.route(location_hash):return destination(polymarket_view.route(location_hash)[0],'polymarket')
         in_game = re.fullmatch(r'#(nba|nfl)-in-game-data', location_hash or '')
@@ -1819,6 +1834,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
 
     register_backtest_summary(app,backtesting_service)
     register_performance(app,backtesting_service)
+    register_information(app,information_service)
+    register_pnl(app,ledger)
     register_comparison_callbacks(app,backtesting_service)
     register_in_game_callbacks(app,in_game_service)
     register_kalshi_callbacks(app,kalshi_service)

@@ -24,6 +24,8 @@ coverage.xml
 # Local source caches, account logs, downloaded data and fitted estimates
 data/cache/
 data/backtesting/
+data/pnl/
+data/information_variable/
 market_data/*.csv
 data/market_data/*.csv
 data/kalshi_market/
