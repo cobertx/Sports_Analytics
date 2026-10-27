@@ -13,16 +13,18 @@ from . import kalshi_view as default_view
 from .display_time import format_eastern
 from .exchange_render import render
 from .kalshi_analysis import FILTER, decorate
+from .page_cache import QuotePages
 
 
-def register(app, service, *, view=None, provider='Kalshi'):
+def register(app, service, *, view=None, provider='Kalshi',pages=None):
     view = view or default_view
     prefix = provider.lower()
+    pages=pages or (QuotePages(service) if getattr(service,'background',False) is True else None)
     polling = {}
     polling_lock = Lock()
     app.clientside_callback(f'''function(page,selected,frequency,category,games,quotes){{
-        const state=quotes?{{game:quotes.game_id,category:quotes.category,updating:!!quotes.updating}}:null;
-        const waiting=(games&&games.updating)||(state&&state.updating&&selected==='live'&&frequency>0&&category!=='Mispricing Filter');
+        const state=quotes?{{game:quotes.game_id,category:quotes.category,updating:!!quotes.updating,page_pending:!!quotes.page_pending}}:null;
+        const waiting=(games&&games.updating)||(state&&state.updating&&selected==='live'&&(frequency>0||state.page_pending)&&category!=='Mispricing Filter');
         return [page!=={json.dumps(prefix)}||!waiting,state];
     }}''',Output(f'{prefix}-cache-poll','disabled'),Output(f'{prefix}-cache-state','data'),
         Input('workspace-page','value'),Input(f'{prefix}-snapshot','value'),Input(f'{prefix}-frequency','value'),
@@ -122,7 +124,8 @@ def register(app, service, *, view=None, provider='Kalshi'):
         if not game or game.get('sport') != sport:
             return (None, f'Choose a {provider} game to load its contracts.', history_options(None, category),
                     'live' if selected!='live' else no_update)
-        if ctx.triggered_id in {f'{prefix}-quote-timer',f'{prefix}-cache-poll'} and (selected != 'live' or not frequency): raise PreventUpdate
+        if ctx.triggered_id in {f'{prefix}-quote-timer',f'{prefix}-cache-poll'} and (selected != 'live' or
+                (not frequency and not (ctx.triggered_id==f'{prefix}-cache-poll' and (cache_state or {}).get('page_pending')))):raise PreventUpdate
         if ctx.triggered_id==f'{prefix}-cache-poll' and (not cache_state or not cache_state.get('updating') or
                 (cache_state.get('game'),cache_state.get('category'))!=(game['id'],category)):raise PreventUpdate
         key = (sport,game['id'],category,selected)
@@ -138,12 +141,17 @@ def register(app, service, *, view=None, provider='Kalshi'):
             if reload_history and selected not in {o['value'] for o in options}:
                 selected = 'live'
             archived = selected not in {None, 'live'} and not pull
-            snapshot = service.saved(game, category, selected) if archived else service.quotes(game, category, refresh=pull, save=pull)
+            if archived:snapshot=service.saved(game,category,selected)
+            elif pages is not None and not pull:snapshot=pages.read(game,category)
+            else:
+                snapshot=service.quotes(game,category,refresh=pull,save=pull)
+                if pages is not None:pages.remember(game,category,snapshot)
             stamp = format_eastern(snapshot['fetched_at']) if snapshot.get('fetched_at') else 'No live quote timestamp'
             status = ('SAVED SNAPSHOT' if archived else 'PUBLIC REST QUOTES') + f" · {len(snapshot['rows'])} contracts · Fetched {stamp}."
             if snapshot.get('notices'): status += ' ' + ' '.join(snapshot['notices'])
             if snapshot.get('saved'): status += ' JSON/CSV snapshot saved: ' + snapshot['saved']
-            if not snapshot['rows']: status += f' {provider} has no contracts for this linked category.'
+            if not snapshot['rows']:
+                status += (' Loading this category…' if snapshot.get('updating') else f' {provider} has no contracts for this linked category.')
             if pull: options = history_options(game, category)
             chosen = 'live' if pull else selected
             # Re-emitting the dropdown's own input needlessly retriggers refreshes.

@@ -120,7 +120,8 @@ class ExchangeUpdateChecks(TestCase):
         models=dict(context=identity(self.game,'live','PPP','WHP'),predictions={row['ticker']:
                     dict(definition=definition(row),probability=.8,method='PPP',detail='Historical fit') for row in self.snapshot['rows']})
         shown=view.market_sections({**self.snapshot,'game':self.game})
-        identities=[c.id for c in fixtures.components(shown) if isinstance(getattr(c,'id',None),dict)]
+        identities=[c.id for c in fixtures.components(shown) if isinstance(getattr(c,'id',None),dict)
+                    and c.id.get('type')=='kalshi-comparison-row']
         values={'kalshi-models':models,'kalshi-applied-criteria':dict(probability=.75,edge=.05),
                 'kalshi-game-method':'PPP','kalshi-player-method':'WHP','kalshi-snapshot':'live',
                 'kalshi-quotes':self.snapshot,'kalshi-context':self.game,'kalshi-category':'Game Lines',

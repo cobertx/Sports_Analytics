@@ -39,14 +39,15 @@ the offense/league prior is available, so its effective sample may be smaller
 than the raw schedule. The first cold-start games initialize neutral priors and
 are not assigned invented actual/expected labels.
 
-The existing historical repository reads the matchup season and immediately
-preceding season, including saved regular and postseason games. NBA seasons
+The existing historical repository reads the matchup season and two prior seasons
+for NBA, or the matchup season and previous season for NFL, including saved regular
+and postseason games. NBA seasons
 use starting years with an October boundary; football uses March to keep
 January/February in the preceding season. No windows reset at opening night.
 A new season with few games borrows remaining appearances and defensive games
 from the previous season through the same recency weighting and shrinkage.
 
-If neither season has enough data, estimates remain unavailable. Player identity
+If the saved seasons lack enough data, estimates remain unavailable. Player identity
 uses the latest known club across all saved clubs; opportunity ratios then use
 same-current-club appearances only. A recent trade can therefore leave a player
 unavailable until the minimum same-club history exists. The shared identity rule
@@ -268,7 +269,8 @@ python -m models.Player_Stats.Opponent_Adjusted_Matchup --sport NFL --snapshot "
 python -m models.Player_Stats.Opponent_Adjusted_Matchup --sport NFL --backtest-snapshots "archive.json" --actuals "actuals.csv" --compare
 ```
 
-Preparation explicitly loads league-wide player and team data for both seasons.
+Preparation explicitly loads league-wide player and team data for the NBA matchup
+season and two prior seasons, or the NFL matchup season and previous season.
 `--refresh` requests source refreshes. `--simulations` changes the simulation count;
 `--scenarios` reads optional pregame scenarios. No Odds API request is made by
 preparation or prediction. Dependencies are the existing runtime requirements.

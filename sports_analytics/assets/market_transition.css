@@ -4,10 +4,12 @@
 .market-screen #sport-pages { display: grid !important; }
 .market-screen #historical-page,.market-screen #backtesting-page,.market-screen #in-game-page,
 .market-screen #odds-api-page,.market-screen #historical-navigation,.market-screen #backtesting-navigation,
-.market-screen #market-page,.market-screen #kalshi-page,.market-screen #polymarket-page,.market-screen #market-summary-page { display: none !important; }
+.market-screen #market-page,.market-screen #kalshi-page,.market-screen #polymarket-page,.market-screen #market-summary-page,
+.market-screen #filtered-results-page { display: none !important; }
 .market-screen-market #market-page { display: block !important; }
 .market-screen-kalshi #kalshi-page,.market-screen-polymarket #polymarket-page { display: grid !important; }
 .market-screen-summary #market-summary-page { display: grid !important; }
+.market-screen-filtered #filtered-results-page { display: grid !important; }
 .market-screen-list #market-game-detail,.market-screen-list #kalshi-detail,.market-screen-list #polymarket-detail,
 .market-screen-detail #market-list,.market-screen-detail #kalshi-list,.market-screen-detail #polymarket-list { display: none !important; }
 .market-screen-list #market-list,.market-screen-list #kalshi-list,.market-screen-list #polymarket-list,
@@ -20,7 +22,9 @@
 .market-screen-unavailable .market-transition-unavailable { display: inline; }
 .market-screen-unavailable #kalshi-detail,.market-screen-unavailable #polymarket-detail { display: none !important; }
 .market-screen .sport-page-link.active { background: transparent; color: var(--muted); font-weight: 400; }
-.market-screen-market #market-page-link,.market-screen-kalshi #kalshi-page-link,.market-screen-polymarket #polymarket-page-link,.market-screen-summary #market-summary-page-link {
+.market-screen-market #market-page-link,.market-screen-kalshi #kalshi-page-link,.market-screen-polymarket #polymarket-page-link,.market-screen-summary #market-summary-page-link,
+.market-screen-filtered #filtered-results-page-link {
   background: #102e32; color: var(--accent); font-weight: 650;
 }
-.market-screen-kalshi #parlay-drawer,.market-screen-polymarket #parlay-drawer,.market-screen-summary #parlay-drawer { display: none !important; }
+.market-screen-kalshi #parlay-drawer,.market-screen-polymarket #parlay-drawer,.market-screen-summary #parlay-drawer,
+.market-screen-filtered #parlay-drawer { display: none !important; }

@@ -34,13 +34,22 @@ Each feature family must meet its own minimum; the effective intersection of
 required observed columns can be smaller than the total number of player games.
 Missing observations are dropped for that family, never converted to zero.
 
-The repository reads the matchup season and the immediately previous season,
-including saved regular and postseason rows. NBA seasons use starting years;
+The repository reads the matchup season and two prior seasons for NBA, and the
+matchup season and previous season for NFL, including saved regular and postseason rows.
+NBA seasons use starting years;
 October starts the NBA lookup season. Football lookup seasons change in March,
 keeping January/February in the preceding football season. No season reset is
 applied inside an appearance window. Early in a new season, recent appearances
 from the previous season naturally supply the remaining window. Efficiency uses
 its longer window even when role history is short.
+
+Complete observations must have finite values in every required channel, including
+team minutes. Pandas nullable missing values are excluded before selecting the
+window; they are never treated as zero or as a regulation-length game. The wider
+NBA lookup supports returning players after a missed season without changing
+sample requirements, recency weights or calibration requirements.
+Team and opponent aliases use the selected sport's codes, so NBA Washington
+remains `WAS` while NFL Washington uses `WSH`.
 
 A new player without the minimum complete appearances has no forecast. No
 invented rookie baseline or league-average production is substituted. For a
@@ -242,7 +251,7 @@ python -m models.Player_Stats.Usage_Opportunity --sport NFL --prepare --start "2
 python -m models.Player_Stats.Usage_Opportunity --sport NBA --snapshot "data/market_data/your_saved_snapshot.csv"
 ```
 
-Preparation explicitly downloads player and team rows for both seasons, reusing
+Preparation explicitly downloads player and team rows for the lookup seasons, reusing
 existing caches where possible. `--refresh` requests source refreshes. Neither
 command pulls Odds API markets. `--simulations` changes the simulation count for
 pricing/replay; permitted counts are 1,000 through 200,000. Source downloads use

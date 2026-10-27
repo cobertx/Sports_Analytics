@@ -8,7 +8,7 @@ and [EPA guide](models/Game_Outcome/EPA/EPA_Implementation_Guide.pdf), plus the
 windows, minimum game counts, new-season carryover, formulas, calibration and
 saved-model behavior. The source research PDFs are retained separately.
 
-Each sport's left toolbar groups **FanDuel**, **Kalshi**, **Polymarket** and **Market Summary** under **Market Data**. **Historical Data** opens nested **Team Statistics** and **Player Statistics** pages for NBA/NFL (NCAAF's standard menu has Team Statistics). These pages contain the historical filters, charts, career histories, and game log. **Backtesting** opens a model overview and nested model pages. Switching pages preserves the historical controls. Historical subpages use `#historical-team` and `#historical-player`, apply to the selected sport tab, and support browser back/forward navigation.
+Each sport's left toolbar groups **FanDuel**, **Kalshi**, **Polymarket**, **Market Summary** and **Filtered Results** under **Market Data**. **Historical Data** opens nested **Team Statistics** and **Player Statistics** pages for NBA/NFL (NCAAF's standard menu has Team Statistics). These pages contain the historical filters, charts, career histories, and game log. **Backtesting** opens a model overview and nested model pages. Switching pages preserves the historical controls. Historical subpages use `#historical-team` and `#historical-player`, apply to the selected sport tab, and support browser back/forward navigation.
 
 **P&L History** is the top-level tab after **Strategy & Research** (`#pnl-history`). It
 tracks real, locally recorded USD bets and account cash flows. No sportsbook/exchange
@@ -83,6 +83,20 @@ counts alongside MAE, RMSE, bias, tolerance accuracy, interval coverage and base
 Winner accuracy/Brier/log loss use the home-winner event; total-point summaries omit these
 unrelated event scores. Player event scores require a shared reference line. Each row links
 to its complete saved report. Error tolerance can be changed without refitting.
+
+**Filtered Results** (`#nba-filtered-results`, `#nfl-filtered-results`, `#ncaaf-filtered-results`)
+collects every qualifying selection from completed FanDuel and Kalshi Quick Filtering
+runs, including the top three and remaining matches. Reports persist in
+`data/cache/filtered_results.sqlite3`. The page reads local data only and sorts by
+calculated probability descending, then edge descending. Multi-method reports use
+the lowest probability and edge across the selected methods, with individual
+estimates in the method tooltip. Source, game, quote timestamp, criteria and filter
+time remain visible, and each selection links back to its game markets.
+The default shows the latest completed run for each game/source; **All saved runs**
+retains prior reports. A new run with no matches replaces the prior run in the
+latest view. Games disappear at their scheduled start, while their reports remain
+saved. New Quick Filtering runs save automatically; earlier unsaved runs need to
+be rerun once. Refreshing this page does not spend credits or recalculate models.
 
 **Market Summary** (`#nba-market-summary`, `#nfl-market-summary`, `#ncaaf-market-summary`)
 shows upcoming games with team logos, then compares selections in tables grouped by
@@ -315,6 +329,23 @@ the displayed catalog for up to one minute for exchanges and five minutes for
 FanDuel; timer updates, changed sport/window and explicit refreshes still check
 the source. Refresh indicators leave existing game cards visible and usable.
 
+FanDuel game pages display saved quotes before running the selected forecast in
+bounded background workers. Probabilities and comparison graphs appear when the
+unchanged model calculation finishes; polling while it runs does not rebuild the
+market groups. Returning to an unchanged game retains its existing result.
+
+Kalshi and Polymarket also save assembled game/category views as timestamped JSON
+under `data/kalshi_market/.cache/page_views/` and
+`data/polymarket_market/.cache/page_views/`. A revisit can read that view immediately,
+including after an app restart, while current quotes load outside the navigation
+request. The initial load also completes when periodic polling is paused. Manual
+**Pull Live Markets** still refreshes and archives explicitly, and an older
+background response cannot overwrite its page cache. Market Summary uses the same
+nonblocking quote readers. Saved prices retain their actual quote timestamps;
+missing prices and failed updates are never presented as fresh data.
+`scripts/check_page_speed.py` checks cold reads, restarts, manual-pull ordering,
+paused loading, blocked-source responsiveness and exact forecast display equivalence.
+
 Quotes show Yes/No bids and asks, last trade, fractional contract volume, open
 interest and contract status. Dollar-string/fixed-point fields take precedence
 over legacy integer cents. Missing prices remain unavailable. Values in the
@@ -393,7 +424,8 @@ the sport, start and team arguments documented in the WHP guide; NCAAF requires
 `CFBD_API_KEY`. No history preparation controls appear in the game view.
 
 WHP uses up to 20 NBA, 16 NFL or 12 NCAAF appearances with independently replayed
-forecast errors for dispersion. NBA/NFL look up the current and previous season;
+forecast errors for dispersion. NBA looks up the current and two previous seasons;
+NFL looks up the current and previous season;
 NCAAF now looks up the current and two previous seasons, including targeted transfers.
 Missing targets, insufficient samples, ambiguous players and first/last scorer
 definitions remain unavailable with a reason. Anytime/total scorer TDs require
@@ -553,7 +585,7 @@ and its separate `UO_Implementation_Guide.pdf`. It uses the existing NBA and
 nflverse box-score sources; routes, tracking chances, injuries and red-zone feeds
 are not connected. NFL touchdown/order markets therefore remain unavailable in UO.
 
-If player or team inputs are missing, prepare both seasons explicitly:
+If player or team inputs are missing, prepare the required seasons explicitly:
 
 ```powershell
 python -m models.Player_Stats.Usage_Opportunity --sport NBA --prepare --start "2026-10-25T23:00:00Z"
@@ -591,7 +623,8 @@ python -m models.Player_Stats.Opponent_Adjusted_Matchup --sport NBA --prepare --
 python -m models.Player_Stats.Opponent_Adjusted_Matchup --sport NFL --prepare --start "2026-10-25T17:00:00Z"
 ```
 
-Preparation saves league-wide team/player inputs across two seasons. Forecasts
+Preparation saves league-wide team/player inputs across three NBA seasons or two
+NFL seasons. Forecasts
 and defensive-fit records are cached under the ignored
 `data/modeling/player_stats/opponent_adjusted_matchup/` folder. Accuracy requires
 chronological out-of-sample evaluation; implementation checks are not a claim
@@ -733,11 +766,50 @@ requirements/                 Runtime, documentation and logo dependency lists
 scripts/check_project.py      Offline CI layout, import, math, route and logo checks
 ```
 
+Every market prompt includes **Market Structure**, opening a shared panel for
+FanDuel, Kalshi and Polymarket without leaving the current game. The same outcome
+is matched using both teams, scheduled start, threshold and push treatment.
+Related contracts with different refund/settlement rules are labeled separately
+and retain their own rules; their activity is never pooled as an identical bet.
+
+Kalshi's public REST API supplies trade prints, fractional contract volume,
+Yes/No taker-direction turnover, open interest and order-book depth. Polymarket's
+public Data API v2 and CLOB API supply BUY/SELL fills by outcome, buy and sell
+turnover, current holder position costs/values, priced gross open interest and
+resting liquidity. The main table shows purchase execution counts and the amount
+paid for each outcome. Kalshi No purchases use the complementary No price, not
+the reported common Yes-price basis. Polymarket SELL fills stay separate from
+BUY purchase totals. No account key or trading connection is needed. Neither
+exchange's execution counts are sportsbook tickets or unique bettors. One order
+can produce multiple fills, and unfilled orders are labeled separately.
+
+The panel refreshes in the background every 30 seconds while open, can be paused,
+and offers manual refresh. Timestamped snapshots are cached locally under
+`data/market_structure/`, independently of model/backtest inputs. Each read scans
+up to 2,000 trade records. Select **All available API history** (default) or
+**Last 24 hours**; Polymarket's market feed is filtered locally for the latter.
+The windows use separate caches. Capped/failed pagination is marked partial with
+counts and amounts labeled as lower bounds; percentages are omitted for partial
+or invalid/unclassified coverage. Exact same-line Polymarket spreads include the
+provider's `Spread: Team (-7.5)` title format. Different thresholds remain separate.
+The first 100 Polymarket holders per outcome are a labeled snapshot, not a full
+market-wide stake split. On refresh errors, earlier available sections retain
+their own timestamps. Closing the panel returns focus to its originating button.
+
+FanDuel's connected odds feed does not supply exact ticket counts, handle or a
+verified comprehensive splits feed. Its panel displays **Unavailable** and links
+to FanDuel Research. VSiN (DraftKings/Circa) and Action Network are linked as
+additional context, not relabeled as FanDuel data. No paid feed is subscribed to.
+
+Run `python scripts/check_market_structure.py` for the offline activity,
+pagination, matching, local-cache and dialog checks.
+
 Run the offline checks:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/check_project.py
 .\.venv\Scripts\python.exe scripts/check_backtesting.py
+.\.venv\Scripts\python.exe scripts/check_backtest_concurrency.py
 .\.venv\Scripts\python.exe scripts/check_research.py
 .\.venv\Scripts\python.exe scripts/check_market_history.py
 .\.venv\Scripts\python.exe scripts/check_mispricing.py
@@ -788,7 +860,11 @@ within each run. Caches are bounded and isolated between jobs; training contents
 cutoffs and model settings identify each fit. Lookback windows, availability
 rules, Monte Carlo counts and random seeds retain their original behavior.
 Backtests run concurrently: change the controls and use **Run another backtest**
-while an earlier run is active. The progress monitor at the far-left edge shows
+to submit another run. Dashboard backtests use separate processes (two to four
+worker slots, based on CPU count), allowing player-stat runs and live-market
+Quick Filtering to progress together. Additional runs show a waiting status.
+Each worker uses one numerical-library thread; model parameters and simulation
+counts stay unchanged. The progress monitor at the far-left edge shows
 all active runs; each backtesting page remembers its latest run and successful
 results. Returning to a page resumes its progress or displays its completed
 report, including runs that finished while you were elsewhere. Previous results

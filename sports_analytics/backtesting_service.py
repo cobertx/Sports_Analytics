@@ -252,11 +252,22 @@ def player_quantile(forecast,q):
 
 
 class BacktestingService:
-    def __init__(self,root=None,data=None,now=None):
+    def __init__(self,root=None,data=None,now=None,*,isolated=False,publish_latest=True):
         self.root=Path(root or ROOT/'data/backtesting')
         self.data=data or DataService()
         self.now=now or (lambda:pd.Timestamp.now(tz='UTC'))
         self._jobs={};self._jobs_lock=threading.RLock()
+        self._publish_latest=publish_latest
+        self._processes=None
+        if isolated:
+            from .backtest_process import BacktestProcesses
+            self._processes=BacktestProcesses()
+
+    def _remember_report(self,cache):
+        if self._publish_latest:
+            # Dashboard workers send completed reports to the parent; only the
+            # parent writes this shared marker, including on Windows.
+            with self._jobs_lock:atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
 
     def start(self,*,display_label=None,**parameters):
         """Run independently of other jobs and the HTTP request thread."""
@@ -277,7 +288,12 @@ class BacktestingService:
                     percent=min(99,int(100*done/total)) if total else 0)
         def work():
             try:
-                result=self.run(**parameters,progress=progress)
+                if self._processes is None:
+                    result=self.run(**parameters,progress=progress)
+                else:
+                    result=self._processes.run(self.root,self.data,self.now(),parameters,progress)
+                    context=result['context']
+                    self._remember_report(self.root/context['sport'].lower()/context['group']/context['model']/(result['run_id']+'.json'))
                 with self._jobs_lock:
                     job=self._jobs[job_id]
                     job.update(state='completed',percent=100,result=result,
@@ -545,7 +561,7 @@ class BacktestingService:
             if saved.get('identity')==identity:
                 result={**saved['result'],'run_id':cache.stem}
                 self.ensure_exports(result)
-                with self._jobs_lock:atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
+                self._remember_report(cache)
                 if progress:progress(len(games),len(games),'Loaded saved results')
                 return result
         result=dict(context={k:identity[k] for k in ['sport','group','model','entity','market','start','end','limit','tolerance','line','include_playoffs','lookback','interval_level']},
@@ -563,9 +579,7 @@ class BacktestingService:
         if progress:progress(len(games),len(games),'Saving reports')
         self.ensure_exports(result)
         atomic_json(cache,dict(identity=identity,result=result))
-        # Simulations overlap, but Windows cannot replace the same latest-run
-        # marker concurrently. Serialize this tiny metadata write only.
-        with self._jobs_lock:atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
+        self._remember_report(cache)
         return result
 
     @replay_scope
@@ -609,7 +623,11 @@ class BacktestingService:
         team_games,_=self.game_inputs(sport,'ppp') if service else (None,None)
         pairs={str(game_id):pair for game_id,pair in team_games.groupby('game_id')} if service else {}
         whp=WeightedHistoricalPerformance(configured(WHPConfig.for_sport(sport),result['config'])) if key=='whp' else None
-        if service:service.config=configured(player_config(sport,key),result['config'])
+        if service:
+            service.config=configured(player_config(sport,key),result['config'])
+            # Overlapping replays can forecast the same historical matchup.
+            # Keep their intermediate files independent, as well as their fits.
+            service.repository.root=service.repository.root/result['run_id']
         context=result['context'];lookback=context['lookback']
         aggregate=context.get('entity')=='__all__'
         subjects={}

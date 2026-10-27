@@ -18,7 +18,7 @@ PGE fair odds and Edge. Game Outcome Forecast Method remains independent.
 
 | Setting | NBA | NFL |
 | --- | --- | --- |
-| Saved source seasons | Matchup season and previous season | Matchup season and previous season |
+| Saved source seasons | Matchup season and two prior seasons | Matchup season and previous season |
 | Role window / recency half-life | 20 complete appearances / 5 | 16 complete appearances / 3 |
 | Efficiency window / half-life | 60 complete appearances / 20 | 32 complete appearances / 8 |
 | Team mix/role scenario window | 20 complete team games | 16 complete team games |
@@ -53,7 +53,7 @@ current-club opportunity shares. Exact name/ID and latest known club resolution
 are inherited from the existing player-history adapter; ambiguous identities
 and histories more than 450 days stale are rejected. A new season with no saved
 previous season fails explicitly instead of inventing a distribution. Run the
-preparation command to obtain both seasons.
+preparation command to obtain the required seasons.
 
 ## 1. Relationship to the research methodology
 

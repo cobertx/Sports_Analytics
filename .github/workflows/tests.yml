@@ -29,6 +29,8 @@ jobs:
         run: python scripts/check_project.py
       - name: Check backtesting equivalence and cache isolation
         run: python scripts/check_backtesting.py
+      - name: Check simultaneous player backtests and live filtering
+        run: python scripts/check_backtest_concurrency.py
       - name: Check sport backtest summaries and saved result reopening
         run: python scripts/check_backtesting_summary.py
       - name: Check sport performance summaries and missing simulations
@@ -41,6 +43,8 @@ jobs:
         run: python scripts/check_prompt_history.py
       - name: Check current-season NBA history and single-game market links
         run: python scripts/check_nba_history.py
+      - name: Check nullable NBA inputs, returning players and forecast availability
+        run: python scripts/check_nba_market_forecasts.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -52,6 +56,8 @@ jobs:
         run: node scripts/check_market_transitions.js
       - name: Check mispricing ranking and market filter controls
         run: python scripts/check_mispricing.py
+      - name: Check saved Quick Filtering results, sport navigation and ordering
+        run: python scripts/check_filtered_results.py
       - name: Check research methodology comparisons and shared cohorts
         run: python scripts/check_comparisons.py
       - name: Check recorded in-game coordinates, indexing and navigation
@@ -60,6 +66,8 @@ jobs:
         run: python scripts/check_performance.py
       - name: Check immediate local reads and nonblocking background refreshes
         run: python scripts/check_loading_speed.py
+      - name: Check nonblocking game entry, local quote views and forecast equivalence
+        run: python scripts/check_page_speed.py
       - name: Check information sources, local news and weather freshness
         run: python scripts/check_information.py
       - name: Check personal P&L ledger and statement imports
@@ -76,3 +84,7 @@ jobs:
         run: python scripts/check_polymarket.py
       - name: Check combined market summary, matching and forecast settlement
         run: python scripts/check_market_summary.py
+      - name: Check cross-provider market structure and activity accounting
+        run: python scripts/check_market_structure.py
+      - name: Check market structure dialog keyboard support syntax
+        run: node --check sports_analytics/assets/market_structure.js

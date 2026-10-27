@@ -67,7 +67,8 @@ def eligible_history(frame, as_of):
                 & data["available_at"].ge(data["event_date"])].copy()
     if data["game_id"].isna().any() or data["game_id"].duplicated().any():
         raise WHPError("Player history must contain one uniquely identified observation per game.")
-    if not np.isfinite(data["value"]).all() or not np.equal(data["value"] % 1, 0).all():
+    values = data['value'].to_numpy(dtype=float, na_value=np.nan)
+    if not np.isfinite(values).all() or not np.equal(values % 1, 0).all():
         raise WHPError("Player statistics must be observed finite integers; missing is not zero.")
     return data.sort_values(["event_date", "game_id"]).reset_index(drop=True)
 
@@ -128,8 +129,8 @@ class WeightedHistoricalPerformance:
         prior = float(prior_sample["value"].mean()) if len(prior_sample) >= 3 else None
         opportunity = {}
         if "opportunity" in sample:
-            o = pd.to_numeric(sample["opportunity"], errors="coerce")
-            if np.isfinite(o).all() and o.ge(0).all() and float(w @ o) > 0:
+            o = pd.to_numeric(sample["opportunity"], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+            if np.isfinite(o).all() and (o >= 0).all() and float(w @ o) > 0:
                 projected = float(w @ o) if opportunity_override is None else opportunity_override
                 opportunity = rate_projection(sample["value"], o, w, projected)
         if opportunity_override is not None and not opportunity:

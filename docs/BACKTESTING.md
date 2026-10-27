@@ -189,18 +189,33 @@ older player report requests a rerun rather than relabeling its saved bounds.
 
 ## Progress, reusable runs and exports
 
-Run backtest starts a background worker. The progress bar to the right of Export
+Run backtest starts a background worker. Dashboard replays run in separate
+Python processes, so CPU-heavy fitting does not share the web server's Python
+interpreter with Quick Filtering. Both Game Outcome and Player Stats runs use
+the same worker slots: two to four simulations can advance concurrently,
+depending on CPU count; additional runs wait with an explicit progress message.
+Each worker uses one numerical-library thread to prevent competing fits from
+oversubscribing the CPU. Model settings, simulation counts, random seeds and
+chronological input boundaries are unchanged. Workers use saved local inputs
+and the selected cache database; they never import or start the dashboard.
+Closing the server terminates its active workers.
+Intermediate player-forecast caches are scoped to the run ID, so overlapping
+replays do not compete to replace the same files. The parent server alone
+updates each method's latest-result marker; completed reports remain reusable.
+
+The progress bar to the right of Export
 results updates from completed/attempted games, including skipped targets, and
 reaches 100% after results are saved. Preparing inputs remains at 0%; saving is
 capped at 99%. A single slow model fit can leave the percentage unchanged until
-that game completes. Polling does not rerun the model. The Run button is disabled
-until completion/failure, and identical concurrent requests share a job. Progress
+that game completes. Polling does not rerun the model. Change the controls and
+use **Run another backtest** to submit another job, including on the same player
+method page. Identical concurrent requests share a job. Progress
 is local to the server process; finished reports persist across app restarts.
 
 A **Backtests** monitor stays fixed at the bottom-left, below the sidebar, on
 every page and sport tab. It lists all ongoing jobs in the app's server process,
 with sport/model, team/player scope, requested game count, current phase and a
-percentage bar per run. Jobs waiting for the current fit show 0% until they can
+percentage bar per run. Jobs waiting for a worker slot show 0% until they can
 start. A lightweight one-second poll reads in-memory summaries; it never loads
 historical data or starts simulations. Completed/failed jobs leave this active
 list, while their existing result/error handling remains on the model page.

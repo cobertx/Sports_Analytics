@@ -501,7 +501,13 @@ class ReplayChecks(TestCase):
             first.loc[0, 'value'] = 100
             second, _ = repository.load('NBA', '2026-01-01T00:00:00Z', ['A', 'C'])
             self.assertEqual(second.value.tolist(), [1, 2])
-            self.assertEqual((players.load.call_count, players.data.cached.call_count), (1, 4))
+            # Three NBA source seasons, each with regular and postseason rows;
+            # a second matchup in the same season reuses those six local reads.
+            self.assertEqual((players.load.call_count, players.data.cached.call_count), (1, 6))
+            self.assertEqual([(call.args[0].season, call.args[0].season_type)
+                              for call in players.data.key.call_args_list],
+                             [(year, phase) for year in (2023, 2024, 2025)
+                              for phase in ('regular', 'postseason')])
             repository.load('NBA', '2026-10-01T00:00:00Z', ['A', 'C'])
             self.assertEqual(players.load.call_count, 2)
 

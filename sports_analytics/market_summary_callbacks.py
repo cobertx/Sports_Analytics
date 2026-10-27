@@ -22,7 +22,7 @@ def attempt(function):
     except (DataSourceError,OSError,ValueError,TypeError) as exc:return None,str(exc)
 
 
-def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast):
+def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast,pages=None):
     app.clientside_callback('''function(page,selected,catalog,quotes){
         return page!=='market-summary'||!((catalog&&catalog.updating)||(selected&&quotes&&quotes.updating));
     }''',Output('summary-cache-poll','disabled'),Input('workspace-page','value'),Input('summary-game','value'),
@@ -35,7 +35,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         active=page=='market-summary' and sport in SOURCES
         credits=len({'NBA':NBA_MARKETS,'NFL':NFL_MARKETS,'NCAAF':NCAAF_MARKETS}.get(sport,{}))
         return ({'display':'grid' if active else 'none'},{} if sport in SOURCES else {'display':'none'},
-                'market-data-navigation'+(' active' if page in {'market','kalshi','polymarket','market-summary'} else ''),
+                'market-data-navigation'+(' active' if page in {'market','kalshi','polymarket','market-summary','filtered-results'} else ''),
                 f'#{sport.lower()}-market-summary','sport-page-link'+(' active' if active else ''),
                 f'FanDuel: up to {credits} API credits per pull. Kalshi / Polymarket: public data.')
 
@@ -106,7 +106,14 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
             return {**snapshot,'sport':sport}
         tasks={'FanDuel':fanduel}
         for provider,service in [('Kalshi',kalshi),('Polymarket',polymarket)]:
-            if linked[provider]:tasks[provider]=lambda service=service,provider=provider:service.all_quotes(linked[provider],refresh=pull,save=pull)
+            if linked[provider]:
+                def exchange_quotes(service=service,provider=provider):
+                    cache=(pages or {}).get(provider)
+                    if cache is not None and not pull:return cache.read(linked[provider],'All Markets')
+                    snapshot=service.all_quotes(linked[provider],refresh=pull,save=pull)
+                    if cache is not None:cache.remember(linked[provider],'All Markets',snapshot)
+                    return snapshot
+                tasks[provider]=exchange_quotes
         with ThreadPoolExecutor(max_workers=3,thread_name_prefix='summary-quotes') as pool:
             pending={provider:pool.submit(attempt,function) for provider,function in tasks.items()}
             loaded={provider:task.result() for provider,task in pending.items()}
@@ -132,6 +139,8 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                   running=[(Output('summary-recalculate','disabled'),True,False)])
     def summary_models(bundle,method,player_method,clicks,page,sport,selected,previous):
         if page!='market-summary' or not bundle or bundle.get('sport')!=sport or str(bundle['game']['id'])!=selected:raise PreventUpdate
+        if any((record.get('snapshot') or {}).get('page_pending') and not (record.get('snapshot') or {}).get('rows')
+               for record in bundle.get('providers',{}).values()):raise PreventUpdate
         if method not in GAME_METHODS or player_method not in PLAYER_METHODS:raise PreventUpdate
         if (previous and [previous.get('bundle_id'),previous.get('method'),previous.get('player_method')]==[bundle['id'],method,player_method]
                 and ctx.triggered_id!='summary-recalculate'):raise PreventUpdate

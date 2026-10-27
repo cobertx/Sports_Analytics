@@ -13,6 +13,8 @@ function checkMarketTransitions(source) {
     const catalogs=[{sport},{sport},{sport}];
     check(route('#'+slug+'-market-summary').provider==='summary','Route each sport summary');
     check(screen('#'+slug+'-market-summary',sport)==='app-shell market-screen market-screen-summary','Show summary without waiting on provider contexts');
+    check(route('#'+slug+'-filtered-results').provider==='filtered','Route each sport filtered results');
+    check(screen('#'+slug+'-filtered-results',sport)==='app-shell market-screen market-screen-filtered','Show local results without provider contexts');
     for(const provider of ['market','kalshi','polymarket']) {
       const index=['market','kalshi','polymarket'].indexOf(provider);
       const list=provider==='market'?'#'+slug+'-games':'#'+slug+'-'+provider+'-market';

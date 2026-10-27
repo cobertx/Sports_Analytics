@@ -3,6 +3,8 @@
 from datetime import date, datetime
 from collections import OrderedDict
 import csv
+import hashlib
+import json
 import math
 import re
 from pathlib import Path
@@ -43,6 +45,11 @@ from . import polymarket_view
 from . import market_summary
 from .market_summary_view import layout as market_summary_layout
 from .market_summary_callbacks import register as register_market_summary
+from .market_structure import MarketStructure
+from .market_structure_view import layout as structure_layout, register as register_structure
+from .filtered_results import FilteredResults, route as filtered_results_route
+from .filtered_results_view import layout as filtered_results_layout, register as register_filtered_results
+from .page_cache import PageTasks,QuotePages
 from .research_config import form_parameters
 from .historical_view import historical_route,statistics_kind,navigation as historical_navigation
 from .historical_links import history_target,matches_dataset,target_entity,target_metric,market_metrics
@@ -288,14 +295,19 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                nba_epa_service=None, elo_service=None, nba_elo_service=None, ncaaf_market_service=None,
                whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None,
                ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None,in_game_service=None,kalshi_service=None,
-               polymarket_service=None,information_service=None,ledger=None):
+               polymarket_service=None,information_service=None,ledger=None,structure_service=None,filtered_results_service=None):
     service = service or DataService()
+    filtered_results_service = filtered_results_service or FilteredResults(service.path.with_name('filtered_results.sqlite3'))
     information_service=information_service or InformationService()
     ledger=ledger or Ledger()
     in_game_service = in_game_service or InGameService(data=service)
     kalshi_service = kalshi_service or KalshiService(background=True)
     polymarket_service = polymarket_service or PolymarketService(background=True)
-    backtesting_service=backtesting_service or BacktestingService(data=service)
+    structure_service = structure_service or MarketStructure(kalshi=kalshi_service,polymarket=polymarket_service)
+    market_page_tasks=PageTasks()
+    exchange_pages={name:QuotePages(source) for name,source in [('Kalshi',kalshi_service),('Polymarket',polymarket_service)]
+                    if getattr(source,'background',False) is True}
+    backtesting_service=backtesting_service or BacktestingService(data=service,isolated=True)
     career_service = career_service or CareerService(service.path.with_name("career.sqlite3"))
     schedule_service = schedule_service or ScheduleService(service.path.with_name("schedules.sqlite3"),background=True)
     odds_service = odds_service or OddsApiService()
@@ -370,6 +382,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         dcc.Store(id='market-return',data={},storage_type='session'),
         dcc.Store(id='mispricing-request'),
         dcc.Store(id="market-forecast-history"),
+        dcc.Interval(id='market-model-poll',interval=1000,disabled=True),
         dcc.Store(id="parlay-store",storage_type="session",data={"version":1,"legs":[],"collapsed":False}),
         dcc.Interval(id="market-timer", interval=5 * 60 * 1000, disabled=True),
         dcc.Interval(id="odds-timer", interval=5 * 60 * 1000, disabled=True),
@@ -399,6 +412,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                             html.A('Kalshi',id='kalshi-page-link',href='#nba-kalshi-market',className='sport-page-link'),
                             html.A('Polymarket',id='polymarket-page-link',href='#nba-polymarket-market',className='sport-page-link'),
                             html.A('Market Summary',id='market-summary-page-link',href='#nba-market-summary',className='sport-page-link'),
+                            html.A('Filtered Results',id='filtered-results-page-link',href='#nba-filtered-results',className='sport-page-link'),
                         ],className='market-provider-pages'),
                     ],id='market-data-navigation',open=True,className='market-data-navigation'),
                     html.A([html.Span('↺',className='navigation-icon',**{'aria-hidden':'true'}),'Backtesting'],
@@ -588,6 +602,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     kalshi_layout(),
                     polymarket_view.layout(),
                     market_summary_layout(),
+                    filtered_results_layout(),
                     information_layout(),
                 ], className="page-content"),
             ], id="sport-pages", className="page-shell"),
@@ -665,6 +680,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         ]),
         slip_layout(),
         backtesting_monitor_layout(),
+        structure_layout(),
     ], id='app-shell',className="app-shell")
 
     app.clientside_callback(
@@ -673,6 +689,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         Output('app-shell','className'),Input('market-url','hash'),Input('sport','value'),
         Input('market-detail-context','data'),Input('kalshi-context','data'),Input('polymarket-context','data'),
         Input('market-schedule-scope','data'),Input('kalshi-games','data'),Input('polymarket-games','data'))
+
+    app.clientside_callback('''function(page,history,hash,snapshot,category){
+        return page!=='market'||category==='Mispricing'||!history||!history.pending||
+            JSON.stringify(history.context)!==JSON.stringify([hash,snapshot]);
+    }''',Output('market-model-poll','disabled'),Input('workspace-page','value'),Input('market-forecast-history','data'),
+        Input('market-url','hash'),Input('market-snapshot','value'),Input('market-category','value'))
 
     @app.callback(Output("historical-page", "style"), Output("market-page", "style"),
                   Output("market-title", "children"), Output("fanduel-link", "href"), Output("market-timer", "disabled"),
@@ -691,6 +713,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         kalshi = page == 'kalshi' and sport in SOURCES
         polymarket = page == 'polymarket' and sport in SOURCES
         summary = page == 'market-summary' and sport in SOURCES
+        filtered = page == 'filtered-results' and sport in SOURCES
         information=page=='information' and sport in {'NBA','NFL'}
         exchange = 'Polymarket' if polymarket else 'Kalshi' if kalshi else None
         intro = ('P&L HISTORY','Your betting history and recorded balances.',
@@ -699,13 +722,13 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                  "Monitor your account's credit usage and connection status.") if odds else (
                 'THE BACKTESTING LAB','Explore your forecasting models.',
                 f'Game Outcome and Player Stats evaluation methods for {sport}.') if backtesting else (
-                'INFORMATION VARIABLE' if information else 'MARKET DATA' if summary else 'THE '+exchange.upper()+' EXCHANGE' if exchange else "ON THE COURT / ON THE FIELD" if in_game else "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
-                f'{sport} · Information Variable' if information else f'{sport} · Market Summary' if summary else f'{sport} · {exchange} Market' if exchange else f'{sport} · Visualized In-Game Data' if in_game else "The next game starts here." if market else f'{sport} · {"Player" if kind=="player" else "Team"} Statistics',
-                'Read official league reports, attributed news and NFL weather information.' if information else 'Compare market odds, implied probabilities and model forecasts across all three providers.' if summary else f'Browse game contracts and current exchange quotes from {exchange}’s public API.' if exchange else 'See recorded shots and offensive plays on an interactive court or field.' if in_game else "Explore upcoming NBA, NFL, and college football matchups." if market else
+                'INFORMATION VARIABLE' if information else 'MARKET DATA' if summary or filtered else 'THE '+exchange.upper()+' EXCHANGE' if exchange else "ON THE COURT / ON THE FIELD" if in_game else "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
+                f'{sport} · Filtered Results' if filtered else f'{sport} · Information Variable' if information else f'{sport} · Market Summary' if summary else f'{sport} · {exchange} Market' if exchange else f'{sport} · Visualized In-Game Data' if in_game else "The next game starts here." if market else f'{sport} · {"Player" if kind=="player" else "Team"} Statistics',
+                'Browse saved Quick Filtering matches across upcoming games.' if filtered else 'Read official league reports, attributed news and NFL weather information.' if information else 'Compare market odds, implied probabilities and model forecasts across all three providers.' if summary else f'Browse game contracts and current exchange quotes from {exchange}’s public API.' if exchange else 'See recorded shots and offensive plays on an interactive court or field.' if in_game else "Explore upcoming NBA, NFL, and college football matchups." if market else
                 ('Explore saved college player performances and game logs.' if sport=='NCAAF' else
                  'Explore historical player performances and career statistics.') if kind=='player' else
                 'Explore historical team performances and statistics.')
-        return ({"display": "none" if market or odds or backtesting or in_game or exchange or summary or information or personal else "grid"}, {"display": "block" if market else "none"},
+        return ({"display": "none" if market or odds or backtesting or in_game or exchange or summary or filtered or information or personal else "grid"}, {"display": "block" if market else "none"},
                 f"{sport} · Upcoming games", FANDUEL_LINKS.get(sport, FANDUEL_LINKS["NBA"]), not market,
                 *intro, {"display": "none" if odds or personal else "grid"}, {"display": "block" if odds else "none"}, not odds,
                 {'display':'block' if backtesting else 'none'})
@@ -992,6 +1015,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     no_update if next_page==page else next_page)
         if location_hash=='#pnl-history':return destination('PNL','pnl')
         if market_summary.route(location_hash):return destination(market_summary.route(location_hash),'market-summary')
+        if filtered_results_route(location_hash):return destination(filtered_results_route(location_hash),'filtered-results')
         if information_route(location_hash):return destination(information_route(location_hash)['sport'],'information')
         if kalshi_route(location_hash):return destination(kalshi_route(location_hash)[0],'kalshi')
         if polymarket_view.route(location_hash):return destination(polymarket_view.route(location_hash)[0],'polymarket')
@@ -1244,9 +1268,11 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         def label(kind, method, prefix):
             if not selection:
                 return prefix + "No saved snapshot selected"
+            if current.get('pending') and ((current.get('view_key') or [None])[0]=='Game')==(kind=='game'):
+                return prefix + 'Calculating…'
             record = current.get(kind, {}).get(method)
             if record is None:
-                return prefix + "Not calculated yet"
+                return prefix + ("Calculating…" if current.get('pending') else "Not calculated yet")
             try:
                 last = date.fromisoformat(record["latest_date"]).strftime("%m/%d/%Y")
             except (ValueError, TypeError, KeyError):
@@ -1331,14 +1357,18 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             history['game'][method]={'latest_date':forecast.diagnostics.get('last_game_date') if forecast else None}
         for method in player_methods:history['player'][method]=forecasts[method][2]
         errors=[f'{method} forecast: {record[1]}' for method,record in forecasts.items() if record[1]]
+        try:
+            filtered_results_service.save(snapshot,ranked,criteria,request=request)
+        except (DataSourceError,OSError,ValueError) as exc:
+            errors.append('Quick Filtering completed, but its report was not saved: '+str(exc))
         return mispricing_results(snapshot,ranked,criteria,errors),history
 
     @app.callback(Output("saved-market-sections", "children"), Output("market-forecast-history", "data"),
                   Input("market-category", "value"),
                   Input("market-snapshot", "value"), Input("market-url", "hash"), Input("market-applied-criteria", "data"),
                   Input("market-forecast-method", "value"), Input("player-forecast-method", "value"),
-                  State("market-forecast-history", "data"),State('workspace-page','value'))
-    def show_saved_markets(category, selection, location_hash, criteria, method, player_method, previous_history,page=None):
+                  State("market-forecast-history", "data"),State('workspace-page','value'),Input('market-model-poll','n_intervals'))
+    def show_saved_markets(category, selection, location_hash, criteria, method, player_method, previous_history,page=None,_model_tick=None):
         if (page is not None and page!='market') or not market_game_id(location_hash):raise PreventUpdate
         if category is None:
             raise PreventUpdate
@@ -1349,7 +1379,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         context = [location_hash, selection]
         previous = previous_history if previous_history and previous_history.get("context") == context else {}
         view_key=[category,method,player_method,criteria]
-        if page is not None and ctx.triggered_id=='market-url' and previous.get('view_key')==view_key:
+        if page is not None and ctx.triggered_id=='market-url' and previous.get('view_key')==view_key and not previous.get('pending'):
             return no_update,no_update
         history = {"context": context, "view_key":view_key,"game": dict(previous.get("game", {})), "player": dict(previous.get("player", {}))}
         snapshot = saved_snapshot(location_hash, selection)
@@ -1358,15 +1388,28 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if not snapshot["rows"]:
             return html.P("The saved response contains no FanDuel selections.", className="saved-market-empty"), history
         snapshot = {**snapshot, "sport": market_game_sport(location_hash)}
+        player_method=player_method or 'WHP'
+        if category!='Game' and player_method not in {'WHP','UO','OAM','PGE'}:raise PreventUpdate
+        def calculate_view():
+            if category!='Game':return forecast_player_markets(snapshot,player_method,category)
+            forecast,error=forecast_game_markets(snapshot,method)
+            return forecast,error,{'latest_date':forecast.diagnostics.get('last_game_date') if forecast else None}
+        if page is not None:
+            key=hashlib.sha256(json.dumps([context,view_key,snapshot],sort_keys=True).encode()).hexdigest()
+            resume=previous.get('pending') and previous.get('job')==key
+            calculated,pending,error=market_page_tasks.read(key,calculate_view,
+                refresh=ctx.triggered_id!='market-model-poll' and not resume)
+            history.update(pending=pending,job=key)
+            if pending and resume and ctx.triggered_id=='market-model-poll':return no_update,no_update
+            if pending or calculated is None:
+                return market_sections(snapshot,category,model_error=error,method=player_method if category!='Game' else method,
+                    criteria=criteria,loading=pending),history
+            forecast,model_error,record=calculated
+        else:forecast,model_error,record=calculate_view()
         if category != "Game":
-            player_method = player_method or "WHP"
-            if player_method not in {"WHP", "UO", "OAM", "PGE"}:
-                raise PreventUpdate
-            forecast,model_error,record=forecast_player_markets(snapshot,player_method,category)
             history['player'][player_method]=record
             return market_sections(snapshot, category, forecast, model_error, criteria, player_method), history
-        forecast,model_error=forecast_game_markets(snapshot,method)
-        history["game"][method] = {"latest_date": forecast.diagnostics.get("last_game_date") if forecast else None}
+        history['game'][method]=record
         return market_sections(snapshot, category, forecast, model_error, criteria, method), history
 
     @app.callback(Output("odds-composition", "figure"), Output("odds-sport-summary", "children"),
@@ -1836,10 +1879,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     register_performance(app,backtesting_service)
     register_information(app,information_service)
     register_pnl(app,ledger)
+    register_structure(app,structure_service)
     register_comparison_callbacks(app,backtesting_service)
     register_in_game_callbacks(app,in_game_service)
-    register_kalshi_callbacks(app,kalshi_service)
-    register_kalshi_analysis(app,kalshi_service,forecast_game_markets,forecast_player_markets)
-    register_kalshi_callbacks(app,polymarket_service,view=polymarket_view,provider='Polymarket')
-    register_market_summary(app,schedule_service,market_services,kalshi_service,polymarket_service,forecast_game_markets,forecast_player_markets)
+    register_kalshi_callbacks(app,kalshi_service,pages=exchange_pages.get('Kalshi'))
+    register_kalshi_analysis(app,kalshi_service,forecast_game_markets,forecast_player_markets,filtered_results_service)
+    register_kalshi_callbacks(app,polymarket_service,view=polymarket_view,provider='Polymarket',pages=exchange_pages.get('Polymarket'))
+    register_market_summary(app,schedule_service,market_services,kalshi_service,polymarket_service,forecast_game_markets,forecast_player_markets,pages=exchange_pages)
+    register_filtered_results(app,filtered_results_service)
     return app

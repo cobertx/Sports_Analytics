@@ -7,6 +7,7 @@ from dash import dcc, html
 
 from .market_view import MARKET_NAMES, _line_values, criteria_match, probability_text, selection_text
 from .prompt_history import button as history_button
+from .market_structure_link import button as structure_button
 
 
 FILTER_CATEGORY = 'Mispricing'
@@ -137,7 +138,7 @@ def results(snapshot, ranked, criteria, errors=()):
                 ['Rank','Selection','Market','Method (probability / edge)' if consensus else 'Method','Market odds','Market implied',
                  'Lowest probability' if consensus else 'Estimated probability','Lowest edge (pp)' if consensus else 'Edge (pp)']])),
             html.Tbody([html.Tr([
-                html.Td(start+i),html.Td([selection_text(item['row']),history_button(snapshot,item['row'])]),
+                html.Td(start+i),html.Td([selection_text(item['row']),history_button(snapshot,item['row']),structure_button(snapshot,item['row'],surface='quick-filter')]),
                 html.Td(MARKET_NAMES.get(item['row']['market_key'],(item['row']['market'],))[0]),
                 html.Td(method_details(item)),html.Td(f"{item['row']['odds']:+g}"),
                 html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),

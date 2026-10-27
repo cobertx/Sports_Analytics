@@ -202,7 +202,7 @@ class CollegePlayerMarketService:
             raise DataSourceError('Prepare the college school directory and history before forecasting.')
         clubs=[data.resolve_school(name) for name in names]
         players,teams=self.repository.load('NCAAF',snapshot['commence_time'],names)
-        players,teams=eligible(players,cutoff),eligible(teams,cutoff)
+        players,teams=eligible(players,cutoff,'NCAAF'),eligible(teams,cutoff,'NCAAF')
         if players.empty or teams.empty:raise DataSourceError('No saved college history before the snapshot cutoff.')
         opponents=dict(zip(clubs,clubs[::-1]))
         club_data={club:rows for club,rows in teams[teams.team.isin(clubs)].groupby('team')}

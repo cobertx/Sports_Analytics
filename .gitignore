@@ -58,6 +58,7 @@ data/modeling/player_stats/pace_game_environment/
 *.db-journal
 
 # Rebuildable artifacts; canonical model manuals remain under models/.
+data/market_structure/
 /output/
 tmp/
 *.log

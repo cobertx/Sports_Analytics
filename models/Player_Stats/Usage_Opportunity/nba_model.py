@@ -42,7 +42,7 @@ def simulate_nba(players, teams, config, rng, *, adjustment=None, environment=No
                 ids.append(identity); roles.append(role); posteriors[identity] = fit
                 samples[identity] = role_sample
             except UsageOpportunityError as exc:
-                result.errors[identity] = str(exc)
+                result.errors[identity] = f'Current-team opportunity history for {identity} ({team}): {exc}'
         if not ids:
             continue
         minutes = np.column_stack([role['minutes'] for role in roles])

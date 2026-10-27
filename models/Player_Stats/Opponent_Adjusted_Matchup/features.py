@@ -2,13 +2,14 @@
 import numpy as np
 import pandas as pd
 
-ALIASES = {'WAS': 'WSH', 'LA': 'LAR', 'JAC': 'JAX', 'BRK': 'BKN', 'CHO': 'CHA', 'PHO': 'PHX'}
+from models.Player_Stats.Usage_Opportunity.historical_data import TEAM_ALIASES
 
 
 def feature_rows(sport, players, teams):
     team = teams.copy()
-    team['offense'] = team.team.replace(ALIASES)
-    team['defense'] = team.opponent.astype('string').replace(ALIASES)
+    aliases = TEAM_ALIASES.get(sport, {})
+    team['offense'] = team.team.replace(aliases)
+    team['defense'] = team.opponent.astype('string').replace(aliases)
     if team.defense.isna().any() or team.defense.str.strip().eq('').any():
         raise ValueError('Opponent modeling requires actual opponent identities for team games.')
     if team.duplicated(['game_id', 'offense']).any():

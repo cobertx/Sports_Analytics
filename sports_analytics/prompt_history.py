@@ -102,7 +102,8 @@ def exchange_target(snapshot,row,provider,side='yes'):
         elif kind=='spreads':
             name=_team(label,sport,teams)
             # Explicit signed team handicaps establish which side owns the line.
-            match=re.fullmatch(r'(.+?)\s*\(([+-]\d+(?:\.\d+)?)\)|(.+?)\s+([+-]\d+(?:\.\d+)?)',title)
+            spread_title=re.sub(r'^\s*Spread\s*:\s*','',title,flags=re.I)
+            match=re.fullmatch(r'(.+?)\s*\(([+-]\d+(?:\.\d+)?)\)|(.+?)\s+([+-]\d+(?:\.\d+)?)',spread_title)
             if not name or not match:return None
             primary=_team(match[1] or match[3],sport,teams);handicap=float(match[2] or match[4])
             if not primary:return None

@@ -6,6 +6,7 @@ from .display_time import format_eastern
 from .market_view import logo_badge,probability_text
 from .mispricing import GAME_METHODS,PLAYER_METHODS
 from .prompt_history import button as history_button
+from .market_structure_link import button as structure_button
 from .market_summary import PROVIDERS
 
 
@@ -108,6 +109,7 @@ def quote_cell(bundle,row,snapshot,best):
             id=dict(type='summary-model-cell',bundle=bundle['id'],provider=row['provider'],index=row['index'],side=row['side'] or '',metric=metric)))])
             for metric,label in [('probability','Calculated probability'),('odds','Model fair odds'),('edge','Edge')]],className='summary-model-values'),
         history_button(snapshot,original,row['provider'],row['side'] or 'yes'),
+        structure_button(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary'),
     ],title=row['selection'],className='summary-quote'+(' summary-best' if best else '')),className='summary-source-cell')
 
 

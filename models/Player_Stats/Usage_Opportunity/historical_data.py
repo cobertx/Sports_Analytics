@@ -10,9 +10,14 @@ from models.Player_Stats.Weighted_Historical_Performance.prediction_service impo
 from .errors import UsageOpportunityError
 
 ROOT = Path(__file__).resolve().parents[3] / 'data/modeling/player_stats/usage_opportunity'
+TEAM_ALIASES = {
+    'NBA': {'WSH': 'WAS', 'BRK': 'BKN', 'CHO': 'CHA', 'PHO': 'PHX'},
+    'NFL': {'WAS': 'WSH', 'LA': 'LAR', 'JAC': 'JAX'},
+    None: {'WAS': 'WSH', 'LA': 'LAR', 'JAC': 'JAX', 'BRK': 'BKN', 'CHO': 'CHA', 'PHO': 'PHX'},
+}
 
 
-def eligible(frame, cutoff):
+def eligible(frame, cutoff, sport=None):
     cutoff = pd.Timestamp(cutoff)
     if cutoff.tzinfo is None or pd.isna(cutoff):
         raise UsageOpportunityError('Forecast timestamps must include a timezone.')
@@ -21,8 +26,12 @@ def eligible(frame, cutoff):
                 & data.available_at.ge(data.event_date)].copy()
     data['game_id'] = data.game_id.astype(str)
     data['entity_id'] = data.entity_id.astype(str)
-    data['team'] = data.team.astype(str).replace({'WAS': 'WSH', 'LA': 'LAR', 'JAC': 'JAX',
-                                               'BRK': 'BKN', 'CHO': 'CHA', 'PHO': 'PHX'})
+    # Washington's canonical NBA code is WAS; WSH belongs to the NFL mapping.
+    # Normalize opponents too, so paired game and defensive joins agree.
+    aliases = TEAM_ALIASES.get(sport, {})
+    for column in ('team', 'opponent'):
+        if column in data:
+            data[column] = data[column].astype('string').replace(aliases)
     if data.duplicated(['game_id', 'entity_id']).any():
         data = data.drop_duplicates()
         if data.duplicated(['game_id', 'entity_id']).any():

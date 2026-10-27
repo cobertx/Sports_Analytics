@@ -17,6 +17,7 @@ from .nba_markets import NBA_TEAM_CODES
 from .parlay import quote_key
 from .historical_links import history_href
 from .prompt_history import button as history_button
+from .market_structure_link import button as structure_button
 
 NFL_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NFL" / "Team Logos"
 NFL_LOGO_FILES = {path.stem.casefold(): path.name for path in NFL_LOGO_DIRECTORY.glob("*.png")}
@@ -282,7 +283,7 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=N
     return html.Div(children, className="ppp-comparison")
 
 
-def market_sections(snapshot, category, forecast=None, model_error=None, criteria=None, method="PPP"):
+def market_sections(snapshot, category, forecast=None, model_error=None, criteria=None, method="PPP", *, loading=False):
     player_method = method in {"WHP", "UO", "OAM", "PGE"}
     groups = OrderedDict()
     row_indices = {id(row):index for index,row in enumerate(snapshot['rows'])}
@@ -311,6 +312,14 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         group_evaluated = sum(estimate is not None and estimate.probability is not None and edge is not None
                               for _, estimate, edge in values.values())
         no_match = bool(comparison and criteria and group_evaluated and not match_count)
+        missing_estimates = comparison and not loading and not any(estimate is not None and estimate.probability is not None
+                                                   for _, estimate, _ in values.values())
+        unavailable_reason = None
+        if missing_estimates:
+            unavailable_reason = model_error
+            if not unavailable_reason and forecast is not None and hasattr(forecast, 'detail'):
+                unavailable_reason = forecast.detail(rows[0])
+            unavailable_reason = unavailable_reason or f'{method} needs more complete historical inputs for this market.'
         if comparison:
             evaluated += group_evaluated
             matched_counts[key] = matched_counts.get(key, 0) + match_count
@@ -330,11 +339,12 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 implied, estimate, edge = values[id(row)]
                 detail = (f"Win {probability_text(estimate.win)} · Loss {probability_text(estimate.loss)} · "
                           f"Push {probability_text(estimate.push)}; refunds excluded from fair-price probability") if estimate else model_error or f"{method} unavailable"
+                if loading:detail='Calculating the selected forecast in the background.'
                 if forecast is not None and hasattr(forecast, "detail"):
                     detail += " " + forecast.detail(row)
                 fair = f"{estimate.odds:+.0f}" if estimate and estimate.odds is not None else "—"
                 return html.Div([
-                    html.Div([html.Span(selection),history_button(snapshot,row)],className="market-selection market-prompt"),
+                    html.Div([html.Span(selection),history_button(snapshot,row),structure_button(snapshot,row)],className="market-selection market-prompt"),
                     price_button,
                     html.Span(probability_text(implied), className="market-probability", title="Raw break-even probability; includes bookmaker margin"),
                     html.Span(probability_text(estimate.probability) if estimate else "—", className="ppp-probability", title=detail),
@@ -344,7 +354,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 ], className="market-outcome market-line-comparison" + (" market-criteria-match" if matches[id(row)] else ""))
             return html.Div([
                 html.Span(initials, className="player-marker", **{"aria-hidden": "true"}),
-                html.Div([html.Span(selection),history_button(snapshot,row)],className="market-selection market-prompt"),
+                html.Div([html.Span(selection),history_button(snapshot,row),structure_button(snapshot,row)],className="market-selection market-prompt"),
                 price_button,
             ], className="market-outcome")
         sections.append(html.Details([
@@ -354,6 +364,8 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                           html.Span("⌄", className="market-chevron", **{"aria-hidden": "true"})]),
             html.Div([html.Span(label) for label in ["Selection", "Market odds", "Market implied", f"{method} probability", f"{method} fair odds", "Edge"]],
                      className="market-comparison-heading market-line-comparison") if comparison else None,
+            html.P('Calculated probability unavailable: '+unavailable_reason, className='mispricing-error', role='status')
+                if unavailable_reason else None,
             html.Div([outcome(row) for row in rows[:6]], className="market-outcomes"),
             html.Details([html.Summary([
                               html.Span(f"Show more · {len(rows) - 6} selections", className="market-show-more"),
@@ -364,7 +376,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         ], id=market_section_id(snapshot,key,player),key=f"{snapshot.get('game_id', snapshot.get('event_id', ''))}:{snapshot.get('pulled_at', '')}:{key}:{player}",
            open=index < 2, className="sportsbook-market" + (
             " market-criteria-group" if match_count else " market-criteria-no-match" if no_match else "")))
-    if (category == "Game" or player_method) and isinstance(criteria, dict) and criteria:
+    if not loading and (category == "Game" or player_method) and isinstance(criteria, dict) and criteria:
         matched = sum(matched_counts.values())
         message = (f"{matched} qualifying selections: {matched_counts['alternate_spreads']} spreads and {matched_counts['alternate_totals']} totals."
                    if matched else f"No markets match these criteria. {evaluated} spread/total selections evaluated."
@@ -386,8 +398,11 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 if method == "UO" else
                 "WHP uses saved player appearances, recency weighting and walk-forward predictive dispersion. Hover a model value for sample size, mean, uncertainty and availability. Fair probabilities exclude pushes; market implied probabilities include the bookmaker margin. First/last scorer and props without sufficient history remain unavailable.")
         sections.insert(0, html.P(model_error or
-            note,
+            note + (' NBA forecasts can use the current season and two prior seasons, including returning players’ earlier appearances.'
+                    if snapshot.get('sport') == 'NBA' else ''),
             className="ppp-comparison-note"))
-    if category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
+    if loading:
+        sections.insert(0,html.P('Quotes are ready. Calculating the selected forecast in the background…',className='ppp-comparison-note',role='status'))
+    if not loading and category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
         sections.append(ppp_comparison(snapshot, forecast, model_error, method, criteria))
     return sections or [html.P("No saved selections in this category.", className="saved-market-empty")]

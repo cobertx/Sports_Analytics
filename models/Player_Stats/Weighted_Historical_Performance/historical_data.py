@@ -32,7 +32,9 @@ def identity_name(value):
 def seasons_for(sport, start):
     date = pd.Timestamp(start)
     season = date.year - int(date.month < (10 if sport == "NBA" else 3))
-    return [season - 1, season]
+    # A missed NBA season must not hide a returning player's last appearances.
+    # Model windows/calibration minima still apply, and load() stays read-only.
+    return [season - 2, season - 1, season] if sport == 'NBA' else [season - 1, season]
 
 
 def atomic_json(path, data):
@@ -209,7 +211,7 @@ class PlayerHistoryRepository:
             raise DataSourceError("Choose NBA, NFL or NCAAF.")
         if not total:
             raise DataSourceError("No player history prepared. " + " ".join(notices))
-        return f"{sport}: {total:,} saved player-game rows available across seasons {years[0]} and {years[1]}. " + " ".join(dict.fromkeys(notices))
+        return f"{sport}: {total:,} saved player-game rows available across seasons {', '.join(map(str,years))}. " + " ".join(dict.fromkeys(notices))
 
     def load(self, sport, start, teams=()):
         """Read-only: no automatic download, refresh, or CFBD request."""

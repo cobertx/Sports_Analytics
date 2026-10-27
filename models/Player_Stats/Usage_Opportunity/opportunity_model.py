@@ -18,7 +18,11 @@ def observed(frame, columns, minimum, window):
         raise UsageOpportunityError('Missing opportunity inputs: ' + ', '.join(sorted(missing)))
     result = frame.copy()
     result[list(columns)] = result[list(columns)].apply(pd.to_numeric, errors='coerce')
-    result = result[np.isfinite(result[list(columns)]).all(axis=1)].sort_values(['event_date', 'game_id']).tail(window)
+    # Nullable pandas columns preserve NA through isfinite; DataFrame.all()
+    # skips those values by default. Convert explicitly so missing observations
+    # cannot enter bootstrap states as apparently complete rows.
+    values = result[list(columns)].to_numpy(dtype=float, na_value=np.nan)
+    result = result[np.isfinite(values).all(axis=1)].sort_values(['event_date', 'game_id']).tail(window)
     integer_columns = [column for column in columns if column not in {'min', 'team_min'}]
     if integer_columns and not np.isclose(result[integer_columns].to_numpy(float) % 1, 0, atol=1e-8).all():
         raise UsageOpportunityError('Box-score events and yardage must be integer counts; only minutes may be fractional.')

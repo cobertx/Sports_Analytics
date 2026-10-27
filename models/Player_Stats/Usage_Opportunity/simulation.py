@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 import numpy as np
 from .opportunity_model import observed, draw_rows
+from .errors import UsageOpportunityError
 
 
 @dataclass
@@ -25,4 +26,7 @@ def team_states(teams, config, rng, columns):
 
 
 def integer_pool(values):
-    return np.maximum(0, np.rint(np.asarray(values, float))).astype(int)
+    values = np.asarray(values, float)
+    if not np.isfinite(values).all():
+        raise UsageOpportunityError('Team volume requires finite observed inputs; missing counts or minutes are not zero.')
+    return np.maximum(0, np.rint(values)).astype(int)

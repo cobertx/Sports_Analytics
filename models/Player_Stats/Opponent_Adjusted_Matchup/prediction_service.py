@@ -76,7 +76,7 @@ class OpponentAdjustedMarketService:
         cutoff=min(timestamps)
         names=[snapshot['home_team'],snapshot['away_team']]
         players,teams=self.repository.load(sport,snapshot['commence_time'],names)
-        players,teams=eligible(players,cutoff),eligible(teams,cutoff)
+        players,teams=eligible(players,cutoff,sport),eligible(teams,cutoff,sport)
         if players.empty or teams.empty:
             raise DataSourceError('OAM requires saved league-wide team/player history before this snapshot. Use --prepare.')
         codes=NBA_TEAM_CODES if sport=='NBA' else NFL_TEAM_CODES

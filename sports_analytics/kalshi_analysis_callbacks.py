@@ -10,6 +10,7 @@ from .market_view import probability_text
 from .mispricing import criteria_values, selected_methods, method_details
 from .kalshi_view import route,odds_text,comparison_rows,table as quote_table
 from .prompt_history import button as history_button
+from .market_structure_link import button as structure_button
 
 
 def results(snapshot, ranked, criteria, models):
@@ -20,7 +21,8 @@ def results(snapshot, ranked, criteria, models):
                 ['Rank','Selection','Category','Method (probability / edge)' if consensus else 'Method','Market odds','Market implied',
                  'Lowest probability' if consensus else 'Calculated probability','Lowest edge (pp)' if consensus else 'Edge (pp)']])),
             html.Tbody([html.Tr([
-                html.Td(start+i),html.Td([item['row']['title']+' — '+item['side'].title(),history_button(snapshot,item['row'],'Kalshi',item['side'])]),
+                html.Td(start+i),html.Td([item['row']['title']+' — '+item['side'].title(),history_button(snapshot,item['row'],'Kalshi',item['side']),
+                    structure_button(snapshot,item['row'],'Kalshi',item['side'],surface='quick-filter' if consensus else 'apply-criteria')]),
                 html.Td(item['row']['category']),html.Td(method_details(item)),
                 html.Td(odds_text(item['implied'])),
                 html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),
@@ -55,7 +57,7 @@ def filter_snapshot(service,game,selected,pull=False):
     return snapshot,status
 
 
-def register(app,service,game_forecast,player_forecast):
+def register(app,service,game_forecast,player_forecast,filtered_results=None):
     @app.callback(Output('kalshi-filter-panel','style'),Output('kalshi-market-sections','style'),
                   Output('kalshi-detail-table','style'),Output('kalshi-rules-panel','style'),
                   Output('kalshi-quote-status','style'),Input('kalshi-category','value'))
@@ -73,6 +75,7 @@ def register(app,service,game_forecast,player_forecast):
             if not scan or scan['selection']!=selected:raise PreventUpdate
             snapshot=scan['snapshot']
         if not snapshot or (snapshot['sport'],snapshot['game_id'])!=(game['sport'],game['id']):raise PreventUpdate
+        if not snapshot['rows'] and snapshot.get('updating'):raise PreventUpdate
         if category!=FILTER and snapshot['category']!=category:raise PreventUpdate
         if method not in GAME_METHODS or player_method not in PLAYER_METHODS:raise PreventUpdate
         before=previous
@@ -173,6 +176,12 @@ def register(app,service,game_forecast,player_forecast):
             methods,player_methods=selected_methods(methods,player_methods)
             snapshot,status=filter_snapshot(service,game,selected)
             ranked,errors=quick_calculate(game,snapshot,selected,methods,player_methods,criteria,game_forecast,player_forecast)
+            if filtered_results is not None:
+                try:
+                    filtered_results.save(snapshot,ranked,criteria,provider='Kalshi',game=game,
+                        request=dict(selection=selected,methods=methods,player_methods=player_methods,sequence=clicks))
+                except (DataSourceError,OSError,ValueError) as exc:
+                    errors=[*errors,'Quick Filtering completed, but its report was not saved: '+str(exc)]
             return dict(context=identity(game,selected,methods,player_methods),criteria=criteria,
                         snapshot=snapshot,ranked=ranked,errors=errors),status+' All selected methods must pass both thresholds.'
         except (DataSourceError,OSError,ValueError,TypeError) as exc:

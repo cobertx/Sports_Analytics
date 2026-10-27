@@ -6,6 +6,8 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
     route: function(hash) {
       const summary=/^#(nba|nfl|ncaaf)-market-summary$/.exec(hash||'');
       if(summary)return {sport:summary[1].toUpperCase(),provider:'summary',game:null};
+      const filtered=/^#(nba|nfl|ncaaf)-filtered-results$/.exec(hash||'');
+      if(filtered)return {sport:filtered[1].toUpperCase(),provider:'filtered',game:null};
       let match=/^#(nba|nfl|ncaaf)-(games|game-(\d+))$/.exec(hash||'');
       if(match)return {sport:match[1].toUpperCase(),provider:'market',game:match[3]||null};
       match=/^#(nba|nfl|ncaaf)-(kalshi|polymarket)-(market|game-(.+))$/.exec(hash||'');
@@ -20,6 +22,7 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
       const route=window.dash_clientside.market_transition.route(hash);
       if(!route||route.sport!==sport)return 'app-shell';
       if(route.provider==='summary')return 'app-shell market-screen market-screen-summary';
+      if(route.provider==='filtered')return 'app-shell market-screen market-screen-filtered';
       const context={market:game,kalshi,polymarket}[route.provider];
       const catalog={market:scope,kalshi:kalshiGames,polymarket:polymarketGames}[route.provider];
       const ready=route.game ? context?.sport===route.sport&&String(context.id)===route.game : catalog?.sport===route.sport;

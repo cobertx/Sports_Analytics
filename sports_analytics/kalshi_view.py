@@ -17,6 +17,7 @@ from .kalshi_analysis import FILTER, implied
 from .market_view import probability_text
 from models.Game_Outcome.PPP.PPP import fair_american_odds
 from .prompt_history import button as history_button
+from .market_structure_link import button as structure_button
 
 MULTIWORD_MASCOTS = {'Crimson Tide', 'Sun Devils', 'Red Wolves', 'Black Knights', 'Golden Bears',
     'Blue Devils', 'Yellow Jackets', 'Fighting Illini', "Ragin' Cajuns", 'Golden Gophers',
@@ -315,7 +316,7 @@ def comparison_rows(row,snapshot=None,provider='Kalshi'):
         result.append(html.Div([
             html.Div([html.Span(row['title']+' — '+(label if polymarket else side.title()),className='market-selection'),
                       html.Small(label,className='kalshi-outcome-labels') if not polymarket else None,
-                      history_button(snapshot or {},row,provider,side)],
+                      history_button(snapshot or {},row,provider,side),structure_button(snapshot or {},row,provider,side)],
                      title=f"{row['ticker']} · Payout/notional ${row['notional']:g} · {row['status']}"),
             html.Span(odds_text(market),className='market-price kalshi-price',
                       title='American odds equivalent of this outcome’s quoted buying price / payout, before fees.'),
