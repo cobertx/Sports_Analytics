@@ -22,8 +22,10 @@ def observed(frame, columns, minimum, window):
     missing = set(columns) - set(frame)
     if missing:
         raise UsageOpportunityError('Missing opportunity inputs: ' + ', '.join(sorted(missing)))
-    result = frame.copy()
-    result[list(columns)] = result[list(columns)].apply(pd.to_numeric, errors='coerce')
+    result = frame
+    if not all(pd.api.types.is_numeric_dtype(frame[column].dtype) for column in columns):
+        result = frame.copy()
+        result[list(columns)] = result[list(columns)].apply(pd.to_numeric, errors='coerce')
     # Nullable pandas columns preserve NA through isfinite; DataFrame.all()
     # skips those values by default. Convert explicitly so missing observations
     # cannot enter bootstrap states as apparently complete rows.

@@ -211,8 +211,12 @@ class PageSpeedChecks(TestCase):
         values={'market-category':'Game','market-snapshot':fixture.saved['pulled_at'],'market-url':'#nfl-game-123',
             'market-applied-criteria':None,'market-forecast-method':'PPP','player-forecast-method':'WHP',
             'market-forecast-history':None,'workspace-page':'market','market-model-poll':0}
+        client=fixture.app.server.test_client()
+        # Browser navigation follows initial layout loading. Measure the game
+        # callback separately from Dash's one-time server/asset initialization.
+        self.assertEqual(client.get('/_dash-layout').status_code,200)
         start=perf_counter()
-        response=fixture.app.server.test_client().post('/_dash-update-component',json=dict(output=key,
+        response=client.post('/_dash-update-component',json=dict(output=key,
             outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
             inputs=[dict(item,value=values[item['id']]) for item in meta['inputs']],
             state=[dict(item,value=values[item['id']]) for item in meta['state']],changedPropIds=['market-url.hash']))

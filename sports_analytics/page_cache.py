@@ -3,6 +3,7 @@ from collections import OrderedDict
 from datetime import datetime,timezone
 from hashlib import sha256
 import json
+from os import walk
 from pathlib import Path
 from threading import Condition,RLock
 
@@ -10,6 +11,40 @@ from .cache_refresh import RefreshQueue
 from .data import DataSourceError
 from .kalshi import parse_time
 from .nfl_model_data import atomic_text
+
+
+def forecast_revision(service,sport):
+    """Cheap source revisions; generated forecasts/audits are not inputs."""
+    files=set();seen=set()
+    def inspect(source):
+        if id(source) in seen:return
+        seen.add(id(source));fields=getattr(source,'__dict__',{})
+        for key in ('path','schedule_path'):
+            value=fields.get(key)
+            if isinstance(value,(str,Path)):
+                path=Path(value);files.update([path,Path(str(path)+'-wal')])
+        for key in ('root','directory','college_directory'):
+            value=fields.get(key)
+            if not isinstance(value,(str,Path)):continue
+            root=Path(value)
+            files.update(root.glob('*.csv'));files.update(root.glob('*.manifest.json'))
+            files.add(root/'imports'/f'{sport.lower()}.csv')
+            files.update((root/'ncaaf').glob('*.json'))
+            if sport=='NCAAF' and key!='root':
+                for folder,children,names in walk(root):
+                    children[:]=[name for name in children if name not in {'forecasts','evaluations','calibration','model_cache'}]
+                    files.update(Path(folder)/name for name in names if Path(name).suffix in {'.csv','.json'})
+        for key in ('data','repository','players'):
+            child=fields.get(key)
+            if child is not None:inspect(child)
+    inspect(service)
+    revision=[]
+    for path in sorted(files):
+        try:
+            stat=path.stat()
+            revision.append((str(path),stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns,stat.st_ino))
+        except OSError:pass
+    return revision
 
 
 class PageTasks:

@@ -29,6 +29,8 @@ jobs:
         run: python scripts/check_project.py
       - name: Check backtesting equivalence and cache isolation
         run: python scripts/check_backtesting.py
+      - name: Check OAM and PGE optimized history calculations
+        run: python scripts/check_player_backtest_speed.py
       - name: Check simultaneous player backtests and live filtering
         run: python scripts/check_backtest_concurrency.py
       - name: Check sport backtest summaries and saved result reopening
@@ -70,6 +72,8 @@ jobs:
         run: python scripts/check_loading_speed.py
       - name: Check nonblocking game entry, local quote views and forecast equivalence
         run: python scripts/check_page_speed.py
+      - name: Check independent forecasts, exact preparation reuse and local loading feedback
+        run: python scripts/check_responsiveness.py
       - name: Check information sources, local news and weather freshness
         run: python scripts/check_information.py
       - name: Check game news tabs, venue roofs and kickoff weather

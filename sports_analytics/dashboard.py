@@ -49,7 +49,8 @@ from .market_structure import MarketStructure
 from .market_structure_view import layout as structure_layout, register as register_structure
 from .filtered_results import FilteredResults, route as filtered_results_route
 from .filtered_results_view import layout as filtered_results_layout, register as register_filtered_results
-from .page_cache import PageTasks,QuotePages
+from .page_cache import PageTasks,QuotePages,forecast_revision
+from .loading import configure as configure_loading,register as register_loading,indicator,loading as action_loading
 from .research_config import form_parameters
 from .historical_view import historical_route,statistics_kind,navigation as historical_navigation
 from .historical_links import history_target,matches_dataset,target_entity,target_metric,market_metrics
@@ -227,8 +228,8 @@ def game_card(game, sport, snapshot=None):
                   html.A("Game details →", href=f"#{prefix}-game-{game['id']}") if live else
                   html.A("Game details ↗", href=f"https://www.espn.com/{'nba' if sport == 'NBA' else 'college-football'}/game/_/gameId/{game['id']}",
                          target="_blank", rel="noopener noreferrer"),
-                  html.Div(latest_pull_status(snapshot), id={"type": f"{prefix}-live-markets", "game": game["id"]},
-                             className="latest-pull-time", role="status", **{"aria-live": "polite"}) if live else None,
+                  action_loading(html.Div(latest_pull_status(snapshot), id={"type": f"{prefix}-live-markets", "game": game["id"]},
+                             className="latest-pull-time", role="status", **{"aria-live": "polite"}),'Pulling live markets…') if live else None,
                   ], className="game-footer-left"),
                   html.Button("Pull Live Markets", id={"type": f"{prefix}-pull", "game": game["id"]}, n_clicks=0,
                               className="pull-markets-button", title=f"FanDuel only · up to {credits} credits per snapshot") if live else
@@ -309,7 +310,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     kalshi_service = kalshi_service or KalshiService(background=True)
     polymarket_service = polymarket_service or PolymarketService(background=True)
     structure_service = structure_service or MarketStructure(kalshi=kalshi_service,polymarket=polymarket_service)
-    market_page_tasks=PageTasks()
+    market_page_tasks=PageTasks(capacity=16)
     exchange_pages={name:QuotePages(source) for name,source in [('Kalshi',kalshi_service),('Polymarket',polymarket_service)]
                     if getattr(source,'background',False) is True}
     backtesting_service=backtesting_service or BacktestingService(data=service,isolated=True)
@@ -427,7 +428,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     information_navigation(),
                 ], className="page-toolbar", **{"aria-label": "Sport pages"}),
                 html.Div([
-                    html.Div([html.Span('Loading the selected market…',className='market-transition-loading'),
+                    html.Div([html.Span(indicator('Loading the selected market…'),className='market-transition-loading'),
                               html.Span('This game is unavailable in the loaded catalog. Return to the market’s game list and refresh.',
                                         className='market-transition-unavailable')],
                              id='market-transition-status',role='status',className='market-transition-status'),
@@ -688,6 +689,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         backtesting_monitor_layout(),
         structure_layout(),
     ], id='app-shell',className="app-shell")
+    app.layout=configure_loading(app.layout)
+    register_loading(app)
 
     app.clientside_callback(
         'function(hash,sport,game,kalshi,polymarket,scope,kalshiGames,polymarketGames) {'
@@ -1407,10 +1410,24 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             forecast,error=forecast_game_markets(snapshot,method)
             return forecast,error,{'latest_date':forecast.diagnostics.get('last_game_date') if forecast else None}
         if page is not None:
-            key=hashlib.sha256(json.dumps([context,view_key,snapshot],sort_keys=True).encode()).hexdigest()
+            # Highlight thresholds and the other market type's method do not
+            # change a forecast. Reuse the exact saved-snapshot calculation.
+            forecast_scope=['game',method] if category=='Game' else ['player',player_method,category if player_method=='WHP' else 'all']
+            if category=='Game':
+                sources=ncaaf_forecast_services if snapshot['sport']=='NCAAF' else (
+                    {'PPP':nba_ppp_service,'EPA':nba_epa_service,'ELO':nba_elo_service} if snapshot['sport']=='NBA' else
+                    {'PPP':ppp_service,'EPA':epa_service,'ELO':elo_service})
+                source=sources[method]
+            else:source={'WHP':whp_service,'UO':usage_opportunity_service,'OAM':opponent_adjusted_service,'PGE':pace_game_environment_service}[player_method]
+            revision=forecast_revision(source,snapshot['sport'])
+            if snapshot['sport']=='NCAAF' and category!='Game':revision+=forecast_revision(ncaaf_model_data,'NCAAF')
+            key=hashlib.sha256(json.dumps([context,forecast_scope,POLICY_VERSION,revision,snapshot],sort_keys=True).encode()).hexdigest()
+            # Preparing a cold forecast can itself create input files. Finish
+            # that job rather than submitting another one on every poll.
+            if ctx.triggered_id=='market-model-poll' and previous.get('pending') and previous.get('job') and previous.get('view_key')==view_key:
+                key=previous['job']
             resume=previous.get('pending') and previous.get('job')==key
-            calculated,pending,error=market_page_tasks.read(key,calculate_view,
-                refresh=ctx.triggered_id!='market-model-poll' and not resume)
+            calculated,pending,error=market_page_tasks.read(key,calculate_view)
             history.update(pending=pending,job=key)
             if pending and resume and ctx.triggered_id=='market-model-poll':return no_update,no_update
             if pending or calculated is None:
@@ -1419,6 +1436,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             forecast,model_error,record=calculated
         else:forecast,model_error,record=calculate_view()
         if category != "Game":
+            record={**record,'category':category}
             history['player'][player_method]=record
             return market_sections(snapshot, category, forecast, model_error, criteria, player_method), history
         history['game'][method]=record

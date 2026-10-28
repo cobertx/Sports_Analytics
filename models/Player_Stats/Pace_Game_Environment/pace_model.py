@@ -13,22 +13,31 @@ class PaceModel:
         self.training = []
         self.residuals = []
 
-    def _features(self, history, team, opponent):
+    def _feature_lookup(self, history):
+        """Share the same eligible league and team summaries within a date batch."""
         config = self.config
         league_rows = history.tail(2*config.league_window)
         league = float(np.average(league_rows.volume, weights=history_weights(
             league_rows, 2*config.scenario_half_life, config.baseline)))
+        summaries = {}
         def average(club, column):
-            rows = history[history.team.eq(club)].tail(config.baseline.team_window)
+            if club not in summaries:
+                rows = history[history.team.eq(club)].tail(config.baseline.team_window)
+                w = history_weights(rows, config.baseline.role_half_life, config.baseline) if len(rows) else None
+                summaries[club] = rows, w, 1/float(w@w) if len(rows) else 0.
+            rows,w,effective = summaries[club]
             if rows.empty:
                 return league if column != 'margin' else 0.
-            w = history_weights(rows, config.baseline.role_half_life, config.baseline)
-            effective = 1/float(w@w)
             prior = league if column != 'margin' else 0.
             return (effective*float(w@rows[column].to_numpy(float))+config.pace_prior*prior)/(effective+config.pace_prior)
-        x = np.array([average(team,'volume')-league,average(opponent,'allowed_volume')-league])
-        margin = (average(team,'margin')-average(opponent,'margin'))/2
-        return league,x,margin
+        def features(team, opponent):
+            x = np.array([average(team,'volume')-league,average(opponent,'allowed_volume')-league])
+            margin = (average(team,'margin')-average(opponent,'margin'))/2
+            return league,x,margin
+        return features
+
+    def _features(self, history, team, opponent):
+        return self._feature_lookup(history)(team, opponent)
 
     def _fit(self, training):
         if not training:
@@ -42,9 +51,10 @@ class PaceModel:
     @replay_memoized
     def _validation_batch(self, prefix, batch, training):
         coefficients = self._fit(training)
+        features = self._feature_lookup(prefix)
         additions, residuals = [], []
         for r in batch.itertuples(index=False):
-            league,x,margin = self._features(prefix,r.team,r.opponent)
+            league,x,margin = features(r.team,r.opponent)
             prediction = max(1.,float(league+x@coefficients))
             additions.append(dict(x=x.tolist(),y=float(r.volume-league),available_at=r.available_at,
                                   event_date=r.event_date,season=r.season))
@@ -63,7 +73,9 @@ class PaceModel:
             prefix = rows[rows.available_at.lt(when) & rows.event_date.lt(when)]
             if prefix.game_id.nunique() < self.config.minimum_league_games:
                 continue
-            training = [r for r in self.training if r['available_at'] < when]
+            # _fit only uses this suffix. Exclude older, unused records before
+            # fingerprinting the memoized fold; retain the full audit history.
+            training = [r for r in self.training if r['available_at'] < when][-2*self.config.league_window:]
             additions, residuals = self._validation_batch(prefix, batch, training)
             self.residuals.extend(residuals)
             self.training.extend(additions)

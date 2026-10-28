@@ -47,11 +47,14 @@ class GameEnvironment:
                 self.volume[club] = self.regulation[club]+self.extra[club]
                 self.duration[club] = np.full(config.baseline.simulations,60.)
         self.margins_by_game = model.history.set_index(['game_id','team']).margin.to_dict()
+        if sport == 'NBA':
+            self.possessions_by_game = model.history.assign(
+                total=lambda f:f.volume*f.duration/48).set_index(['game_id','team']).total.to_dict()
 
     def draw_rows(self, sample, config, rng):
         club = str(sample.iloc[0].team)
-        source_margin = np.array([self.margins_by_game.get((str(r.game_id),club),np.nan)
-                                  for _,r in sample.iterrows()])
+        source_margin = np.array([self.margins_by_game.get((str(game),club),np.nan)
+                                  for game in sample.game_id])
         if not np.isfinite(source_margin).all():
             raise ValueError('A player/team role game has no paired scoring/volume context.')
         base = history_weights(sample,config.role_half_life,config)
@@ -69,8 +72,7 @@ class GameEnvironment:
         # Use the paired possession estimate used in training, rather than the
         # individual team's slightly different box-score estimate.
         # Cached game totals avoid recomputing possession estimates per draw.
-        total = self.model.history.assign(total=lambda f:f.volume*f.duration/48).set_index(['game_id','team']).total.to_dict()
-        source = np.array([total[(str(game),team)] for game in state.game_id])
+        source = np.array([self.possessions_by_game[(str(game),team)] for game in state.game_id])
         return state[channel].to_numpy(float)/source*self.volume[team]
 
     def nfl_opportunities(self, team, state, rng):

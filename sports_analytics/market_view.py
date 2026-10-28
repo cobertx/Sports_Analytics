@@ -1,6 +1,7 @@
 """Saved sport markets, presented as category tabs and player odds ladders."""
 
 from collections import OrderedDict
+from .loading import indicator
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 import math
@@ -402,7 +403,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                     if snapshot.get('sport') == 'NBA' else ''),
             className="ppp-comparison-note"))
     if loading:
-        sections.insert(0,html.P('Quotes are ready. Calculating the selected forecast in the background…',className='ppp-comparison-note',role='status'))
+        sections.insert(0,indicator('Quotes are ready. Calculating the selected forecast in the background…'))
     if not loading and category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
         sections.append(ppp_comparison(snapshot, forecast, model_error, method, criteria))
     return sections or [html.P("No saved selections in this category.", className="saved-market-empty")]

@@ -1,12 +1,15 @@
 """Prepare paired NBA team box scores from the existing historical adapter."""
 
 from dataclasses import asdict
+from collections import OrderedDict
 import hashlib
 import json
 from pathlib import Path
+from threading import Lock
 
 import numpy as np
 import pandas as pd
+from models.replay import fingerprint
 
 from .data import DataSourceError, Query
 from .nfl_model_data import atomic_text
@@ -61,6 +64,36 @@ class NbaModelData:
     def __init__(self, directory=None, service=None):
         self.directory = Path(directory or Path(__file__).resolve().parent.parent / "data/modeling/nba")
         self.service = service or DataService()
+        self._prepared = OrderedDict()
+        self._prepared_lock = Lock()
+
+    @staticmethod
+    def _revisions(paths):
+        try:return tuple((s.st_size,s.st_mtime_ns,s.st_ctime_ns,s.st_ino) for p in paths for s in [p.stat()])
+        except OSError:return None
+
+    def _prepare_dataset(self,dataset,query):
+        destination=self.directory/f'team_games_{query.season}_{query.season_type}.csv'
+        metadata=destination.with_suffix('.manifest.json')
+        key=(query.season,query.season_type,dataset.key,dataset.source,dataset.fetched_at,fingerprint(dataset.frame))
+        with self._prepared_lock:
+            cached=self._prepared.get(key)
+            if cached is not None and cached[1]==self._revisions([destination,metadata]):
+                self._prepared.move_to_end(key)
+                return cached[0].copy(deep=True)
+            prepared=aggregate_team_games(dataset.frame)
+            prepared['season_type']=query.season_type
+            atomic_text(destination,prepared.to_csv(index=False))
+            manifest={"version":1,"query":asdict(query),"source":dataset.source,
+                "source_fetched_at":dataset.fetched_at,"cache_key":dataset.key,
+                "games":prepared.game_id.nunique(),"sha256":hashlib.sha256(destination.read_bytes()).hexdigest(),
+                "possessions":"mean of both teams' FGA + 0.44*FTA - OREB + TOV; includes overtime",
+                "availability":"game UTC date + 2 days; conservative completion lag"}
+            atomic_text(metadata,json.dumps(manifest,indent=2))
+            self._prepared[key]=(prepared.copy(deep=True),self._revisions([destination,metadata]))
+            self._prepared.move_to_end(key)
+            while len(self._prepared)>8:self._prepared.popitem(last=False)
+            return prepared
 
     def prepare(self, seasons, refresh=False):
         frames, notices = [], []
@@ -69,19 +102,10 @@ class NbaModelData:
                 query = Query("NBA", season, "team", phase)
                 try:
                     dataset = self.service.load(query, refresh=refresh)
-                    prepared = aggregate_team_games(dataset.frame)
-                    prepared['season_type'] = phase
+                    prepared = self._prepare_dataset(dataset,query)
                 except (DataSourceError, ValueError) as exc:
                     notices.append(f"NBA {season} {phase} unavailable: {exc}")
                     continue
-                destination = self.directory / f"team_games_{season}_{phase}.csv"
-                atomic_text(destination, prepared.to_csv(index=False))
-                manifest = {"version": 1, "query": asdict(query), "source": dataset.source,
-                            "source_fetched_at": dataset.fetched_at, "cache_key": dataset.key,
-                            "games": prepared.game_id.nunique(), "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
-                            "possessions": "mean of both teams' FGA + 0.44*FTA - OREB + TOV; includes overtime",
-                            "availability": "game UTC date + 2 days; conservative completion lag"}
-                atomic_text(destination.with_suffix(".manifest.json"), json.dumps(manifest, indent=2))
                 if dataset.notice:
                     notices.append(dataset.notice)
                 frames.append(prepared)

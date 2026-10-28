@@ -14,7 +14,23 @@ def recency(n, half_life):
     return w/w.sum()
 
 
+@lru_cache(maxsize=512)
+def _season_recency(seasons, half_life, discount):
+    """Reuse identical season/recency windows without rebuilding a DataFrame."""
+    years = np.asarray(seasons, dtype=float)
+    factors = np.power(discount, np.maximum(0., years.max()-years))
+    result = recency(len(seasons), half_life)*factors
+    result = result/result.sum()
+    result.setflags(write=False)
+    return result
+
+
 def record_weights(records, half_life, config):
+    # Fitted records already carry integer season-start years. Legacy archives
+    # may need the original date/string inference, so retain that fallback.
+    seasons = tuple(r.get('season') for r in records)
+    if seasons and all(isinstance(year, (int, np.integer)) for year in seasons):
+        return _season_recency(seasons, half_life, config.baseline.prior_season_weight).copy()
     return apply_season_weights(recency(len(records), half_life), pd.DataFrame(records),
                                 config.baseline.sport, config.baseline.prior_season_weight)
 

@@ -9,12 +9,13 @@ from hashlib import sha256
 from importlib import import_module
 from functools import lru_cache
 import json,math,threading,re,unicodedata
+from os import walk
 from statistics import NormalDist
 from uuid import uuid4
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from models.replay import replay_scope
+from models.replay import replay_scope,fingerprint
 
 from .data import DataSourceError
 from .service import DataService
@@ -34,6 +35,27 @@ CALIBRATION_BINS=50
 def file_revision(path):
     stamp=path.stat()
     return str(path.resolve()),stamp.st_size,stamp.st_mtime_ns,stamp.st_ctime_ns,stamp.st_ino
+
+
+@lru_cache(maxsize=4)
+def implementation_signature(revisions):
+    return sha256(b''.join(Path(revision[0]).read_bytes() for revision in revisions)).hexdigest()
+
+
+def source_revisions(root=ROOT):
+    """Repository inputs only; never enumerate generated forecast/audit trees."""
+    sources=[]
+    for directory in [root/'data/cache',root/'data/modeling']:
+        for folder,children,names in walk(directory):
+            children[:]=[name for name in children if name not in {'forecasts','evaluations'}]
+            sources.extend(Path(folder)/name for name in names if Path(name).suffix in {'.csv','.sqlite3','.npz','.json'})
+    for path in list(sources):
+        if path.suffix=='.sqlite3' and Path(str(path)+'-wal').exists():sources.append(Path(str(path)+'-wal'))
+    revisions=[]
+    for path in sorted(sources):
+        try:revisions.append((str(path.relative_to(root)),*file_revision(path)[1:]))
+        except FileNotFoundError:pass  # SQLite can checkpoint/remove its WAL between the scan and stat.
+    return revisions
 
 
 @lru_cache(maxsize=16)
@@ -543,16 +565,15 @@ class BacktestingService:
             config=asdict(configured(player_config(sport,key),config_overrides))
         if not games:raise DataSourceError('No completed saved games with verified season type match these filters. Load more historical data or adjust the dates/playoff selection.')
         if progress:progress(0,len(games),'Checking saved runs')
-        signature=sha256(b''.join(p.read_bytes() for p in sorted([Path(__file__),*ROOT.joinpath('models').rglob('*.py'),
-            ROOT/'sports_analytics/ncaaf_model_data.py']))).hexdigest()
-        # Include all saved source revisions used by repositories, not only target rows.
-        sources=[p for folder in ['data/cache','data/modeling'] for p in (ROOT/folder).rglob('*')
-                 if p.is_file() and p.suffix in {'.csv','.sqlite3','.npz','.json'} and 'forecasts' not in p.parts]
-        source_state=[(str(p.relative_to(ROOT)),p.stat().st_size,p.stat().st_mtime_ns) for p in sorted(sources)]
+        signature=implementation_signature(tuple(file_revision(p) for p in sorted([Path(__file__),*ROOT.joinpath('models').rglob('*.py'),
+            ROOT/'sports_analytics/ncaaf_model_data.py'])))
+        # Game models use only the complete frame hashed below. Player models
+        # additionally read league/team histories from their repositories.
+        source_state=source_revisions() if group=='player-stats' else []
         identity=dict(sport=sport,group=group,model=key,entity=entity,market=market,start=start,end=end,limit=limit,
                       tolerance=tolerance,line=line,include_playoffs=include_playoffs,lookback=lookback,
                       interval_level=PREDICTIVE_INTERVAL,config=config,implementation=signature,
-                      inputs=sha256((frame.to_json(orient='table',date_format='iso',index=False)+json.dumps(source_state)).encode()).hexdigest())
+                      inputs=sha256((repr(fingerprint(frame))+json.dumps(source_state)).encode()).hexdigest())
         if workspace=='research' or team_filter is not None:identity.update(workspace=workspace,team_filter=team_filter)
         identity['evaluation_games']=[str((g.iloc[0] if group=='game-outcome' else g).game_id) for g in games]
         cache=self.root/sport.lower()/group/key/(sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')

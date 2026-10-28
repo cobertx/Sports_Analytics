@@ -1,6 +1,7 @@
 """Connect saved game identities to cached, reproducible PPP estimates."""
 
 from dataclasses import asdict
+from collections import OrderedDict
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -29,7 +30,10 @@ class PPPMarketService:
         self.data = data or NflModelData()
         self.model = model or PPPModel()
         self._lock = threading.Lock()
-        self._memory = {}
+        self._ready = threading.Condition(self._lock)
+        self._pending = set()
+        self._prepare_lock = threading.Lock()
+        self._memory = OrderedDict()
 
     def forecast(self, snapshot):
         try:
@@ -45,35 +49,52 @@ class PPPMarketService:
                     "season_weighting": hashlib.sha256(Path(season_weights.__file__).read_bytes()).hexdigest(),
                     "config": asdict(self.model.config), "neutral": bool(snapshot.get("game", {}).get("neutral", False))}
         key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-        with self._lock:
+        with self._ready:
+            self._ready.wait_for(lambda: key not in self._pending)
             if key in self._memory:
+                self._memory.move_to_end(key)
                 return self._memory[key]
-            path = self.data.directory / "forecasts" / f"{self.method.lower()}_{key}.json"
-            if path.exists():
-                try:
-                    saved = json.loads(path.read_text(encoding="utf-8"))
-                    forecast = self.forecast_class(**saved["forecast"])
-                    if saved["identity"] == identity:
-                        self._memory[key] = forecast
-                        return forecast
-                except (OSError, ValueError, TypeError, KeyError):
-                    pass
-            season = cutoff.year - (cutoff.month < self.season_start_month)
-            try:
-                frame, notices = self.data.prepare([season - 1, season])
-                forecast = self.model.predict(frame, home, away, cutoff.isoformat(), neutral=identity["neutral"])
-            except (PPPError, DataSourceError, OSError, ValueError) as exc:
-                raise DataSourceError(f"{self.method} estimate unavailable. {exc}") from None
-            forecast.diagnostics["source_notices"] = notices
-            forecast.diagnostics["snapshot_after_kickoff"] = pulled > kickoff
-            forecast.diagnostics["prepared_at"] = datetime.now(timezone.utc).isoformat()
-            forecast.diagnostics["input_files"] = [
-                {"file": source.name, "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
-                for source in sorted({source for pattern in self.input_patterns for source in self.data.directory.glob(pattern)})
-                if str(season) in source.stem or str(season - 1) in source.stem]
-            try:
-                atomic_text(path, json.dumps({"identity": identity, "forecast": asdict(forecast)}, indent=2))
-            except OSError:
-                forecast.diagnostics["source_notices"].append("This estimate could not be archived; check modeling-folder access.")
-            self._memory[key] = forecast
+            self._pending.add(key)
+        try:
+            forecast = self._forecast(snapshot, identity, key, pulled, kickoff, cutoff)
+            with self._ready:
+                self._memory[key] = forecast
+                self._memory.move_to_end(key)
+                while len(self._memory)>32:self._memory.popitem(last=False)
             return forecast
+        finally:
+            with self._ready:
+                self._pending.remove(key)
+                self._ready.notify_all()
+
+    def _forecast(self, snapshot, identity, key, pulled, kickoff, cutoff):
+        path = self.data.directory / "forecasts" / f"{self.method.lower()}_{key}.json"
+        if path.exists():
+            try:
+                saved = json.loads(path.read_text(encoding="utf-8"))
+                forecast = self.forecast_class(**saved["forecast"])
+                if saved["identity"] == identity:
+                    return forecast
+            except (OSError, ValueError, TypeError, KeyError):
+                pass
+        season = cutoff.year - (cutoff.month < self.season_start_month)
+        try:
+            # Preparation may refresh shared source files. Only that step
+            # is serialized; independent game fits and cache hits can run.
+            with self._prepare_lock:
+                frame, notices = self.data.prepare([season - 1, season])
+            forecast = self.model.predict(frame, identity['home'], identity['away'], cutoff.isoformat(), neutral=identity["neutral"])
+        except (PPPError, DataSourceError, OSError, ValueError) as exc:
+            raise DataSourceError(f"{self.method} estimate unavailable. {exc}") from None
+        forecast.diagnostics["source_notices"] = notices
+        forecast.diagnostics["snapshot_after_kickoff"] = pulled > kickoff
+        forecast.diagnostics["prepared_at"] = datetime.now(timezone.utc).isoformat()
+        forecast.diagnostics["input_files"] = [
+            {"file": source.name, "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+            for source in sorted({source for pattern in self.input_patterns for source in self.data.directory.glob(pattern)})
+            if str(season) in source.stem or str(season - 1) in source.stem]
+        try:
+            atomic_text(path, json.dumps({"identity": identity, "forecast": asdict(forecast)}, indent=2))
+        except OSError:
+            forecast.diagnostics["source_notices"].append("This estimate could not be archived; check modeling-folder access.")
+        return forecast
