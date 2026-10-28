@@ -10,6 +10,7 @@ from unittest.mock import Mock,patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from models.season_weights import POLICY_VERSION
 from sports_analytics.dashboard import create_app
 from sports_analytics.kalshi_analysis import FILTER
 from sports_analytics.mispricing import filter_context
@@ -45,7 +46,7 @@ class MarketTransitionChecks(TestCase):
         with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_prop_ids={'market-url.hash':'market-url'})):
             result=self.cb['open_game']('#nfl-game-123','NFL','market',[],None,'saved.csv',dict(sport='NFL',id='123',token='same'))
         self.assertTrue(all(value is no_update for value in result));self.markets.history.assert_not_called()
-        history=dict(context=['#nfl-game-123','saved.csv'],view_key=['Game','PPP','WHP',None])
+        history=dict(context=['#nfl-game-123','saved.csv'],view_key=['Game','PPP','WHP',None,POLICY_VERSION])
         with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-url')):
             shown=self.cb['show_saved_markets']('Game','saved.csv','#nfl-game-123',None,'PPP','WHP',history,'market')
         self.assertEqual(shown,(no_update,no_update));self.markets.history.assert_not_called()
