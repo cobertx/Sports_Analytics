@@ -9,6 +9,7 @@ from statistics import NormalDist
 import numpy as np
 import pandas as pd
 from models.replay import cached_calculation
+from models.season_weights import apply_season_weights, season_factors
 
 from .distributions import settlement
 from .errors import WHPError
@@ -29,9 +30,12 @@ class WHPConfig:
     maximum_calibration: int = 40
     weighting: str = "exponential"
     distribution: str = "auto"
+    prior_season_weight: float = .2
+    sport: str = "NBA"
 
     def __post_init__(self):
-        if (any(not isinstance(v, int) or isinstance(v, bool) for v in
+        if (self.sport not in {'NBA', 'NFL', 'NCAAF'} or not 0 < self.prior_season_weight <= 1 or
+                any(not isinstance(v, int) or isinstance(v, bool) for v in
                 (self.window, self.minimum_games, self.minimum_calibration, self.maximum_calibration)) or
                 not 2 <= self.minimum_games <= self.window or
                 not 2 <= self.minimum_calibration <= self.maximum_calibration or
@@ -46,9 +50,9 @@ class WHPConfig:
         if sport == "NBA":
             return cls()
         if sport == "NFL":
-            return cls(window=16, half_life=3, minimum_games=3, minimum_calibration=4)
+            return cls(sport=sport, window=16, half_life=3, minimum_games=3, minimum_calibration=4)
         if sport == "NCAAF":
-            return cls(window=12, half_life=3, prior_strength=8, minimum_games=4, minimum_calibration=4)
+            return cls(sport=sport, window=12, half_life=3, prior_strength=8, minimum_games=4, minimum_calibration=4)
         raise WHPError("Choose NBA, NFL or NCAAF.")
 
 
@@ -122,11 +126,13 @@ class WeightedHistoricalPerformance:
         ages = ((pd.Timestamp(as_of) - sample["event_date"]).dt.total_seconds() / 86400
                 if self.config.weighting == "calendar" else None)
         w = recency_weights(len(sample), self.config.half_life, self.config.weighting, ages=ages)
+        w = apply_season_weights(w, sample, self.config.sport, self.config.prior_season_weight)
         result = summarize(sample["value"], w)
         # Disjoint older appearances form an empirical player prior. Never add
         # invented rookie or cross-position production when this pool is absent.
         prior_sample = history.iloc[:-len(sample)]
-        prior = float(prior_sample["value"].mean()) if len(prior_sample) >= 3 else None
+        prior_factors = season_factors(prior_sample, self.config.sport, as_of, self.config.prior_season_weight)
+        prior = float(np.average(prior_sample["value"], weights=prior_factors)) if len(prior_sample) >= 3 else None
         opportunity = {}
         if "opportunity" in sample:
             o = pd.to_numeric(sample["opportunity"], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
@@ -139,7 +145,8 @@ class WeightedHistoricalPerformance:
             raise WHPError("Workload blending needs complete historical opportunities.")
         blended = (self.config.beta * result["weighted_mean"] +
                    (1 - self.config.beta) * opportunity.get("rate_mean", result["weighted_mean"]))
-        alpha = result["effective_n"] / (result["effective_n"] + self.config.prior_strength) if prior is not None else 1.
+        prior_strength = self.config.prior_strength * float(prior_factors.mean()) if prior is not None else 0.
+        alpha = result["effective_n"] / (result["effective_n"] + prior_strength)
         result.update(adjusted_mean=alpha * blended + (1-alpha) * (prior or 0),
                       prior=prior, prior_games=len(prior_sample), alpha=alpha, **opportunity)
         return result, sample, w
@@ -156,6 +163,7 @@ class WeightedHistoricalPerformance:
         available_times = history.available_at.array.as_unit('ns').asi8
         values = history.value.to_numpy()
         opportunities = history.opportunity.to_numpy() if 'opportunity' in history else None
+        seasons = history.season.to_numpy() if 'season' in history else None
         columns = ['game_id', 'event_date', 'value']
         for game in history[columns].tail(self.config.maximum_calibration).itertuples(index=False):
             end = np.searchsorted(event_times, game.event_date.value, side='left')
@@ -171,6 +179,7 @@ class WeightedHistoricalPerformance:
                 return self._point(past, game.event_date)[0]['adjusted_mean']
             predicted = cached_calculation(self, 'calibration_point',
                 lambda: (event_times[positions], values[positions],
+                         seasons[positions] if seasons is not None else None,
                          opportunities[positions] if opportunities is not None else None, game.event_date),
                 calculate)
             records.append({"game_id": str(game.game_id), "event_date": game.event_date.isoformat(),

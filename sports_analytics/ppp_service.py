@@ -8,6 +8,7 @@ from pathlib import Path
 import threading
 
 from models.Game_Outcome.PPP.PPP import PPPError, PPPForecast, PPPModel
+from models import season_weights
 from .data import DataSourceError
 from .nfl_markets import NFL_TEAM_CODES
 from .nfl_model_data import NflModelData, atomic_text
@@ -41,6 +42,7 @@ class PPPMarketService:
         except (KeyError, ValueError, TypeError, AttributeError):
             raise DataSourceError(f"{self.method} requires recognized {self.sport} teams and timestamped saved game information.") from None
         identity = {"version": self.model_version, "home": home, "away": away, "as_of": cutoff.isoformat(),
+                    "season_weighting": hashlib.sha256(Path(season_weights.__file__).read_bytes()).hexdigest(),
                     "config": asdict(self.model.config), "neutral": bool(snapshot.get("game", {}).get("neutral", False))}
         key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         with self._lock:

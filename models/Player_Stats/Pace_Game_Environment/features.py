@@ -1,9 +1,11 @@
 """Paired, regulation-equivalent team volume with observed game scripts."""
 import numpy as np
 import pandas as pd
+from models.season_weights import season_ids
 
 
 def volume_rows(sport, teams):
+    teams = teams.assign(season=season_ids(teams, sport))
     output = []
     for game_id, game in teams.groupby('game_id', sort=False):
         if len(game) != 2 or game.team.nunique() != 2:
@@ -50,7 +52,7 @@ def volume_rows(sport, teams):
             output.append(dict(game_id=str(game_id),team=r.team,opponent=[b,a][i].team,
                 event_date=r.event_date,available_at=max(a.available_at,b.available_at),
                 volume=volumes[i],allowed_volume=volumes[1-i],extra=extra[i],duration=duration,
-                margin=margins[i],source=mode))
+                margin=margins[i],source=mode,season=r.season))
     result = pd.DataFrame(output)
     if result.empty:
         raise ValueError('PGE needs paired team boxes with opponents, scoring margins and valid volume. Prepare both seasons.')

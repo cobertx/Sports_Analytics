@@ -17,6 +17,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from models.replay import replay_memoized
+from models.season_weights import calendar_weights, season_ids
 from models.Game_Outcome.PPP.PPP import PPPError, PPPForecast
 from models.Game_Outcome.PPP.NBA_PPP import NBAPPPForecast, NBAPPPModel
 
@@ -32,7 +33,7 @@ class ELOConfig:
     k_factor: float = 20
     elo_scale: float = 400
     home_elo: float = 50
-    season_carry: float = 2 / 3
+    season_carry: float = .2
     power_ridge: float = 10
     scoring_ridge: float = 20
     logistic_ridge: float = 10
@@ -40,11 +41,13 @@ class ELOConfig:
     minimum_team_games: int = 4
     minimum_calibration_games: int = 40
     maximum_calibration_games: int = 250
+    prior_season_weight: float = .2
 
     def __post_init__(self):
         positive = (self.half_life_days, self.k_factor, self.elo_scale,
                     self.power_ridge, self.scoring_ridge, self.logistic_ridge)
-        if (self.sport not in {"NFL", "NBA", "NCAAF"} or
+        if (not 0 < self.prior_season_weight <= 1 or
+                self.sport not in {"NFL", "NBA", "NCAAF"} or
                 not all(math.isfinite(x) and x > 0 for x in positive) or
                 not math.isfinite(self.home_elo) or not 0 <= self.season_carry <= 1 or
                 any(not isinstance(x, int) or isinstance(x, bool) for x in (
@@ -58,7 +61,7 @@ class ELOConfig:
     @classmethod
     def nba(cls, **overrides):
         values = dict(sport="NBA", half_life_days=90, k_factor=20, home_elo=60,
-                      season_carry=.75, power_ridge=20, scoring_ridge=50,
+                      season_carry=.2, power_ridge=20, scoring_ridge=50,
                       minimum_training_games=100, minimum_team_games=10,
                       minimum_calibration_games=100, maximum_calibration_games=300)
         return cls(**(values | overrides))
@@ -124,7 +127,7 @@ class ELOModel:
             frame["offensive_drives"] = frame.possessions
             frame["defensive_drives"] = frame.possessions
             frame["neutral"] = frame.get("neutral", 0)
-            frame["season"] = frame.event_date.dt.year - (frame.event_date.dt.month < 10).astype(int)
+            frame["season"] = season_ids(frame, 'NBA')
             if frame.points.eq(frame.points_allowed).any():
                 raise ELOError("Full-game NBA results cannot be tied.")
         numeric = ["offensive_points", "non_offensive_points", "offensive_drives", "defensive_drives", "neutral", "season"]
@@ -147,8 +150,8 @@ class ELOModel:
         return frame
 
     def _weights(self, frame, cutoff):
-        return np.exp2(-(pd.Timestamp(cutoff) - frame.event_date).dt.total_seconds().to_numpy() /
-                       86400 / self.config.half_life_days)
+        return calendar_weights(frame, cutoff, self.config.half_life_days,
+                                self.config.sport, self.config.prior_season_weight).to_numpy()
 
     def _elo(self, history, cutoff):
         """Freeze each date's predictions; apply updates only after availability."""

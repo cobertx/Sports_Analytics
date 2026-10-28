@@ -105,7 +105,7 @@ class WHPMarketService:
         result = PlayerMarketForecast()
         config = WHPConfig.for_sport(sport)
         implementation = sha256(b"".join((Path(__file__).parent/name).read_bytes() for name in
-            ["core.py", "weights.py", "distributions.py", "opportunity.py", "markets.py", "market_comparison.py", "prediction_service.py", "historical_data.py"])).hexdigest()
+            ["core.py", "weights.py", "distributions.py", "opportunity.py", "markets.py", "market_comparison.py", "prediction_service.py", "historical_data.py", "../../season_weights.py"])).hexdigest()
         # Check the actual history contents on every request, including revised
         # observations with unchanged dates. Criteria do not change a forecast.
         cache_key = sha256(repr((implementation, asdict(config), history_fingerprint(data),
@@ -146,7 +146,7 @@ class WHPMarketService:
                 if spec.opportunity and spec.opportunity in player:
                     player["opportunity"] = player[spec.opportunity]
                 sample = eligible_history(player, cutoff)
-                columns = [c for c in ["game_id", "entity_id", "event_date", "available_at", "value", "opportunity", "team"] if c in sample]
+                columns = [c for c in ["game_id", "entity_id", "event_date", "available_at", "season", "value", "opportunity", "team"] if c in sample]
                 fingerprint = sha256(sample[columns].to_json(orient="table", date_format="iso", index=False).encode()).hexdigest()
                 identity = {"model_version": MODEL_VERSION, "code_sha256": implementation,
                             "sport": sport, "player": row["subject"], "market": key[1],

@@ -19,7 +19,8 @@ def feature_rows(sport, players, teams):
     def add(frame, name, actual, exposure):
         a, e = pd.to_numeric(actual, errors='coerce'), pd.to_numeric(exposure, errors='coerce')
         mask = np.isfinite(a) & np.isfinite(e) & e.gt(0)
-        selected = frame.loc[mask, ['game_id', 'offense', 'defense', 'event_date', 'available_at']].copy()
+        selected = frame.loc[mask, ['game_id', 'offense', 'defense', 'event_date', 'available_at',
+                                    *(['season'] if 'season' in frame else [])]].copy()
         selected['actual'], selected['exposure'], selected['component'] = a[mask], e[mask], name
         frames.append(selected)
 
@@ -58,7 +59,8 @@ def feature_rows(sport, players, teams):
             p = p[p.groupby(['game_id','team','role'])['_complete'].transform('all')]
             grouped = p.groupby(['game_id','team','role'], as_index=False).agg(
                 **{c:(c,'sum') for c in columns}, player_available=('available_at','max'))
-            totals = team[['game_id','team','offense','defense','event_date','available_at','targets','carries']].rename(
+            totals = team[['game_id','team','offense','defense','event_date','available_at','targets','carries',
+                           *(['season'] if 'season' in team else [])]].rename(
                 columns={'targets':'team_targets','carries':'team_carries'})
             grouped = grouped.merge(totals, on=['game_id','team'], how='inner', validate='many_to_one')
             grouped['available_at'] = grouped[['available_at','player_available']].max(axis=1)

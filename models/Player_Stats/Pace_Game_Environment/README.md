@@ -1,5 +1,7 @@
 # Pace & Game Environment - implementation guide
 
+Current-season emphasis applies to the UO baseline, league/team pace features, pace regression, paired residual scenarios and conditioned role draws in all three sports. Weights include `baseline.prior_season_weight ** seasons_old`, default 0.2, in addition to recency. Each donor game's two orientations retain equal prior mass; sample safeguards and finite-volume accounting are unchanged. Set the nested baseline parameter in Strategy & Research. See [shared weighting rules](../../README.md).
+
 This package implements an NBA/NFL public-data baseline for the supplied
 `Pace_Game_Environment_Player_Props_Modeling.pdf`. The source is preserved
 unchanged beside the code. `PGE_Implementation_Guide.pdf`, generated from this

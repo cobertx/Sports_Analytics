@@ -17,6 +17,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from models.replay import replay_memoized, calibration_tail
+from models.season_weights import calendar_weights
 from models.Game_Outcome.PPP.PPP import MarketProbability, PPPError, PPPForecast
 
 
@@ -43,9 +44,11 @@ class NBAPPPConfig:
     minimum_team_games: int = 10
     minimum_calibration_games: int = 100
     maximum_calibration_games: int = 300
+    prior_season_weight: float = .2
 
     def __post_init__(self):
-        if (not math.isfinite(self.half_life_days) or self.half_life_days <= 0 or
+        if (not 0 < self.prior_season_weight <= 1 or
+                not math.isfinite(self.half_life_days) or self.half_life_days <= 0 or
                 not math.isfinite(self.shrinkage_games) or self.shrinkage_games < 0 or
                 min(self.minimum_training_games, self.minimum_team_games) < 1 or
                 self.minimum_calibration_games < 2 or self.maximum_calibration_games < self.minimum_calibration_games):
@@ -96,7 +99,7 @@ class NBAPPPModel:
     def _ratings(self, history, as_of):
         if history.game_id.nunique() < self.config.minimum_training_games:
             raise PPPError("Not enough completed NBA games for PPP ratings.")
-        weights = np.exp2(-(pd.Timestamp(as_of) - history.event_date).dt.total_seconds() / 86400 / self.config.half_life_days)
+        weights = calendar_weights(history, as_of, self.config.half_life_days, 'NBA', self.config.prior_season_weight)
         league = float(np.dot(weights, history.points) / np.dot(weights, history.possessions))
         pace = float(np.average(history.possessions, weights=weights))
         result = {"league": league, "pace": pace, "teams": {}}

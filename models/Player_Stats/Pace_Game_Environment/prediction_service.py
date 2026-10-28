@@ -87,7 +87,7 @@ class PaceGameEnvironmentMarketService:
         signature = sha256(b''.join(path.read_bytes() for path in sorted([*Path(__file__).parent.glob('*.py'), *(Path(__file__).parent.parent/'Usage_Opportunity').glob('*.py')]))).hexdigest()
         common = Path(__file__).parent.parent/'Weighted_Historical_Performance'
         signature = sha256((signature + ''.join(sha256((common/name).read_bytes()).hexdigest() for name in
-            ['historical_data.py', 'prediction_service.py', 'markets.py', 'market_comparison.py'])).encode()).hexdigest()
+            ['historical_data.py', 'prediction_service.py', 'markets.py', 'market_comparison.py', '../../season_weights.py'])).encode()).hexdigest()
         fingerprint = sha256((players.to_json(orient='table', date_format='iso', index=False) +
                               all_teams.to_json(orient='table', date_format='iso', index=False)).encode()).hexdigest()
         identity = dict(version=MODEL_VERSION, implementation=signature, input_sha256=fingerprint,

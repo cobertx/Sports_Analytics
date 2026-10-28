@@ -1,5 +1,7 @@
 # Opponent-Adjusted Matchup - implementation guide
 
+Current-season emphasis applies to the UO baseline and to chronological offense/league priors, defensive profiles and their bootstrap draws in all three sports. Weights include `baseline.prior_season_weight ** seasons_old`, default 0.2, in addition to recency; normalization, neutral shrinkage and minimum samples still apply. Set the nested baseline parameter in Strategy & Research. See [shared weighting rules](../../README.md).
+
 This package implements an NBA/NFL box-score version of the supplied
 `Opponent_Adjusted_Matchup_Modeling_NBA_NFL_NCAAF.pdf`. The unchanged source
 reference and separate `OAM_Implementation_Guide.pdf` accompany the code. This

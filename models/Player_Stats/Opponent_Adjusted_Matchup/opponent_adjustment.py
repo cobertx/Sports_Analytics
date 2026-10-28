@@ -1,6 +1,6 @@
 """Component-specific historical neutralization and uncertain upcoming defense."""
 import numpy as np
-from .schedule_strength import recency
+from .schedule_strength import record_weights
 from .lineup_adjustment import scenario_draws
 
 NBA_CONVERSION={('two_pm','two_pa'):'nba:two_p',('fg3m','fg3a'):'nba:three_p',('ftm','fta'):'nba:ft_p'}
@@ -27,7 +27,7 @@ class MatchupContext:
                 if profile is None:
                     continue
                 records=profile['records']
-                weights=recency(len(records),config.defense_half_life)
+                weights=record_weights(records,config.defense_half_life,config)
                 for record in records:
                     key=(defense,record['game_id'])
                     if key not in bootstrap:

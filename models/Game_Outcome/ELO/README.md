@@ -61,20 +61,19 @@ Elo has an explicit additional offseason prior (PDF equation 5):
 
 ```text
 R_new = 1500 + season_carry * (R_old - 1500)
-NFL season_carry = 2/3; NBA season_carry = 0.75
+NFL / NBA / NCAAF season_carry = 0.2
 ```
 
 It is applied once at each observed season transition, and at a target new
 season even if no new-season game has been observed. Skipped seasons use
-`season_carry ** number_of_seasons`. A final 1600 NFL rating becomes 1566.67;
-a final 1600 NBA rating becomes 1575. The initial reference is 1500; unfamiliar
+`season_carry ** number_of_seasons`. A final 1600 rating becomes 1520 for each sport. The initial reference is 1500; unfamiliar
 teams start there in the Elo replay but still need minimum actual appearances
 before a market forecast is permitted. Carry values are declared baseline
 settings, not externally supplied current power rankings.
 
-Power and scoring fits use `2^(-age_days/half_life_days)`, without a hard
+Power and scoring fits use `2^(-age_days/half_life_days) * prior_season_weight^seasons_old`, with default `prior_season_weight = 0.2`, without a hard
 season reset or fixed old/new blend. NFL games 180/360 days old receive raw
-weights 0.5/0.25; NBA games 90/180 days old receive 0.5/0.25. Offseason days
+recency weights 0.5/0.25 before the season discount; NBA games 90/180 days old receive 0.5/0.25 before the season discount. Offseason days
 count. These weights are not normalized to make the latest game equal 1;
 fixed regularization can matter more as all observations age. Sequential Elo
 uses result updates and offseason carry, rather than those recency weights.

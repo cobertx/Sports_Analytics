@@ -40,15 +40,15 @@ the smaller score-error calibration sample are different datasets.
 
 ### 0.2 Recency weighting is not a season reset
 
-The raw weight is `2^(-age_in_calendar_days / half_life_days)`. NFL weights for
+The raw weight is `2^(-age_in_calendar_days / half_life_days) * 0.2^seasons_old` by default. The season multiplier is adjustable with `prior_season_weight`; the following examples describe the recency component before that multiplier. NFL recency weights for
 ages 0, 180 and 360 days are 1, 0.5 and 0.25. NBA weights for ages 0, 90 and
 180 days are 1, 0.5 and 0.25. An offseason counts as elapsed time. A season
 boundary does not automatically erase or zero the preceding season's games,
 and there is no explicit fixed 70/30 old-season/new-season blend.
 
-For example, an NFL game 240 days old has weight about 0.397; eight such games
-have about 3.17 units of raw weight before any other exposures or penalties.
-Four recent games near weight 1 can therefore have comparable raw game weight.
+For example, a previous-season NFL game 240 days old has weight about 0.0794 after the season discount; eight such games
+have about 0.635 units of raw weight before any other exposures or penalties.
+Four current-season games near weight 1 therefore have much greater raw game weight.
 This is only a weighting illustration: NFL ratings also use play exposure and
 ridge penalties, so the actual rating is not a plain weighted score average.
 

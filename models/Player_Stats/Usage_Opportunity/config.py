@@ -16,11 +16,14 @@ class UsageOpportunityConfig:
     minimum_games: int = 5
     simulations: int = 12000
     seed: int = 20261020
+    prior_season_weight: float = .2
+    sport: str = 'NBA'
 
     def __post_init__(self):
         integers = (self.role_window, self.efficiency_window, self.team_window,
                     self.minimum_games, self.simulations, self.seed)
-        if (any(not isinstance(x, int) or isinstance(x, bool) for x in integers)
+        if (self.sport not in {'NBA', 'NFL', 'NCAAF'} or not 0 < self.prior_season_weight <= 1
+                or any(not isinstance(x, int) or isinstance(x, bool) for x in integers)
                 or not 2 <= self.minimum_games <= min(self.role_window, self.team_window)
                 or self.efficiency_window < self.role_window
                 or not 1000 <= self.simulations <= 200000 or self.seed < 0
@@ -32,9 +35,9 @@ class UsageOpportunityConfig:
         if sport == 'NBA':
             return cls()
         if sport == 'NFL':
-            return cls(role_window=16, role_half_life=3, efficiency_window=32,
+            return cls(sport=sport, role_window=16, role_half_life=3, efficiency_window=32,
                        efficiency_half_life=8, team_window=16, minimum_games=3)
         if sport == 'NCAAF':
-            return cls(role_window=12, role_half_life=3, efficiency_window=24,
+            return cls(sport=sport, role_window=12, role_half_life=3, efficiency_window=24,
                        efficiency_half_life=6, team_window=16, minimum_games=3)
         raise UsageOpportunityError('Usage & Opportunity supports NBA, NFL and NCAAF.')

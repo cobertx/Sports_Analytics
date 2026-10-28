@@ -11,7 +11,7 @@ def layout():
     columns = [('open','Game markets'),('matchup','Game'),('start','Scheduled start'),('provider','Source'),
         ('selection','Selection'),('category','Category'),('market','Market'),('method','Methods'),
         ('probability','Calculated probability'),('edge','Edge (pp)'),('odds','Market odds'),
-        ('implied','Market implied'),('criteria','Applied criteria'),('quote_time','Quote snapshot'),('saved_at','Filtered at')]
+        ('implied','Market implied'),('weighting','Weighting'),('criteria','Applied criteria'),('quote_time','Quote snapshot'),('saved_at','Filtered at')]
     return html.Section([
         html.Div([html.Div('MARKET DATA',className='eyebrow accent'),html.H2('Filtered Results'),
             html.P('Qualifying selections saved by Quick Filtering across upcoming games. '
@@ -19,12 +19,13 @@ def layout():
         html.Section([
             html.Div([
                 html.Div([html.Label('Saved runs',htmlFor='filtered-results-scope'),dcc.Dropdown(id='filtered-results-scope',
-                    options=[dict(label='Latest run per game and source',value='latest'),dict(label='All saved runs',value='all')],
+                    options=[dict(label='Latest run per game and source',value='latest'),dict(label='All saved runs (including earlier weighting)',value='all')],
                     value='latest',clearable=False)],className='field'),
                 html.Button('Refresh saved results',id='filtered-results-refresh',n_clicks=0,className='export-button'),
             ],className='market-controls'),
             html.P(id='filtered-results-status',className='load-status',role='status'),
             html.P('Results retain the quotes, criteria and methods used when filtering. '
+                   'The latest-run view shows current-season weighting only. Earlier estimates remain labeled in All saved runs; rerun Quick Filtering to update them. '
                    'For multiple methods, probability and edge are the lowest values across the selected methods. '
                    'Games disappear from this view at their scheduled start. Opening this page reads local results only.',className='ppp-comparison-note'),
             dash_table.DataTable(id='filtered-results-table',data=[],columns=[dict(id=key,name=label,
@@ -50,6 +51,7 @@ def rows(records):
             'open':f'[Open game]({row["href"]})','edge':100*row['edge'],
             'start':format_eastern(row['start']),'quote_time':format_eastern(row['quote_time']) if row['quote_time'] else 'Unavailable',
             'saved_at':format_eastern(row['saved_at']),
+            'weighting':row.get('weighting','Earlier weighting; rerun Quick Filtering'),
             'criteria':f"Probability > {100*criteria['probability']:g}%; edge > {100*criteria['edge']:g} pp"})
         tooltips.append({'method':dict(type='text',value='\n'.join(
             f"{value['method']}: {100*value['probability']:.2f}% / {100*value['edge']:+.2f} pp" for value in row['estimates']))})

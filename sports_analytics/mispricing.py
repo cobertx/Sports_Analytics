@@ -4,6 +4,7 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 
 from dash import dcc, html
+from models.season_weights import POLICY_VERSION
 
 from .market_view import MARKET_NAMES, _line_values, criteria_match, probability_text, selection_text
 from .prompt_history import button as history_button
@@ -95,7 +96,7 @@ def criteria_values(probability, edge):
 
 def filter_context(location_hash, selection, method, player_method, criteria):
     return dict(location=location_hash, snapshot=selection, game_method=method or 'PPP',
-                player_method=player_method or 'WHP', criteria=criteria)
+                player_method=player_method or 'WHP', criteria=criteria,weighting_policy=POLICY_VERSION)
 
 
 def rank_markets(snapshot, game_forecast, player_forecast, criteria, method='PPP', player_method='WHP'):

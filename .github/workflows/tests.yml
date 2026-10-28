@@ -37,6 +37,8 @@ jobs:
         run: python scripts/check_performance_summary.py
       - name: Check research settings and experiment replay
         run: python scripts/check_research.py
+      - name: Check current-season model weighting and historical cutoffs
+        run: python scripts/check_season_weights.py
       - name: Check market links and relevant historical statistics
         run: python scripts/check_market_history.py
       - name: Check prompt history thresholds and observed hit counts

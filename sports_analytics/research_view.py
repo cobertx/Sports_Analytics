@@ -56,6 +56,7 @@ SOURCES={
 }
 
 HELP={
+    'prior_season_weight':'Weight multiplier per older season, on top of recency. Default 0.2 gives an otherwise equal prior-season game one fifth of the current-season weight; two seasons ago gets 0.04. Set 1 to disable the season discount.',
     'half_life_days':'Calendar days required for an observation’s recency weight to halve.',
     'ridge_penalty':'Strength of regularization on fitted team effects.',
     'minimum_training_games':'Minimum distinct earlier games required for a ratings fit.',
@@ -143,6 +144,7 @@ def page(sport,location_hash):
             html.H2(model_name(model,sport)),html.P(model.description)],className='panel backtesting-heading'),
         html.Section([html.H3('How the methodology works'),html.Ol([html.Li(text) for text in METHODS[model.key]]),
             html.H3('Data used for '+sport),html.P(SOURCES[sport]),html.P(inputs),
+            html.P('Current-season performance is emphasized: each older season receives a 0.2 multiplier in addition to recency weighting. Older observations still support minimum history and uncertainty calibration. Adjust prior season weight in the parameters below; Elo also exposes season carry.'),
             html.P('These experiments replay saved outcomes. Historical sportsbook quotes are not required; an optional fixed player reference line supports probability metrics.'),
             html.P('The sport-specific prepared sources and publication/availability lags define the eligible history. Evaluation dates and team selections restrict the test cohort; eligible league/opponent history still supports fitting. A lookback cap additionally bounds appearances used for estimation.'),
             html.H3('Reading the experiment'),html.P('Every forecast uses only observations strictly available before its historical cutoff. Game Outcome evaluates final margin and total; Player Stats evaluates the chosen statistic per observed appearance. All-player/team experiments use the last requested distinct games and keep each player’s training history separate.'),

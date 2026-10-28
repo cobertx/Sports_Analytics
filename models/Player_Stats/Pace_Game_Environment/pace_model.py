@@ -2,7 +2,8 @@
 import numpy as np
 import pandas as pd
 from models.replay import replay_memoized
-from models.Player_Stats.Usage_Opportunity.opportunity_model import weights
+from models.Player_Stats.Usage_Opportunity.opportunity_model import history_weights
+from models.season_weights import season_ids
 
 
 class PaceModel:
@@ -15,12 +16,13 @@ class PaceModel:
     def _features(self, history, team, opponent):
         config = self.config
         league_rows = history.tail(2*config.league_window)
-        league = float(league_rows.volume.mean())
+        league = float(np.average(league_rows.volume, weights=history_weights(
+            league_rows, 2*config.scenario_half_life, config.baseline)))
         def average(club, column):
             rows = history[history.team.eq(club)].tail(config.baseline.team_window)
             if rows.empty:
                 return league if column != 'margin' else 0.
-            w = weights(len(rows), config.baseline.role_half_life)
+            w = history_weights(rows, config.baseline.role_half_life, config.baseline)
             effective = 1/float(w@w)
             prior = league if column != 'margin' else 0.
             return (effective*float(w@rows[column].to_numpy(float))+config.pace_prior*prior)/(effective+config.pace_prior)
@@ -34,7 +36,7 @@ class PaceModel:
         rows = training[-2*self.config.league_window:]
         x = np.array([r['x'] for r in rows])
         y = np.array([r['y'] for r in rows])
-        w = weights(len(rows),2*self.config.scenario_half_life)*len(rows)
+        w = history_weights(pd.DataFrame(rows),2*self.config.scenario_half_life,self.config.baseline)*len(rows)
         return np.linalg.solve(x.T@(w[:,None]*x)+self.config.ridge*np.eye(2),x.T@(w*y))
 
     @replay_memoized
@@ -44,13 +46,15 @@ class PaceModel:
         for r in batch.itertuples(index=False):
             league,x,margin = self._features(prefix,r.team,r.opponent)
             prediction = max(1.,float(league+x@coefficients))
-            additions.append(dict(x=x.tolist(),y=float(r.volume-league),available_at=r.available_at))
+            additions.append(dict(x=x.tolist(),y=float(r.volume-league),available_at=r.available_at,
+                                  event_date=r.event_date,season=r.season))
             residuals.append(dict(game_id=r.game_id,team=r.team,opponent=r.opponent,
-                event_date=r.event_date,available_at=r.available_at,residual=float(r.volume-prediction),
+                event_date=r.event_date,available_at=r.available_at,season=r.season,residual=float(r.volume-prediction),
                 predicted=prediction,predicted_margin=margin,margin=float(r.margin),extra=float(r.extra)))
         return additions, residuals
 
     def fit(self, rows):
+        rows = rows.assign(season=season_ids(rows, self.config.baseline.sport))
         self.history = rows.copy()
         self.training,self.residuals = [],[]
         # Every target-date batch is predicted from strictly earlier available

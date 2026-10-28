@@ -22,6 +22,7 @@ from .markets import market_spec,prop_key
 from .nfl_model import split_completions
 from .opportunity_model import observed,share_rows,allocate
 from .simulation import SimulationResult,team_states,integer_pool
+from models.season_weights import season_ids
 
 TEAM_COLUMNS=('attempts','completions','carries','passing_yards','rushing_yards')
 CONVERSIONS={('completions','attempts'):'cfb:completion',
@@ -38,7 +39,8 @@ def defense_features(teams):
         ('cfb:rush_ypc',teams.rushing_yards,teams.carries),
         ('cfb:int_rate',teams.get('interceptions',pd.Series(np.nan,index=teams.index)),teams.attempts-teams.completions)]:
         mask=np.isfinite(actual)&np.isfinite(exposure)&exposure.gt(0)
-        part=teams.loc[mask,['game_id','team','opponent','event_date','available_at']].rename(
+        part=teams.loc[mask,['game_id','team','opponent','event_date','available_at',
+                             *(['season'] if 'season' in teams else [])]].rename(
             columns={'team':'offense','opponent':'defense'})
         part=part.assign(component=component,actual=actual[mask],exposure=exposure[mask])
         frames.append(part)
@@ -67,6 +69,7 @@ def college_context(model,opponents,config,cutoff,rng):
 
 def volume_features(teams):
     """Full-game NCAA box plays, including any OT, with paired actual margins."""
+    teams=teams.assign(season=season_ids(teams,'NCAAF'))
     rows=[]
     for gid,game in teams.groupby('game_id',sort=False):
         if len(game)!=2:continue
@@ -77,7 +80,7 @@ def volume_features(teams):
         for i,r in enumerate([a,b]):
             rows.append(dict(game_id=str(gid),team=r.team,opponent=[b,a][i].team,event_date=r.event_date,
                 available_at=max(a.available_at,b.available_at),volume=values[i],allowed_volume=values[1-i],
-                margin=float(r.points-[b,a][i].points),extra=0.,duration=60.,
+                margin=float(r.points-[b,a][i].points),extra=0.,duration=60.,season=r.season,
                 source='NCAA box attempts + rushing attempts; full game, overtime unseparated'))
     if not rows:raise UsageOpportunityError('PGE needs paired college team boxes and scores.')
     return pd.DataFrame(rows).sort_values(['event_date','game_id','team'])
@@ -212,7 +215,8 @@ class CollegePlayerMarketService:
             *(Path(__file__).parent.parent/'Opponent_Adjusted_Matchup').glob('*.py'),
             *(Path(__file__).parent.parent/'Pace_Game_Environment').glob('*.py'),
             *(Path(__file__).parent.parent/'Weighted_Historical_Performance').glob('*.py'),
-            Path(__file__).resolve().parents[3]/'sports_analytics/ncaaf_model_data.py']))).hexdigest()
+            Path(__file__).resolve().parents[3]/'sports_analytics/ncaaf_model_data.py',
+            Path(__file__).resolve().parents[2]/'season_weights.py']))).hexdigest()
         identity=dict(method=self.method,config=asdict(config),implementation=signature,snapshot=snapshot,
             input_sha256=sha256((players.to_json(orient='table',date_format='iso',index=False)+
                                 teams.to_json(orient='table',date_format='iso',index=False)).encode()).hexdigest())

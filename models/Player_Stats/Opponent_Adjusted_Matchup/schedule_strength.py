@@ -4,12 +4,19 @@ from functools import lru_cache
 import heapq
 import math
 import numpy as np
+import pandas as pd
+from models.season_weights import apply_season_weights, season_ids
 
 
 @lru_cache(maxsize=256)
 def recency(n, half_life):
     w = np.exp2(-np.arange(n-1,-1,-1,dtype=float)/half_life)
     return w/w.sum()
+
+
+def record_weights(records, half_life, config):
+    return apply_season_weights(recency(len(records), half_life), pd.DataFrame(records),
+                                config.baseline.sport, config.baseline.prior_season_weight)
 
 
 def shrunk_factor(actual, expected, weights=None, prior_strength=8):
@@ -26,11 +33,11 @@ def shrunk_factor(actual, expected, weights=None, prior_strength=8):
     return dict(raw=raw,effective_n=effective,alpha=alpha,mean=alpha*raw+1-alpha)
 
 
-def _prior_rate(rows, window, half_life):
+def _prior_rate(rows, window, half_life, config):
     selected=list(rows)[-window:]
     if not selected:
         return None,0.
-    w=recency(len(selected),half_life)
+    w=record_weights(selected,half_life,config)
     rate=float(w@np.array([r['neutral_actual'] for r in selected]))/float(w@np.array([r['exposure'] for r in selected]))
     return rate,1/float(w@w)
 
@@ -45,6 +52,7 @@ class ScheduleAdjustedDefense:
     def fit(self, features):
         cfg=self.config
         self.records,self.historical=[],{}
+        features = features.assign(season=season_ids(features, cfg.baseline.sport))
         for component, frame in features.groupby('component',sort=True):
             league=deque(maxlen=cfg.league_window)
             offense=defaultdict(lambda:deque(maxlen=cfg.baseline.efficiency_window))
@@ -61,19 +69,19 @@ class ScheduleAdjustedDefense:
                 old=list(defense[row.defense])
                 prior=cfg.position_prior if component.count(':')>1 else cfg.defense_prior
                 factor=(shrunk_factor([r['actual'] for r in old],[r['expected'] for r in old],
-                                     recency(len(old),cfg.defense_half_life),prior)['mean']
+                                     record_weights(old,cfg.defense_half_life,cfg),prior)['mean']
                         if len(old)>=cfg.minimum_defense_games else 1.)
                 factor=float(np.clip(factor,cfg.factor_floor,cfg.factor_ceiling))
                 self.historical[(component,str(row.game_id),row.offense)]=factor
-                league_rate,_=_prior_rate(league,cfg.league_window,cfg.baseline.efficiency_half_life)
-                rate,n=_prior_rate(offense[row.offense],cfg.baseline.efficiency_window,cfg.baseline.efficiency_half_life)
+                league_rate,_=_prior_rate(league,cfg.league_window,cfg.baseline.efficiency_half_life,cfg)
+                rate,n=_prior_rate(offense[row.offense],cfg.baseline.efficiency_window,cfg.baseline.efficiency_half_life,cfg)
                 expected=0.
                 if len(league)>=cfg.minimum_league_games and league_rate is not None and league_rate>0:
                     alpha=n/(n+cfg.offense_prior)
                     neutral=alpha*rate+(1-alpha)*league_rate if rate is not None else league_rate
                     expected=max(0.,neutral*row.exposure)
                 record=dict(component=component,game_id=str(row.game_id),offense=row.offense,defense=row.defense,
-                            event_date=row.event_date.isoformat(),available_at=row.available_at.isoformat(),
+                            event_date=row.event_date.isoformat(),available_at=row.available_at.isoformat(),season=int(row.season),
                             actual=float(row.actual),exposure=float(row.exposure),expected=float(expected),
                             neutral_actual=float(row.actual)/factor,historical_factor=factor)
                 self.records.append(record)
@@ -88,6 +96,6 @@ class ScheduleAdjustedDefense:
             return None
         prior=cfg.position_prior if component.count(':')>1 else cfg.defense_prior
         fit=shrunk_factor([r['actual'] for r in records],[r['expected'] for r in records],
-                          recency(len(records),cfg.defense_half_life),prior)
+                          record_weights(records,cfg.defense_half_life,cfg),prior)
         return {**fit,'component':component,'defense':defense,'records':records,
                 'mean':float(np.clip(fit['mean'],cfg.factor_floor,cfg.factor_ceiling))}

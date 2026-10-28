@@ -32,7 +32,7 @@ class NCAAFMarketForecastService:
             for c in ['event_date','available_at']:frame[c]=pd.to_datetime(frame[c],utc=True)
             frame=frame[frame.event_date.lt(cutoff.normalize()) & frame.available_at.lt(cutoff)].reset_index(drop=True)
             root=Path(__file__).resolve().parents[1]
-            files=[Path(__file__),root/'sports_analytics/ncaaf_model_data.py',
+            files=[Path(__file__),root/'sports_analytics/ncaaf_model_data.py',root/'models/season_weights.py',
                    *[root/p for p in ['models/Game_Outcome/PPP/PPP.py','models/Game_Outcome/PPP/NCAAF_PPP.py',
                      'models/Game_Outcome/PPP/NBA_PPP.py','models/Game_Outcome/EPA/NCAAF_EPA.py',
                      'models/Game_Outcome/ELO/NCAAF_ELO.py','models/Game_Outcome/ELO/ELO.py']]]

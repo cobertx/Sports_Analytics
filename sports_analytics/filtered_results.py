@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 import re
 import sqlite3
+from models.season_weights import POLICY_VERSION
 
 from .data import DataSourceError
 from .kalshi import parse_time
@@ -84,7 +85,7 @@ class FilteredResults:
                 implied=implied,edge=edge,odds=odds,method=item['method'],estimates=item.get('estimates',[])))
         report = dict(sport=sport,provider=provider,game_id=game_id,matchup=matchup,start=start.isoformat(),
             href=href,quote_time=snapshot.get('pulled_at') or snapshot.get('fetched_at'),criteria=criteria,
-            request=request,matches=matches)
+            request=request,matches=matches,weighting_policy=POLICY_VERSION)
         # Re-rendering the same completed scan must not duplicate its report.
         run_id = sha256(json.dumps(report,sort_keys=True,allow_nan=False).encode()).hexdigest()
         report.update(run_id=run_id,saved_at=self.now().isoformat())
@@ -112,8 +113,13 @@ class FilteredResults:
         result = []
         for (payload,) in rows:
             report = json.loads(payload)
+            current=report.get('weighting_policy')==POLICY_VERSION
+            if scope=='latest' and not current:
+                continue
             for index,match in enumerate(report['matches']):
                 result.append({**{key:report[key] for key in
                     ('sport','provider','game_id','matchup','start','href','quote_time','criteria','run_id','saved_at')},
-                    **match,'id':report['run_id']+':'+str(index)})
+                    **match,'id':report['run_id']+':'+str(index),
+                    'weighting_policy':report.get('weighting_policy'),
+                    'weighting':'Current-season priority' if current else 'Earlier weighting; rerun Quick Filtering'})
         return sorted(result,key=lambda row:(-row['probability'],-row['edge'],row['start'],row['provider'],row['id']))

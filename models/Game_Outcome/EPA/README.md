@@ -74,7 +74,7 @@ reconstructed NBA forecast pipeline.
 
 ### 0.3 How old-season weight changes
 
-Both methods use `w = 2^(-age_days / half_life_days)`. An NFL observation 180
+Both methods use `w = 2^(-age_days / half_life_days) * prior_season_weight^seasons_old`, with default `prior_season_weight = 0.2`. The following values describe the recency component before that season multiplier. An NFL observation 180
 days old has raw weight 0.5; one 360 days old has 0.25. NBA weights at 90 and
 180 days are 0.5 and 0.25. Offseason days count, and no fixed season-by-season
 blend or automatic opening-day reset is used. NFL EPA multiplies recency by

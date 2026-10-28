@@ -25,6 +25,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from models.replay import replay_memoized, calibration_tail
+from models.season_weights import calendar_weights
 
 
 class PPPError(ValueError):
@@ -133,9 +134,11 @@ class PPPConfig:
     minimum_team_games: int = 4
     minimum_calibration_games: int = 40
     maximum_calibration_games: int = 250
+    prior_season_weight: float = .2
 
     def __post_init__(self):
-        if (not math.isfinite(self.half_life_days) or self.half_life_days <= 0 or
+        if (not 0 < self.prior_season_weight <= 1 or
+                not math.isfinite(self.half_life_days) or self.half_life_days <= 0 or
                 not math.isfinite(self.ridge_penalty) or self.ridge_penalty <= 0 or
                 min(self.minimum_training_games, self.minimum_team_games) < 1 or
                 self.minimum_calibration_games < 2 or self.maximum_calibration_games < self.minimum_calibration_games):
@@ -167,7 +170,7 @@ class PPPModel:
             raise PPPError("Model training requires unique, complete, finite team-game observations.")
         if not frame.groupby("game_id").size().eq(2).all():
             raise PPPError("Each training game must contain both teams.")
-        frame["weight"] = np.exp2(-(cutoff - frame["event_date"]).dt.total_seconds() / 86400 / self.config.half_life_days)
+        frame["weight"] = calendar_weights(frame, cutoff, self.config.half_life_days, 'NFL', self.config.prior_season_weight)
         return frame.sort_values(["event_date", "game_id", "is_home"])
 
     @replay_memoized

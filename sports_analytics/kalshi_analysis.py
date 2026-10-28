@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 import re
+from models.season_weights import POLICY_VERSION
 
 from .data import DataSourceError
 from .kalshi import parse_time
@@ -28,7 +29,7 @@ def definition(row):
 
 def identity(game, selected, method, player_method):
     return [game['sport'],game['id'],game.get('start'),game.get('matchup_title') or game.get('title'),
-            game.get('teams'),bool(game.get('neutral',False)),selected,method,player_method]
+            game.get('teams'),bool(game.get('neutral',False)),POLICY_VERSION,selected,method,player_method]
 
 
 def implied(row, side):

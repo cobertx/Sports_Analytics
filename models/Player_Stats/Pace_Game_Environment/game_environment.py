@@ -1,7 +1,8 @@
 """One paired environment draw feeds volume, game mix and player roles."""
 import numpy as np
 import pandas as pd
-from models.Player_Stats.Usage_Opportunity.opportunity_model import observed,weights
+from models.Player_Stats.Usage_Opportunity.opportunity_model import observed,weights,history_weights
+from models.season_weights import apply_season_weights
 
 
 class GameEnvironment:
@@ -19,6 +20,8 @@ class GameEnvironment:
             raise ValueError('No paired chronological pace residuals are available.')
         # Both orientations of a donor game have exactly equal prior mass.
         pair_weights = np.repeat(weights(len(paired)//2,config.scenario_half_life),2)
+        pair_weights = apply_season_weights(pair_weights, pd.DataFrame([r[0] for r in paired]),
+                                             config.baseline.sport, config.baseline.prior_season_weight)
         target_margin = self.projections[clubs[0]]['margin']
         distance = np.array([r[0].predicted_margin-target_margin for r in paired])/self.bandwidth
         pair_weights *= np.exp(-.5*distance**2)
@@ -51,7 +54,7 @@ class GameEnvironment:
                                   for _,r in sample.iterrows()])
         if not np.isfinite(source_margin).all():
             raise ValueError('A player/team role game has no paired scoring/volume context.')
-        base = weights(len(sample),config.role_half_life)
+        base = history_weights(sample,config.role_half_life,config)
         kernel = np.exp(-.5*((self.margins[club][:,None]-source_margin)/self.bandwidth)**2)
         probabilities = base[None,:]*(self.config.role_smoothing+(1-self.config.role_smoothing)*kernel)
         probabilities /= probabilities.sum(axis=1)[:,None]

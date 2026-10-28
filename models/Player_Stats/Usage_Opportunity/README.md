@@ -19,6 +19,8 @@ no environment, retaining its original regulation-only calculation path.
 
 ## 0. Lookback and new seasons
 
+Across NBA, NFL and NCAAF, role draws, shared team states, conversion estimates and yardage residuals multiply their ordinary recency weights by `prior_season_weight ** seasons_old`, default 0.2 per older season, then normalize. Current-season observations receive five times the weight of an otherwise equal prior-season observation. Set this parameter to 1 to disable the additional discount. History windows, complete-input requirements and simulation count are unchanged; see [shared weighting rules](../../README.md).
+
 | Setting | NBA | NFL |
 | --- | --- | --- |
 | Recent player role window | Last 20 complete appearances | Last 16 complete appearances |

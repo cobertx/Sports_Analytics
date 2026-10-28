@@ -7,7 +7,7 @@ from models.Game_Outcome.PPP.PPP import PPPError
 
 class NCAAFELOModel(ELOModel):
     def __init__(self,config=None):
-        super().__init__(config or ELOConfig(sport='NCAAF',k_factor=24,home_elo=55,season_carry=.65,
+        super().__init__(config or ELOConfig(sport='NCAAF',k_factor=24,home_elo=55,season_carry=.2,
             power_ridge=20,scoring_ridge=30,minimum_training_games=10,minimum_team_games=1,
             minimum_calibration_games=8,maximum_calibration_games=120))
 

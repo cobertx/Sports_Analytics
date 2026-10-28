@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from .PPP import PPPModel,PPPConfig,PPPError
 from .NBA_PPP import NBAPPPForecast
+from models.season_weights import calendar_weights
 
 
 class NCAAFPPPForecast(NBAPPPForecast):
@@ -57,7 +58,7 @@ class NCAAFPPPModel(PPPModel):
 
     def _history(self,frame,as_of):
         frame=college_history(frame,as_of)
-        frame['weight']=np.exp2(-(pd.Timestamp(as_of)-frame.event_date).dt.total_seconds()/86400/self.config.half_life_days)
+        frame['weight']=calendar_weights(frame,as_of,self.config.half_life_days,'NCAAF',self.config.prior_season_weight)
         return frame
 
     def _means(self,frame,ratings,home,away,neutral=False):

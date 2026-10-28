@@ -8,6 +8,7 @@ from hashlib import sha256
 import json
 import math
 from models.Game_Outcome.PPP.PPP import fair_american_odds,implied_probability
+from models.season_weights import POLICY_VERSION
 
 
 def quote_key(snapshot,row,index):
@@ -52,7 +53,8 @@ def build_leg(snapshot,row,index,label,estimate=None,error=None,latest=None):
         subject=row['subject'],selection=row['selection'],line=row['line'],odds=float(row['odds']),
         market_probability=implied_probability(row['odds']),method=method,
         model_probability=probability,model_odds=fair_american_odds(probability),
-        win=mass[0],loss=mass[1],push=mass[2],error=error if probability is None else None,latest=latest)
+        win=mass[0],loss=mass[1],push=mass[2],error=error if probability is None else None,latest=latest,
+        weighting_policy=POLICY_VERSION)
 
 
 def clean_state(state):
@@ -74,6 +76,9 @@ def clean_state(state):
                 continue
             normalized={**leg,'market_probability':implied_probability(leg['odds']),
                         'model_odds':fair_american_odds(probability)}
+            if probability is not None and leg.get('weighting_policy')!=POLICY_VERSION:
+                normalized.update(model_probability=None,model_odds=None,win=None,loss=None,push=None,latest=None,
+                    error='This saved estimate predates current-season weighting. Remove and add the selection again to recalculate.')
             seen.add(leg['key']);legs.append(normalized)
         except (TypeError,ValueError,OverflowError):
             continue

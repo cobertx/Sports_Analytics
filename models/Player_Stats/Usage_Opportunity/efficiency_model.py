@@ -1,7 +1,7 @@
 """Beta-binomial conversion uncertainty and game-level yardage residuals."""
 import numpy as np
 from .errors import UsageOpportunityError
-from .opportunity_model import weights, observed
+from .opportunity_model import history_weights, observed
 
 
 def beta_posterior(successes, trials, observation_weights=None, prior=(.5, .5)):
@@ -18,7 +18,7 @@ def beta_posterior(successes, trials, observation_weights=None, prior=(.5, .5)):
 
 def conversion(frame, success, trial, config, rng, *, adjustment=None, team=None):
     sample = observed(frame, [success, trial], config.minimum_games, config.efficiency_window)
-    w = weights(len(sample), config.efficiency_half_life) * len(sample)
+    w = history_weights(sample, config.efficiency_half_life, config) * len(sample)
     successes = adjustment.neutral_successes(sample, success, trial) if adjustment is not None else sample[success]
     posterior = beta_posterior(successes, sample[trial], w)
     draws = rng.beta(posterior['alpha'], posterior['beta'], config.simulations)
@@ -40,7 +40,7 @@ def yards_per_event(frame, yards, count, projected_count, config, rng, *, adjust
     positive = sample[sample[count] > 0]
     if positive.empty:
         return np.zeros(config.simulations, dtype=int), dict(rate=0., positive_games=0), sample
-    w = weights(len(positive), config.efficiency_half_life)
+    w = history_weights(positive, config.efficiency_half_life, config)
     outcomes = (adjustment.neutral_yards(positive, yards, count) if adjustment is not None
                 else positive[yards].to_numpy(float))
     rate = float(w @ outcomes) / float(w @ positive[count])

@@ -17,6 +17,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from models.replay import cached_calculation, fingerprint, calibration_tail
+from models.season_weights import calendar_weights
 from models.Game_Outcome.PPP.PPP import PPPError
 from models.Game_Outcome.PPP.NBA_PPP import NBAPPPConfig, NBAPPPForecast, NBAPPPModel
 
@@ -72,8 +73,8 @@ class NBAEPAModel(NBAPPPModel):
         indices = [i for i, game_id in enumerate(dataset.game_ids) if game_id in ids.index]
         if len(indices) != len(ids):
             raise PPPError("NBA EPV state statistics are missing for training games.")
-        ages = np.asarray([(pd.Timestamp(as_of) - ids[dataset.game_ids[i]]).total_seconds() / 86400 for i in indices])
-        weights = np.exp2(-ages / self.config.half_life_days)
+        games = history.drop_duplicates('game_id').set_index('game_id').loc[[dataset.game_ids[i] for i in indices]]
+        weights = calendar_weights(games, as_of, self.config.half_life_days, 'NBA', self.config.prior_season_weight).to_numpy()
         penalty = np.full(len(FEATURES), self.config.state_ridge)
         penalty[0] = 0
         xx = np.einsum("i,ijk->jk", weights, dataset.state_xx[indices])
@@ -93,8 +94,8 @@ class NBAEPAModel(NBAPPPModel):
         # Sum of reward + V(next)-V(before) telescopes to possession points
         # minus initial EPV. The response therefore has expected-points units.
         residual = history.offensive_points.to_numpy() / history.offensive_possessions.to_numpy() - baseline
-        w = np.exp2(-(pd.Timestamp(as_of) - history.event_date).dt.total_seconds().to_numpy() / 86400 / self.config.half_life_days)
-        w *= history.offensive_possessions.to_numpy()
+        w = calendar_weights(history, as_of, self.config.half_life_days, 'NBA', self.config.prior_season_weight).to_numpy()
+        w = w * history.offensive_possessions.to_numpy()
         ridge = np.full(x.shape[1], self.config.team_ridge)
         ridge[0], ridge[1] = 0, self.config.team_ridge / 10
         team_beta = np.linalg.solve(x.T @ (w[:, None]*x) + np.diag(ridge), x.T @ (w*residual))
@@ -109,7 +110,7 @@ class NBAEPAModel(NBAPPPModel):
         if home == away or any(len(frame) < self.config.minimum_team_games for frame in own.values()):
             raise PPPError("Both NBA teams need enough reconciled prior games for EPA/EPV.")
         def average(frame, columns):
-            weights = np.exp2(-(pd.Timestamp(as_of)-frame.event_date).dt.total_seconds().to_numpy()/86400/self.config.half_life_days)
+            weights = calendar_weights(frame, as_of, self.config.half_life_days, 'NBA', self.config.prior_season_weight).to_numpy()
             return np.average(frame[columns].to_numpy(float), weights=weights, axis=0)
         pace = float(np.mean([average(own[home], "offensive_possessions"), average(own[home], "defensive_possessions"),
                               average(own[away], "offensive_possessions"), average(own[away], "defensive_possessions")]))

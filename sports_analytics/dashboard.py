@@ -69,6 +69,7 @@ from .parlay import build_leg,clean_state,quote_key,toggle_leg
 from .parlay_view import slip_layout,slip_contents,odds as parlay_odds
 from .ncaaf_model_data import NcaafModelData
 from .ncaaf_forecast_service import NCAAFMarketForecastService
+from models.season_weights import POLICY_VERSION
 from .market_view import _market_probability,selection_text
 from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, NCAAF_LOGO_DIRECTORY, NCAAF_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
 from .market_navigation import remembered_market
@@ -1351,7 +1352,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                                                 item['row']['selection'],str(item['row']['line'])))
         context=[location_hash,selection]
         previous=previous_history if previous_history and previous_history.get('context')==context else {}
-        history=dict(context=context,filter_key=request,game=dict(previous.get('game',{})),player=dict(previous.get('player',{})))
+        history=dict(context=context,filter_key=request,game=dict(previous.get('game',{})),player=dict(previous.get('player',{})),weighting_policy=POLICY_VERSION)
         for method in methods:
             forecast=forecasts[method][0]
             history['game'][method]={'latest_date':forecast.diagnostics.get('last_game_date') if forecast else None}
@@ -1378,7 +1379,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             raise PreventUpdate
         context = [location_hash, selection]
         previous = previous_history if previous_history and previous_history.get("context") == context else {}
-        view_key=[category,method,player_method,criteria]
+        view_key=[category,method,player_method,criteria,POLICY_VERSION]
         if page is not None and ctx.triggered_id=='market-url' and previous.get('view_key')==view_key and not previous.get('pending'):
             return no_update,no_update
         history = {"context": context, "view_key":view_key,"game": dict(previous.get("game", {})), "player": dict(previous.get("player", {}))}

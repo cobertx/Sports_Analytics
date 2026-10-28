@@ -142,7 +142,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         if any((record.get('snapshot') or {}).get('page_pending') and not (record.get('snapshot') or {}).get('rows')
                for record in bundle.get('providers',{}).values()):raise PreventUpdate
         if method not in GAME_METHODS or player_method not in PLAYER_METHODS:raise PreventUpdate
-        if (previous and [previous.get('bundle_id'),previous.get('method'),previous.get('player_method')]==[bundle['id'],method,player_method]
+        if (analysis.current_models(previous,bundle,method,player_method)
                 and ctx.triggered_id!='summary-recalculate'):raise PreventUpdate
         models=analysis.calculate(bundle,method,player_method,game_forecast,player_forecast)
         models['render_id']=uuid4().hex
@@ -158,8 +158,8 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         if page!='market-summary':raise PreventUpdate
         if not bundle or bundle.get('sport')!=sport or str(bundle['game']['id'])!=selected:
             return html.P('Select a game to load its provider quotes.',className='saved-market-empty'),None
-        ready=models and [models.get('bundle_id'),models.get('method'),models.get('player_method')]==[bundle['id'],method,player_method]
-        signature=[bundle['id'],method,player_method,category]
+        ready=analysis.current_models(models,bundle,method,player_method)
+        signature=[bundle['id'],method,player_method,category,analysis.POLICY_VERSION]
         if signature==previous:raise PreventUpdate
         rows=models['rows'] if ready else analysis.clean(analysis.entries(bundle))
         return [html.P('Sportsbook probabilities exclude pushes. Exchange probabilities keep each binary contract’s equality outcome. '
@@ -175,7 +175,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         # Forecast completion updates cells independently of the immediate quote view.
         if page!='market-summary' or not identities or not bundle or bundle.get('sport')!=sport or str(bundle['game']['id'])!=selected:
             raise PreventUpdate
-        ready=models and [models.get('bundle_id'),models.get('method'),models.get('player_method')]==[bundle['id'],method,player_method]
+        ready=analysis.current_models(models,bundle,method,player_method)
         rows=models['rows'] if ready else analysis.clean(analysis.entries(bundle))
         lookup={(row['provider'],row['index'],row['side'] or ''):row for row in rows}
         values=[];titles=[]

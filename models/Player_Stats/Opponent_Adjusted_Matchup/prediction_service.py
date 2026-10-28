@@ -46,7 +46,7 @@ class MatchupMarketForecast(UsageMarketForecast):
 def implementation_hash():
     directory=Path(__file__).parent
     sources=[*directory.glob('*.py'),*(directory.parent/'Usage_Opportunity').glob('*.py'),
-             *(directory.parent/'Weighted_Historical_Performance').glob('*.py')]
+             *(directory.parent/'Weighted_Historical_Performance').glob('*.py'),directory.parents[1]/'season_weights.py']
     return sha256(b''.join(p.read_bytes() for p in sorted(sources))).hexdigest()
 
 

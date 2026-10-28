@@ -3,6 +3,7 @@ import math
 import re
 
 from models.Game_Outcome.PPP.PPP import fair_american_odds,implied_probability
+from models.season_weights import POLICY_VERSION
 from .kalshi import parse_time
 from .kalshi_view import matchup,team_identity
 from .kalshi_analysis import adapter as kalshi_target,implied as exchange_implied
@@ -126,6 +127,11 @@ def entries(bundle):
     return result
 
 
+def current_models(models,bundle,method,player_method):
+    return bool(models and models.get('weighting_policy')==POLICY_VERSION and
+                [models.get('bundle_id'),models.get('method'),models.get('player_method')]==[bundle['id'],method,player_method])
+
+
 def calculate(bundle,method,player_method,game_forecast,player_forecast):
     rows=entries(bundle);game=bundle['game'];sport=bundle['sport']
     stamps=[parse_time(record['snapshot'].get('pulled_at') or record['snapshot'].get('fetched_at') or
@@ -137,7 +143,7 @@ def calculate(bundle,method,player_method,game_forecast,player_forecast):
         target=row['target']
         if target:unique.setdefault(tuple(target.get(key) for key in ('market_key','subject','selection','line')),target)
     if not cutoff:
-        return dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(rows),cutoff=None,
+        return dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(rows),cutoff=None,weighting_policy=POLICY_VERSION,
                     errors=['Timestamped quotes and a game start are required for calculated probabilities.'])
     source=dict(sport=sport,game_id=str(game['id']),home_team=team_identity(game['home']['name'],sport)['name'],
                 away_team=team_identity(game['away']['name'],sport)['name'],commence_time=start.isoformat(),
@@ -168,7 +174,7 @@ def calculate(bundle,method,player_method,game_forecast,player_forecast):
         row.update(probability=probability,model_odds=fair_american_odds(probability),
                    edge=probability-row['implied'] if probability is not None and row['implied'] is not None else None,
                    detail='Forecast as of '+cutoff.isoformat() if probability is not None else 'History or this forecast target is unavailable.')
-    return dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(rows),cutoff=cutoff.isoformat(),
+    return dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(rows),cutoff=cutoff.isoformat(),weighting_policy=POLICY_VERSION,
                 errors=[f'{method if kind=="game" else player_method}: {record[1]}' for kind,record in forecasts.items() if record[1]])
 
 

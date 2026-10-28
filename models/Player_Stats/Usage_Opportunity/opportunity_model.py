@@ -1,6 +1,7 @@
 """Recency-weighted participation scenarios and finite-volume allocation."""
 import numpy as np
 import pandas as pd
+from models.season_weights import apply_season_weights
 from .errors import UsageOpportunityError
 
 
@@ -9,6 +10,11 @@ def weights(n, half_life):
         raise UsageOpportunityError('No eligible observations for opportunity estimation.')
     result = np.exp2(-np.arange(n - 1, -1, -1, dtype=float) / half_life)
     return result / result.sum()
+
+
+def history_weights(frame, half_life, config):
+    return apply_season_weights(weights(len(frame), half_life), frame,
+                                config.sport, config.prior_season_weight)
 
 
 def observed(frame, columns, minimum, window):
@@ -32,7 +38,7 @@ def observed(frame, columns, minimum, window):
 
 
 def draw_rows(frame, config, rng, *, common_uniform=None):
-    w = weights(len(frame), config.role_half_life)
+    w = history_weights(frame, config.role_half_life, config)
     u = rng.random(config.simulations) if common_uniform is None else common_uniform
     indices = np.searchsorted(np.cumsum(w), u, side='right').clip(max=len(frame)-1)
     return frame.iloc[indices].reset_index(drop=True)
