@@ -67,6 +67,22 @@ requests share one fetch. Failure retains the original data/timestamp and shows 
 These pages do not change model forecasts or backtesting inputs. Run
 `python scripts/check_information.py` for offline source, cache, filter and navigation checks.
 
+Each NBA/NFL **FanDuel game → Additional Information** also shows injury and roster
+headlines matched to the two teams, merged from both team feeds and the league feed,
+with duplicate links removed. The tab works without a paid odds pull. Official injury
+and transaction links, publication/retrieval times, manual refresh and coverage notices
+are included. These are current reports, independent of a selected historical odds snapshot.
+NFL game headers show the actual event venue's ESPN indoor/open-air classification
+and NWS weather for the hour covering kickoff. Roof position remains explicitly unknown
+when the provider does not report it. Forecasts use supplied venue coordinates where
+available, otherwise a clearly labeled nearby area preset; no home-city substitution is
+made for international or unidentified venues. Out-of-coverage locations, TBD kickoffs,
+missing sources and dates beyond the forecast horizon are shown explicitly. Weather
+inside a covered stadium can differ from the outdoor forecast. All downloads refresh
+through the shared local cache in the background, independently of quotes and model fits.
+Run `python scripts/check_game_information.py` for game matching, roof/weather semantics,
+local cache, tab visibility and no-extra-odds-request regressions.
+
 Each sport's **Backtesting → Performance Summary** (`#backtesting-performance`)
 compares model accuracy for a selected game market or player statistic and one team or
 all teams. Choose an evaluation period/game limit, then click **Load performance / Run

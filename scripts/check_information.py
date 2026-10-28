@@ -66,7 +66,7 @@ class InformationChecks(TestCase):
             dict(headline='Player injury',links=None),dict(headline='Player injury',links={'web':{'href':'javascript:alert(1)'}})]))
         self.assertEqual(len(items),2);self.assertEqual(items[0]['kinds'],['injuries']);self.assertEqual(items[1]['kinds'],['roster'])
         self.assertEqual(items[0]['teams'],['Boston Celtics'])
-        self.assertEqual(set(items[0]),{'headline','url','published','kinds','teams','source'})
+        self.assertEqual(set(items[0]),{'headline','url','published','kinds','teams','team_ids','source'})
         with self.assertRaises(DataSourceError):news_items(dict(error='invalid'))
 
     def test_news_reads_never_wait_for_http_and_identical_requests_share_one_download(self):

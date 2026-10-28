@@ -80,12 +80,19 @@ def news_items(payload):
         link=web.get('href') if isinstance(web,dict) else None
         link=safe_url(link,{'www.espn.com','espn.com','www.espn.co.uk'})
         if not isinstance(headline,str) or not headline.strip() or not link or link in seen:continue
-        kinds=[kind for kind,pattern in [('injuries',INJURY),('roster',ROSTER)] if pattern.search(headline)]
+        text=headline+' '+str(article.get('description') or '')
+        kinds=[kind for kind,pattern in [('injuries',INJURY),('roster',ROSTER)] if pattern.search(text)]
         if not kinds:continue
         stamp=timestamp(article.get('published'));seen.add(link)
         teams=sorted({str(c.get('description')) for c in article.get('categories',[]) or [] if isinstance(c,dict) and c.get('type')=='team' and c.get('description')})
+        team_ids=set()
+        for category in article.get('categories',[]) or []:
+            if not isinstance(category,dict) or category.get('type')!='team':continue
+            team=category.get('team')
+            identity=category.get('teamId') or (team.get('id') if isinstance(team,dict) else None)
+            if identity is not None:team_ids.add(str(identity))
         result.append(dict(headline=headline.strip()[:300],url=link,published=stamp.isoformat() if stamp else None,
-                           kinds=kinds,teams=teams,source='ESPN'))
+                           kinds=kinds,teams=teams,team_ids=sorted(team_ids),source='ESPN'))
     return sorted(result,key=lambda item:item['published'] or '',reverse=True)
 
 
@@ -102,21 +109,34 @@ class InformationService:
                 return value if isinstance(value,dict) and timestamp(value.get('fetched_at')) and isinstance(value.get('data'),dict) else None
             except (OSError,ValueError):return None
 
-    def load(self,kind,sport='NFL',latitude=None,longitude=None,refresh=False):
+    def load(self,kind,sport='NFL',latitude=None,longitude=None,refresh=False,team=None):
         if sport not in SPORTS or kind not in {'news','weather'} or (kind=='weather' and sport!='NFL'):raise ValueError('Choose a supported information page.')
         if kind=='weather':
             if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (latitude,longitude)) or not -90<=latitude<=90 or not -180<=longitude<=180:
                 raise ValueError('Choose valid latitude and longitude coordinates.')
             latitude,longitude=round(latitude,4),round(longitude,4)
         scope=dict(kind=kind,sport=sport,latitude=latitude if kind=='weather' else None,longitude=longitude if kind=='weather' else None)
+        if team is not None:
+            if kind!='news' or not re.fullmatch(r'\d{1,10}',str(team)):raise ValueError('Choose a valid news team.')
+            scope['team']=str(team)
+        def fetch():
+            if kind=='weather':return self.weather(latitude,longitude)
+            params={'limit':100}
+            if team is not None:params['team']=str(team)
+            return dict(items=news_items(self.client.json(f'https://site.api.espn.com/apis/site/v2/sports/{SPORTS[sport]}/news',params=params)))
+        return self.request(scope,fetch,300 if kind=='news' else 600,refresh)
+
+    def request(self,scope,fetch,ttl,refresh=False):
+        """Share local-first, bounded refreshes across information surfaces."""
+        kind=scope['kind'];sport=scope['sport']
         key=kind+'_'+sport.lower()+'_'+sha256(json.dumps(scope,sort_keys=True).encode()).hexdigest()[:16]
         cached=self.read(key)
         if cached and cached.get('scope')!=scope:cached=None
         age=(self.now()-timestamp(cached['fetched_at'])).total_seconds() if cached else float('inf')
-        expired=not 0<=age<(300 if kind=='news' else 600)
+        expired=not 0<=age<ttl
         if refresh or expired:
             def work():
-                data=dict(items=news_items(self.client.json(f'https://site.api.espn.com/apis/site/v2/sports/{SPORTS[sport]}/news',params={'limit':100}))) if kind=='news' else self.weather(latitude,longitude)
+                data=fetch()
                 saved=dict(scope=scope,fetched_at=self.now().isoformat(),data=data)
                 with self.lock:atomic_text(self.directory/(key+'.json'),json.dumps(saved,allow_nan=False))
             state=self._refresh.request(key,work,force=refresh)
@@ -148,6 +168,6 @@ class InformationService:
                     sent=props.get('sent'),ends=props.get('ends') or props.get('expires'),url=link))
         except DataSourceError:notice='Weather alerts could not be checked; this does not mean there are no active alerts.'
         relative=properties.get('relativeLocation',{}).get('properties',{})
-        return dict(hours=hours[:72],alerts=alerts,notice=notice,issued_at=raw.get('updateTime') or raw.get('generatedAt'),
+        return dict(hours=hours[:168],alerts=alerts,notice=notice,issued_at=raw.get('updateTime') or raw.get('generatedAt'),
                     location=', '.join(str(relative[k]) for k in ['city','state'] if relative.get(k)),
                     source_url=f'https://forecast.weather.gov/MapClick.php?lat={latitude}&lon={longitude}')

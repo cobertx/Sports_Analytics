@@ -78,6 +78,8 @@ from .mispricing import (FILTER_CATEGORY, criteria_values, filter_context, rank_
 from .display_time import eastern_datetime, format_eastern
 from .information import InformationService,route as information_route
 from .information_view import layout as information_layout,navigation as information_navigation,register as register_information
+from .game_information import ADDITIONAL_INFORMATION,GameInformationService
+from .game_information_view import layout as game_information_layout,register as register_game_information
 from .pnl import Ledger
 from .pnl_view import layout as pnl_layout,register as register_pnl
 from .usage_log import ApiUsageLog, SPORTS as USAGE_SPORTS, usage_summary
@@ -296,10 +298,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                nba_epa_service=None, elo_service=None, nba_elo_service=None, ncaaf_market_service=None,
                whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None,
                ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None,in_game_service=None,kalshi_service=None,
-               polymarket_service=None,information_service=None,ledger=None,structure_service=None,filtered_results_service=None):
+               polymarket_service=None,information_service=None,ledger=None,structure_service=None,filtered_results_service=None,
+               game_information_service=None):
     service = service or DataService()
     filtered_results_service = filtered_results_service or FilteredResults(service.path.with_name('filtered_results.sqlite3'))
     information_service=information_service or InformationService()
+    game_information_service=game_information_service or GameInformationService(information_service)
     ledger=ledger or Ledger()
     in_game_service = in_game_service or InGameService(data=service)
     kalshi_service = kalshi_service or KalshiService(background=True)
@@ -537,13 +541,14 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                 ], className="detail-pull-control"),
                             ], className="detail-page-actions"),
                             html.Div(id="market-detail-pull-status", role="status", **{"aria-live": "polite"}),
-                            html.Div(id="market-game-header"),
+                            html.Div([html.Div(id="market-game-header"),html.Div(id='market-game-conditions')],className='market-game-heading'),
                             html.Div([
                                 field("Saved snapshot", dcc.Dropdown(id="market-snapshot", options=[], clearable=False,
                                                                      placeholder="No saved snapshots")),
                                 html.Div(id="market-snapshot-status", role="status", className="snapshot-description"),
                             ], className="snapshot-controls"),
                             dcc.Tabs(id="market-category", value="Game", children=[], className="market-category-tabs"),
+                            game_information_layout(),
                             html.Section([
                             html.H2('Mispricing Filter'),
                             html.H3('Apply Criteria'),
@@ -692,7 +697,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         Input('market-schedule-scope','data'),Input('kalshi-games','data'),Input('polymarket-games','data'))
 
     app.clientside_callback('''function(page,history,hash,snapshot,category){
-        return page!=='market'||category==='Mispricing'||!history||!history.pending||
+        return page!=='market'||category==='Mispricing'||category==='Additional Information'||!history||!history.pending||
             JSON.stringify(history.context)!==JSON.stringify([hash,snapshot]);
     }''',Output('market-model-poll','disabled'),Input('workspace-page','value'),Input('market-forecast-history','data'),
         Input('market-url','hash'),Input('market-snapshot','value'),Input('market-category','value'))
@@ -1199,14 +1204,20 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Input("market-snapshot", "value"), Input("market-url", "hash"), State("market-category", "value"),State('market-return','data'))
     def snapshot_categories(selection, location_hash, previous,market_return=None):
         if not market_game_id(location_hash):raise PreventUpdate
+        sport=market_game_sport(location_hash)
+        information_tab=(dcc.Tab(label=ADDITIONAL_INFORMATION,value=ADDITIONAL_INFORMATION,className='market-category-tab',
+                                selected_className='market-category-tab selected') if sport in {'NBA','NFL'} else None)
         snapshot = saved_snapshot(location_hash, selection)
         if not snapshot:
-            return [], None, "No saved markets yet. Use Pull Live Markets above to download a snapshot."
+            return ([information_tab],ADDITIONAL_INFORMATION,"No saved markets yet. Additional Information is available without pulling odds.") if information_tab is not None else (
+                [], None, "No saved markets yet. Use Pull Live Markets above to download a snapshot.")
         available = {row["group"] for row in snapshot["rows"]}
         available.add(FILTER_CATEGORY)
+        if information_tab is not None:available.add(ADDITIONAL_INFORMATION)
         categories = NBA_CATEGORIES if market_game_sport(location_hash) == "NBA" else CATEGORIES
         tabs = [dcc.Tab(label=label, value=key, className="market-category-tab", selected_className="market-category-tab selected")
                 for key, label in categories if key in available]
+        if information_tab is not None:tabs.append(information_tab)
         tabs.append(dcc.Tab(label='Mispricing Filter',value=FILTER_CATEGORY,className='market-category-tab',
                             selected_className='market-category-tab selected'))
         remembered=remembered_market(market_return,market_game_sport(location_hash),location_hash)
@@ -1244,7 +1255,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     @app.callback(Output('mispricing-filter-panel','style'),Output('saved-market-sections','style'),Input('market-category','value'))
     def mispricing_visibility(category):
         selected=category==FILTER_CATEGORY
-        return {'display':'block' if selected else 'none'},{'display':'none' if selected else 'block'}
+        return {'display':'block' if selected else 'none'},{'display':'none' if selected or category==ADDITIONAL_INFORMATION else 'block'}
 
     @app.callback(Output("player-forecast-method", "options"), Output("player-forecast-method", "value"),
                   Input("market-url", "hash"), State("player-forecast-method", "value"))
@@ -1373,7 +1384,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if (page is not None and page!='market') or not market_game_id(location_hash):raise PreventUpdate
         if category is None:
             raise PreventUpdate
-        if category==FILTER_CATEGORY:return [],no_update
+        if category in {FILTER_CATEGORY,ADDITIONAL_INFORMATION}:return [],no_update
         method = method or "PPP"
         if method not in ("PPP", "EPA", "ELO"):
             raise PreventUpdate
@@ -1879,6 +1890,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     register_backtest_summary(app,backtesting_service)
     register_performance(app,backtesting_service)
     register_information(app,information_service)
+    register_game_information(app,game_information_service)
     register_pnl(app,ledger)
     register_structure(app,structure_service)
     register_comparison_callbacks(app,backtesting_service)

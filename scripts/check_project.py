@@ -80,6 +80,7 @@ def main():
         "sports_analytics.backtesting_summary",
         "sports_analytics.performance_summary",
         "sports_analytics.information", "sports_analytics.information_view",
+        "sports_analytics.game_information", "sports_analytics.game_information_view",
         "sports_analytics.pnl", "sports_analytics.pnl_view",
         "sports_analytics.cache_refresh",
         "sports_analytics.page_cache",

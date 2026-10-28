@@ -1,0 +1,13 @@
+.market-game-heading { margin-bottom: 18px; }
+.game-conditions-card { margin-top: 10px; padding: 14px 18px; border: 1px solid #243249; border-radius: 12px; background: #111d2e; }
+.game-venue-condition,.game-kickoff-weather,.game-information-heading,.game-information-sources { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; }
+.game-information-heading { justify-content: space-between; }
+.game-roof-badge { color: #70e1cf; font-size: 12px; }
+.game-kickoff-weather { margin-top: 8px; font-size: 13px; }
+.game-condition-source { display: block; margin-top: 7px; color: #a8b9cd; font-size: 11px; }
+.game-condition-status { margin: 8px 0 0; color: #a8b9cd; font-size: 12px; }
+.game-conditions-card a,.game-news-section a { color: #9be8dd; }
+.game-additional-information { margin-top: 16px; }
+.game-information-sources { margin-bottom: 14px; }
+.game-news-section { margin-top: 24px; }
+.game-news-section h4 { margin: 10px 0 0; font-size: 15px; line-height: 1.5; }

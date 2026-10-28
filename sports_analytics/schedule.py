@@ -47,13 +47,15 @@ def scheduled_games(events, now, end):
             teams = {team["homeAway"]: team for team in competition["competitors"]}
             def side(key):
                 team = teams[key]["team"]
-                return {"name": team["displayName"], "abbreviation": team.get("abbreviation", "")}
+                return {"name": team["displayName"], "abbreviation": team.get("abbreviation", ""),
+                        **({'id':str(team['id'])} if team.get('id') else {})}
             venue = competition.get("venue") or {}
             address = venue.get("address") or {}
             games[str(event["id"])] = {
                 "id": str(event["id"]), "start": start.isoformat(), "away": side("away"), "home": side("home"),
                 "time_tbd": competition.get("timeValid") is False or status.get("name") == "STATUS_SCHEDULED_TBD",
                 "venue": venue.get("fullName") or "Venue to be announced",
+                "venue_details": {key:venue[key] for key in ('id','fullName','address','indoor','latitude','longitude') if key in venue},
                 "location": ", ".join(str(address[key]) for key in ("city", "state", "country") if address.get(key)),
                 "neutral": bool(competition.get("neutralSite")),
             }

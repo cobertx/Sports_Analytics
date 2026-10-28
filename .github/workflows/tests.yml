@@ -72,6 +72,8 @@ jobs:
         run: python scripts/check_page_speed.py
       - name: Check information sources, local news and weather freshness
         run: python scripts/check_information.py
+      - name: Check game news tabs, venue roofs and kickoff weather
+        run: python scripts/check_game_information.py
       - name: Check personal P&L ledger and statement imports
         run: python scripts/check_pnl.py
       - name: Check public Kalshi markets, polling and saved snapshots
