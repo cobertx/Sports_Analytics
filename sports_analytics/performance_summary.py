@@ -10,7 +10,7 @@ from dash.exceptions import PreventUpdate
 import plotly.graph_objects as go
 
 from .backtesting_view import SPORTS,GROUPS,PERFORMANCE_ROUTE,available_models,model_config,model_name
-from .backtesting_service import evaluation_bounds,PREDICTIVE_INTERVAL
+from .backtesting_service import evaluation_bounds,PREDICTIVE_INTERVAL,current_player_cohort
 from .backtesting_results import field,figure
 from .comparison import Comparisons,compare_reports
 from .data import DataSourceError
@@ -53,7 +53,8 @@ class PerformanceSummaries(Comparisons):
             for saved in histories[key]:
                 if match_line and saved.get('line')!=line:continue
                 report=self.backtesting.saved(context['sport'],context['group'],key,saved['run_id'])
-                if (report and report['records'] and all(report['context'].get(k)==scope[k] for k in ('entity','team_filter','market'))
+                if (report and report['records'] and current_player_cohort(report)
+                        and all(report['context'].get(k)==scope[k] for k in ('entity','team_filter','market'))
                         and (not match_line or report['context'].get('line')==line)):
                     return report
         reports={key:report for key in histories if (report:=newest(key))}
@@ -77,7 +78,7 @@ class PerformanceSummaries(Comparisons):
         for saved in self.backtesting.history(context['sport'],context['group'],model.key):
             if any(saved.get(key)!=value for key,value in request.items()):continue
             report=self.backtesting.saved(context['sport'],context['group'],model.key,saved['run_id'])
-            if not report or not report['records']:continue
+            if not report or not report['records'] or not current_player_cohort(report):continue
             original=report['context']
             if any(original.get(key)!=value for key,value in request.items()):continue
             if report.get('config')!=defaults:continue
@@ -96,7 +97,7 @@ class PerformanceSummaries(Comparisons):
                     reports=self.reports(previous)
                     if (set(previous['entries'])=={m.key for m in models}
                             and all(e['state'] in {'completed','unsupported'} for e in previous['entries'].values())
-                            and all(m.key in reports and reports[m.key]['records'] and
+                            and all(m.key in reports and reports[m.key]['records'] and current_player_cohort(reports[m.key]) and
                                     reports[m.key].get('config')==model_config(m,context['sport'])
                                     for m in models if previous['entries'][m.key]['state']=='completed')):
                         return previous
@@ -304,7 +305,9 @@ def register(app,backtesting):
         markets=([dict(label=m.removeprefix('player_').replace('_',' ').title(),value=m) for m in (NBA if context['sport']=='NBA' else FOOTBALL)] if player else GAME_MARKETS)
         options=[dict(label='All teams',value='__all__'),*[teams[k] for k in sorted(teams)]]
         return markets,market if market in {m['value'] for m in markets} else markets[0]['value'],options,team if team in teams else '__all__',(
-            'Sport defaults and Model Default lookback. Saved inputs only. '+(' · '.join(errors) if errors else 'Player markets evaluate all eligible players on the selected team(s).'))
+            'Sport defaults and Model Default lookback. Saved inputs only. '+(' · '.join(errors) if errors else
+            'NFL player markets evaluate regular contributors using strictly pregame workload from the prior 3 team games.'
+            if player and context['sport']=='NFL' else 'Player markets evaluate all eligible players on the selected team(s).'))
 
     @app.callback(Output('performance-state','data'),Output('performance-status','children'),Output('performance-pages','data'),
                   Output('performance-limit','value'),Output('performance-start','date'),Output('performance-end','date'),

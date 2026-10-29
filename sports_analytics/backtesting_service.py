@@ -22,6 +22,7 @@ from .service import DataService
 from .ncaaf_model_data import NcaafModelData
 from .display_time import EASTERN
 from .research_config import configured,player_config
+from .metrics import ROLE_POSITIONS,metric_group
 from models.Player_Stats.Weighted_Historical_Performance.historical_data import model_frame,atomic_json
 from models.Player_Stats.Weighted_Historical_Performance.markets import NBA,FOOTBALL,stat_spec
 from models.Player_Stats.Usage_Opportunity.markets import market_spec
@@ -30,6 +31,119 @@ ROOT=Path(__file__).resolve().parents[1]
 PREDICTIVE_INTERVAL=.8
 PREDICTIVE_Z=NormalDist().inv_cdf((1+PREDICTIVE_INTERVAL)/2)
 CALIBRATION_BINS=50
+NFL_PLAYER_COHORT='nfl-regular-contributors-v2'
+NFL_MARKET_ROLES={
+    'passing':{'passer'},
+    'rushing':{'passer','runner'},
+    'receiving':{'runner','receiver'},
+    'scoring':{'passer','runner','receiver'},
+}
+NFL_POSITION_ALIASES={
+    'QB':ROLE_POSITIONS['passer'],'RB':ROLE_POSITIONS['runner'],
+    'TE':{'TE','TIGHTEND'},'WR':ROLE_POSITIONS['receiver']-{'TE','TIGHTEND'},
+}
+# (workload fields, minimum per team game, maximum players per position).
+# Rank opportunities rather than yards, scores or the held-out game's output.
+NFL_PRIMARY_USAGE={
+    'passing':{'QB':(('attempts',),15,1)},
+    'rushing':{'QB':(('carries',),3,1),'RB':(('carries',),5,2)},
+    'receiving':{'RB':(('targets',),2,2),'WR':(('targets',),3,3),'TE':(('targets',),2,1)},
+    'scoring':{'QB':(('carries',),3,1),'RB':(('carries','targets'),7,2),
+               'WR':(('targets',),3,3),'TE':(('targets',),2,1)},
+}
+
+
+def nfl_market_group(market):
+    spec=stat_spec('NFL',market or '')
+    return ('scoring' if spec.fields==('touchdowns',) else metric_group(spec.fields[0])) if spec else None
+
+
+def nfl_backtest_criteria(market):
+    rules=NFL_PRIMARY_USAGE.get(nfl_market_group(market),{})
+    criteria='; '.join(f'{position} >= {minimum} {" + ".join(fields)}/game (top {maximum})'
+                      for position,(fields,minimum,maximum) in rules.items())
+    return ('NFL regular contributors only, using averages over the prior 3 completed team games: '+criteria+'. '
+            'Recorded positions and workload are required; FB/HB count as RB. Eligible zero-stat games remain included.')
+
+
+def player_position_rows(frame,sport,market):
+    """Select evaluation appearances by recorded role, never by realized output.
+
+    Leave the training/league inputs intact. A relevant player's zero attempts,
+    yards or scores are genuine outcomes and must remain in the evaluation.
+    """
+    if sport!='NFL':return frame
+    spec=stat_spec(sport,market or '')
+    if spec is None or 'position' not in frame:return frame.iloc[:0]
+    group=nfl_market_group(market)
+    roles=NFL_MARKET_ROLES.get(group,set())
+    positions=set().union(*(ROLE_POSITIONS[role] for role in roles))
+    labels=frame.position.astype('string').fillna('')
+    relevant=[label for label in labels.unique() if any(
+        re.sub(r'\s+','',part) in positions for part in re.split(r'[/,;\-]',label.upper()))]
+    return frame[labels.isin(relevant)]
+
+
+def player_backtest_rows(frame,sport,market,*,history=None):
+    """Evaluate regular contributors using strictly pregame team-wide usage.
+
+    Absent players contribute zero to a team-game average. Rank against the
+    whole saved team, even for a single-player request, before applying limits.
+    This is a workload proxy, not a claim to have historical depth charts.
+    """
+    candidates=player_position_rows(frame,sport,market)
+    if sport!='NFL' or candidates.empty:return candidates
+    source=history if history is not None else frame
+    required={'team','entity_id','game_id','event_date','available_at','position'}
+    if not required<=set(source):return candidates.iloc[:0]
+    rules=NFL_PRIMARY_USAGE.get(nfl_market_group(market),{})
+    columns=set().union(*(fields for fields,_,_ in rules.values()))
+    source=source[['team','entity_id','game_id','event_date','available_at','position',*sorted(columns&set(source))]].copy()
+    for column in columns:
+        values=pd.to_numeric(source[column],errors='coerce') if column in source else pd.Series(np.nan,index=source.index)
+        source[column]=values.where(values.ge(0)&np.isfinite(values))
+    def position(label):
+        for part in re.split(r'[/,;\-]',label.upper()):
+            compact=re.sub(r'\s+','',part)
+            for role,aliases in NFL_POSITION_ALIASES.items():
+                if compact in aliases:return role
+    labels=source.position.astype('string').fillna('')
+    source['_cohort_position']=labels.map({label:position(label) for label in labels.unique()})
+    source['entity_id']=source.entity_id.astype(str)
+    keep=np.zeros(len(candidates),dtype=bool)
+    targets=candidates.assign(_cohort_row=np.arange(len(candidates)))
+    for team,team_targets in targets.groupby('team',sort=False):
+        team_history=source[source.team.eq(team)].sort_values(['event_date','game_id','entity_id'])
+        for cutoff,batch in team_targets.groupby('event_date',sort=False):
+            prior=team_history[team_history.event_date.lt(cutoff)&team_history.available_at.lt(cutoff)]
+            games=prior.drop_duplicates('game_id',keep='last').tail(3).game_id
+            if games.empty:continue
+            recent=prior[prior.game_id.isin(games)]
+            latest=recent.drop_duplicates('entity_id',keep='last').set_index('entity_id')['_cohort_position']
+            sizes=recent.groupby('entity_id').size()
+            summaries={}
+            selected=set()
+            for role,(fields,minimum,maximum) in rules.items():
+                if fields not in summaries:
+                    usage=recent[list(fields)].sum(axis=1,min_count=len(fields))
+                    counts=usage.groupby(recent.entity_id).count()
+                    totals=usage.groupby(recent.entity_id).sum(min_count=1)/len(games)
+                    summaries[fields]=totals[counts.eq(sizes)]
+                totals=summaries[fields]
+                scores=totals[totals.ge(minimum)&totals.index.to_series().map(latest).eq(role)]
+                # Stable identity tie-breaks keep cohorts reproducible in workers.
+                top=scores.rename('usage').rename_axis('entity_id').reset_index().sort_values(
+                    ['usage','entity_id'],ascending=[False,True]).head(maximum)
+                selected.update(top.entity_id)
+            eligible=batch[batch.entity_id.astype(str).isin(selected)]
+            keep[eligible._cohort_row.to_numpy()]=True
+    return candidates.iloc[np.flatnonzero(keep)]
+
+
+def current_player_cohort(report):
+    context=report['context']
+    return (context['sport']!='NFL' or context['group']!='player-stats'
+            or context.get('player_cohort')==NFL_PLAYER_COHORT)
 
 
 def file_revision(path):
@@ -347,6 +461,7 @@ class BacktestingService:
         if team_filter:selected=selected[selected.team.eq(team_filter)]
         complete=selected[list(spec.fields)].apply(pd.to_numeric,errors='coerce').notna().all(axis=1)
         eligible=selected[complete&selected.event_date.ge(lower)&selected.event_date.lt(upper)]
+        eligible=player_backtest_rows(eligible,sport,market,history=frame)
         return int(eligible.game_id.nunique()) if entity=='__all__' else len(eligible)
 
     def game_inputs(self,sport,key):
@@ -442,7 +557,8 @@ class BacktestingService:
         markets=[]
         for market,spec in (NBA if sport=='NBA' else FOOTBALL).items():
             if key!='whp' and market_spec(sport,market) is None:continue
-            if set(spec.fields)<=set(selected) and selected[list(spec.fields)].notna().all(axis=1).any():
+            relevant=player_position_rows(selected,sport,market)
+            if set(spec.fields)<=set(relevant) and relevant[list(spec.fields)].notna().all(axis=1).any():
                 name=market.removeprefix('player_').replace('_',' ').title()
                 markets.append(dict(label=name,value=market))
         return options,markets,frame
@@ -555,6 +671,7 @@ class BacktestingService:
             selected['value']=selected[list(spec.fields)].apply(pd.to_numeric,errors='coerce').sum(axis=1,min_count=len(spec.fields))
             if spec.opportunity and spec.opportunity in selected:selected['opportunity']=selected[spec.opportunity]
             candidates=selected[selected.value.notna()&selected.event_date.ge(lower)&selected.event_date.lt(upper)]
+            candidates=player_backtest_rows(candidates,sport,market,history=frame)
             if team_filter:candidates=candidates[candidates.team.eq(team_filter)]
             if entity=='__all__':
                 candidates=candidates.sort_values(['event_date','game_id','entity_id'])
@@ -563,7 +680,11 @@ class BacktestingService:
             else:candidates=candidates.tail(limit)
             games=[g for _,g in candidates.iterrows()]
             config=asdict(configured(player_config(sport,key),config_overrides))
-        if not games:raise DataSourceError('No completed saved games with verified season type match these filters. Load more historical data or adjust the dates/playoff selection.')
+        if not games:
+            if sport=='NFL' and group=='player-stats':
+                raise DataSourceError('No completed saved appearances with a relevant recorded position and regular pregame workload match these filters. '
+                                      +nfl_backtest_criteria(market))
+            raise DataSourceError('No completed saved games with verified season type match these filters. Load more historical data or adjust the dates/playoff selection.')
         if progress:progress(0,len(games),'Checking saved runs')
         signature=implementation_signature(tuple(file_revision(p) for p in sorted([Path(__file__),*ROOT.joinpath('models').rglob('*.py'),
             ROOT/'sports_analytics/ncaaf_model_data.py'])))
@@ -575,6 +696,7 @@ class BacktestingService:
                       interval_level=PREDICTIVE_INTERVAL,config=config,implementation=signature,
                       inputs=sha256((repr(fingerprint(frame))+json.dumps(source_state)).encode()).hexdigest())
         if workspace=='research' or team_filter is not None:identity.update(workspace=workspace,team_filter=team_filter)
+        if sport=='NFL' and group=='player-stats':identity['player_cohort']=NFL_PLAYER_COHORT
         identity['evaluation_games']=[str((g.iloc[0] if group=='game-outcome' else g).game_id) for g in games]
         cache=self.root/sport.lower()/group/key/(sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
         if cache.exists():
@@ -588,6 +710,7 @@ class BacktestingService:
         result=dict(context={k:identity[k] for k in ['sport','group','model','entity','market','start','end','limit','tolerance','line','include_playoffs','lookback','interval_level']},
             records=[],skipped=[],created_at=datetime.now(timezone.utc).isoformat(),config=config,run_id=cache.stem)
         if workspace=='research' or team_filter is not None:result['context'].update(workspace=workspace,team_filter=team_filter)
+        if 'player_cohort' in identity:result['context']['player_cohort']=identity['player_cohort']
         result['context']['entity_label']=(('All teams' if entity=='__all__' else str(entity)) if group=='game-outcome' else
             ('All players'+(' · '+team_filter if team_filter else '') if entity=='__all__' else str(selected.iloc[-1].entity_name)))
         if group=='game-outcome':self._games(result,model,frame,dataset,games,progress)

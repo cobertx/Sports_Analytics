@@ -26,7 +26,7 @@ from .backtesting_view import (backtesting_route,find_model,navigation as backte
 from .backtesting_summary import layout as backtest_summary_layout,register as register_backtest_summary
 from .performance_summary import layout as performance_layout,register as register_performance
 from .backtesting_view import PERFORMANCE_ROUTE
-from .backtesting_service import BacktestingService,default_evaluation_games,default_lookback,export_filename
+from .backtesting_service import BacktestingService,default_evaluation_games,default_lookback,export_filename,nfl_backtest_criteria
 from .backtesting_results import layout as backtesting_results_layout,render as render_backtesting_results,empty as empty_backtesting_results
 from .backtesting_results import evaluated_records
 from .backtesting_monitor import layout as backtesting_monitor_layout,contents as backtesting_monitor_contents
@@ -864,7 +864,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             extra=dict(team_filter=context.get('team_filter')) if context.get('workspace')=='research' else {}
             count=backtesting_service.available_games(context['sport'],context['group'],context['model'],entity,
                 market,start,end,playoffs=='include',**extra)
-            return f'{count:,} saved games available with these filters. Insufficient training history may cause skips.'
+            note=(' '+nfl_backtest_criteria(market)
+                  if context['sport']=='NFL' and context['group']=='player-stats' else '')
+            return f'{count:,} saved games available with these filters. Insufficient training history may cause skips.'+note
         except (DataSourceError,OSError,ValueError,TypeError) as exc:return str(exc)
 
     @app.callback(Output('backtest-monitor-jobs','data'),Input('backtest-monitor-timer','n_intervals'),

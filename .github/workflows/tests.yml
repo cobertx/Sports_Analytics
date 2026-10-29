@@ -31,6 +31,8 @@ jobs:
         run: python scripts/check_backtesting.py
       - name: Check OAM and PGE optimized history calculations
         run: python scripts/check_player_backtest_speed.py
+      - name: Check NFL player prompt position cohorts
+        run: python scripts/check_nfl_backtest_roles.py
       - name: Check simultaneous player backtests and live filtering
         run: python scripts/check_backtest_concurrency.py
       - name: Check sport backtest summaries and saved result reopening

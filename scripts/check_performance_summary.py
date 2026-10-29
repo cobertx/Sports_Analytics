@@ -15,7 +15,7 @@ from dash import no_update
 from dash.exceptions import PreventUpdate
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from sports_analytics.backtesting_service import BacktestingService
+from sports_analytics.backtesting_service import BacktestingService,NFL_PLAYER_COHORT
 from sports_analytics.backtesting_view import GROUPS,available_models,model_config,navigation,page,PERFORMANCE_ROUTE
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
@@ -47,6 +47,7 @@ class PerformanceSummaryChecks(TestCase):
         report=saved_game_report(identity)
         if created:report['created_at']=created
         report['context'].update(**context,model=key,**request)
+        if context==dict(sport='NFL',group='player-stats'):report['context']['player_cohort']=NFL_PLAYER_COHORT
         model=next(m for m in available_models(context['sport'],context['group']) if m.key==key)
         report['config']=model_config(model,context['sport']) if config is None else config
         if context['group']=='player-stats':
