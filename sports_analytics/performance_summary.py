@@ -9,9 +9,9 @@ from dash import Input,Output,State,ctx,dcc,html,no_update
 from dash.exceptions import PreventUpdate
 import plotly.graph_objects as go
 
-from .backtesting_view import SPORTS,GROUPS,PERFORMANCE_ROUTE,available_models,model_config,model_name
-from .backtesting_service import evaluation_bounds,PREDICTIVE_INTERVAL,current_player_cohort
-from .backtesting_results import field,figure
+from .backtesting_view import SPORTS,GROUPS,PERFORMANCE_ROUTE,available_models,model_config,model_name,summary_href
+from .backtesting_service import evaluation_bounds,current_player_cohort
+from .backtesting_results import field,figure,range_accuracy
 from .comparison import Comparisons,compare_reports
 from .data import DataSourceError
 from .display_time import format_eastern
@@ -79,11 +79,19 @@ class PerformanceSummaries(Comparisons):
             if any(saved.get(key)!=value for key,value in request.items()):continue
             report=self.backtesting.saved(context['sport'],context['group'],model.key,saved['run_id'])
             if not report or not report['records'] or not current_player_cohort(report):continue
+            if not self.full_team_request(report):continue
             original=report['context']
             if any(original.get(key)!=value for key,value in request.items()):continue
             if report.get('config')!=defaults:continue
             return report
         return None
+
+    @staticmethod
+    def full_team_request(report):
+        context=report['context']
+        if context['sport']!='NBA' or context['group']!='game-outcome' or context['entity']=='__all__':return True
+        attempted=report.get('attempted',len(report['records'])+len(report.get('skipped',[])))
+        return attempted>=context.get('limit',0)
 
     def ensure(self,context,request,team):
         evaluation_bounds(request['start'],request['end'],self.backtesting.now())
@@ -97,7 +105,7 @@ class PerformanceSummaries(Comparisons):
                     reports=self.reports(previous)
                     if (set(previous['entries'])=={m.key for m in models}
                             and all(e['state'] in {'completed','unsupported'} for e in previous['entries'].values())
-                            and all(m.key in reports and reports[m.key]['records'] and current_player_cohort(reports[m.key]) and
+                            and all(m.key in reports and reports[m.key]['records'] and current_player_cohort(reports[m.key]) and self.full_team_request(reports[m.key]) and
                                     reports[m.key].get('config')==model_config(m,context['sport'])
                                     for m in models if previous['entries'][m.key]['state']=='completed')):
                         return previous
@@ -144,8 +152,9 @@ def layout():
                 html.Div(field('Player reference line (optional)',dcc.Input(id='performance-line',type='number',step='any'),
                     'Required for Over accuracy, Brier score and log loss.'),id='performance-line-field',style={'display':'none'}),
                 field('Error tolerance',dcc.Input(id='performance-tolerance',type='number',min=0,step='any',value=5)),
-                field('Comparison sample',dcc.Dropdown(id='performance-basis',options=[dict(label='Common evaluated observations',value='common'),
-                    dict(label='All evaluated observations per model',value='all')],value='common',clearable=False)),
+                field('Comparison sample',dcc.Dropdown(id='performance-basis',options=[dict(label='All evaluated observations per model',value='all'),
+                    dict(label='Common evaluated observations',value='common')],value='all',clearable=False),
+                    'The default matches each saved backtest. Common observations compares only games evaluated by every completed model.'),
             ],className='backtest-controls'),
             html.P(id='performance-input-status',className='backtest-status'),
             html.Button('Load performance / Run missing simulations',id='performance-load',n_clicks=0,className='apply-criteria-button'),
@@ -153,20 +162,6 @@ def layout():
         html.P(id='performance-status',className='backtest-status',role='status',**{'aria-live':'polite'}),
         html.Div(id='performance-results'),
     ],id='performance-summary-page',className='performance-summary-page',style={'display':'none'})
-
-
-def range_accuracy(records):
-    """Coverage of valid central 80% ranges on the selected comparison sample."""
-    hits=[]
-    for row in records:
-        level=row.get('interval_level')
-        values=[row.get(key) for key in ('actual','lower','upper')]
-        if (not isinstance(level,(int,float)) or not math.isclose(level,PREDICTIVE_INTERVAL,rel_tol=1e-5)
-                or not all(isinstance(v,(int,float)) and math.isfinite(v) for v in values)):
-            continue
-        actual,lower,upper=values
-        if lower<=upper:hits.append(lower<=actual<=upper)
-    return dict(range_accuracy=sum(hits)/len(hits) if hits else None,range_samples=f'{sum(hits)} / {len(hits)}')
 
 
 def comparison_charts(data,metrics,basis):
@@ -189,28 +184,34 @@ def comparison_charts(data,metrics,basis):
         errors.add_trace(go.Bar(x=labels,y=[row.get(key) for row in summary],name=label,marker_color=color,
             customdata=hover,hovertemplate='%{customdata[0]}<br>%{y:.3f} statistic units<br>Compared: %{customdata[2]}<extra>%{fullData.name}</extra>'))
     errors.update_layout(barmode='group');errors.update_yaxes(rangemode='tozero')
-    trend=figure('Recent forecast error by model','Evaluated observation (chronological)','Trailing 10-observation MAE')
+    trend=figure('Recent 80% range accuracy by model','Evaluated observation (chronological)','Trailing 10-observation accuracy')
     colors=['#57dbc4','#8197ff','#f6c667','#ef96d0']
     for index,(key,rows) in enumerate(records.items()):
         if not rows:continue
-        absolute=[abs(row['predicted']-row['actual']) for row in rows]
-        rolling=[sum(absolute[max(0,i-9):i+1])/min(i+1,10) for i in range(len(rows))]
-        trend.add_trace(go.Scatter(x=list(range(1,len(rows)+1)),y=rolling,name=key.upper(),mode='lines+markers',
+        rolling=[range_accuracy(rows[max(0,i-9):i+1]) for i in range(len(rows))]
+        trend.add_trace(go.Scatter(x=list(range(1,len(rows)+1)),y=[point['range_accuracy'] for point in rolling],
+            name=key.upper(),mode='lines+markers',connectgaps=False,
             line=dict(color=colors[index%len(colors)]),marker=dict(size=3),
-            customdata=[[format_eastern(row['date']),row.get('label',''),min(i+1,10)] for i,row in enumerate(rows)],
-            hovertemplate='%{customdata[0]}<br>%{customdata[1]}<br>MAE: %{y:.3f}<br>Observations in window: %{customdata[2]}<extra>%{fullData.name}</extra>'))
-    trend.update_yaxes(rangemode='tozero')
+            customdata=[[format_eastern(row['date']),row.get('label',''),min(i+1,10),rolling[i]['range_samples']]
+                        for i,row in enumerate(rows)],
+            hovertemplate='%{customdata[0]}<br>%{customdata[1]}<br>Accuracy: %{y:.1%}<br>Hits / valid 80% ranges: %{customdata[3]}<br>Observations in window: %{customdata[2]}<extra>%{fullData.name}</extra>'))
+    trend.add_hline(y=.8,line_dash='dash',line_color='#f6c667',annotation_text='80% calibration target')
+    trend.update_yaxes(range=[0,1.08],tickformat='.0%')
+    if not any(point is not None for trace in trend.data for point in trace.y):
+        trend.add_annotation(text='No valid 80% ranges in these saved results.<br>Rerun legacy player backtests.',
+                             showarrow=False,x=.5,y=.5,xref='paper',yref='paper')
     notes=[
         'The dashed line is the expected 80% coverage. Read coverage alongside errors: wider prediction ranges can increase coverage.',
         'Lower MAE and RMSE mean smaller misses; RMSE gives larger misses more weight. Baseline MAE uses the same compared observations.',
-        'Each point averages the last up to 10 evaluated games or player appearances. Lower is better; rising lines mean recent forecasts missed by more. '+
+        'Each point shows the percentage of actual outcomes inside their 80% prediction ranges over the last up to 10 evaluated games or player appearances. '
+        'Only valid 80% ranges count; hover for hits and sample counts. The dashed line is the 80% calibration target; wider ranges can increase coverage. '+
         ('Models use the same shared observations.' if basis=='common' else 'Each model uses its own sample; equal positions can represent different games.')]
     return html.Div([html.Div([dcc.Graph(figure=chart,config={'displaylogo':False}),
                               html.P(note,className='backtest-status backtest-chart-note')],className='panel backtest-chart')
                      for chart,note in zip([accuracy,errors,trend],notes)],className='performance-chart-grid')
 
 
-def render(manager,manifest,market,tolerance,basis='common'):
+def render(manager,manifest,market,tolerance,basis='all'):
     context=manifest['context'];reports=manager.reports(manifest)
     target='total' if market=='total' else 'margin'
     if basis not in {'common','all'}:raise ValueError('Choose a comparison sample.')
@@ -246,7 +247,7 @@ def render(manager,manifest,market,tolerance,basis='common'):
                 f" · Lookback: {original.get('lookback') or 'Model Default'}",className='backtest-status')]
         rows.append(html.Tr([html.Th(model_name(model,context['sport']),scope='row'),
             html.Td([html.Span(status),html.Small(reason,className='backtest-status') if reason else None]),*cells,
-            html.Td([html.A('Open results',href=f'#backtesting-summary-{context["sport"].lower()}-{context["group"]}-{model.key}-{report["run_id"]}'),
+            html.Td([html.A('Open results',href=summary_href(context,model.key,report['run_id'],target,basis,reports,tolerance)),
                      html.Small(format_eastern(stamp),className='backtest-status'),*saved_scope] if stamp else '—')]))
     request=manifest['settings'];team=request.get('team_filter') or request['entity']
     note=(f"{context['sport']} · {market.replace('player_','').replace('_',' ').title()} · {'All teams' if team=='__all__' else team} · "+
@@ -257,8 +258,8 @@ def render(manager,manifest,market,tolerance,basis='common'):
     return html.Section([
         html.H3('Model accuracy'),html.P(note,className='backtest-applied'),
         html.P((f"{data['common']:,} identical evaluated games / player appearances shared by the completed models. "
-                'Metrics update as methods finish; the shared sample can change.' if basis=='common' else
-                'Each model uses its own evaluated sample. Compare the sample counts; differences in coverage can affect accuracy.'),className='backtest-status'),
+                'Metrics update as methods finish; the shared sample can change. Open results preserves this exact comparison cohort.' if basis=='common' else
+                'Each model uses its own evaluated sample, matching its saved backtest results. Compare the sample counts; differences in coverage can affect accuracy.'),className='backtest-status'),
         html.P('Accuracy (80% range) is the percentage of actual outcomes inside the model’s 80% prediction range, including both endpoints. '
                'Hits / samples counts covered outcomes and observations with a valid 80% range in the selected comparison sample; player statistics count player-game appearances. '
                'Missing or invalid ranges are excluded. Older saved player runs with only 90% ranges must be rerun to show this accuracy. '
@@ -305,7 +306,8 @@ def register(app,backtesting):
         markets=([dict(label=m.removeprefix('player_').replace('_',' ').title(),value=m) for m in (NBA if context['sport']=='NBA' else FOOTBALL)] if player else GAME_MARKETS)
         options=[dict(label='All teams',value='__all__'),*[teams[k] for k in sorted(teams)]]
         return markets,market if market in {m['value'] for m in markets} else markets[0]['value'],options,team if team in teams else '__all__',(
-            'Sport defaults and Model Default lookback. Saved inputs only. '+(' · '.join(errors) if errors else
+            'Sport defaults and Model Default lookback. '+('NBA game runs download missing older history automatically. '
+                if context['sport']=='NBA' and context['group']=='game-outcome' else 'Saved inputs only. ')+(' · '.join(errors) if errors else
             'NFL player markets evaluate regular contributors using strictly pregame workload from the prior 3 team games.'
             if player and context['sport']=='NFL' else 'Player markets evaluate all eligible players on the selected team(s).'))
 
@@ -360,7 +362,7 @@ def register(app,backtesting):
                   Input('performance-context','data'),Input('performance-market','value'),Input('performance-team','value'),Input('performance-limit','value'),
                   Input('performance-start','date'),Input('performance-end','date'),Input('performance-playoffs','value'),Input('performance-line','value'),
                   Input('performance-tolerance','value'),State('performance-rendered','data'),Input('performance-basis','value'))
-    def performance_results(manifest,context,market,team,limit,start,end,playoffs,line,tolerance,previous,basis='common'):
+    def performance_results(manifest,context,market,team,limit,start,end,playoffs,line,tolerance,previous,basis='all'):
         if not context:raise PreventUpdate
         try:
             request=settings(context,market,team,limit,start,end,playoffs,line)

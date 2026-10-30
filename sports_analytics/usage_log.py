@@ -101,11 +101,12 @@ class ApiUsageLog:
                 self._write([])
 
     def records(self, account):
+        accounts = {account} if isinstance(account, str) else set(account)
         with self._locked():
             if not self.path.exists():
                 self._write([])
             rows = self._read()
-        return sorted((row for row in rows if row["account_id"] == account),
+        return sorted((row for row in rows if row["account_id"] in accounts),
                       key=lambda row: row["timestamp_utc"], reverse=True)
 
     def record(self, *, usage_id, account, sport, game_id, event_id, home_team, away_team,
@@ -132,15 +133,18 @@ class ApiUsageLog:
 
     def import_snapshot(self, snapshot, account):
         identity = f"{account}:{snapshot['event_id']}:{snapshot['pulled_at']}"
-        return self.record(usage_id=snapshot.get("usage_log_id") or hashlib.sha256(identity.encode()).hexdigest(),
+        recorded = self.record(usage_id=snapshot.get("usage_log_id") or hashlib.sha256(identity.encode()).hexdigest(),
                            account=account, sport=snapshot.get("sport", "NFL"), game_id=snapshot["game_id"], event_id=snapshot["event_id"],
                            home_team=snapshot["home_team"], away_team=snapshot["away_team"],
                            game_start=snapshot["commence_time"], timestamp=snapshot["pulled_at"],
                            markets=snapshot.get("requested", []), headers=snapshot.get("usage_headers"),
                            cost=snapshot.get("cost"), source="Saved snapshot")
+        for audit in snapshot.get('usage_attempts', []):
+            self.record(**audit)
+        return recorded
 
 
-def usage_summary(records, now=None):
+def usage_summary(records, now=None, account_labels=None):
     """Calendar months and daily buckets use the dashboard's fixed EDT timezone."""
     today = eastern_datetime(now or datetime.now(timezone.utc))
     monthly = {sport: {"credits": 0, "pulls": 0, "unknown": 0} for sport in SPORTS}
@@ -161,6 +165,7 @@ def usage_summary(records, now=None):
         else:
             day[row["sport"]] += cost
         history.append({"timestamp": format_eastern(row["timestamp_utc"]), "sport": row["sport"],
+                        "account": (account_labels or {}).get(row['account_id'], 'Connected key'),
                         "game": row["game"], "credits": cost, "charge": "Unreported" if cost is None else "Reported",
                         "markets": row["markets"], "status": row["status"], "source": row["source"],
                         "game_time": format_eastern(row["game_start_utc"]) if row["game_start_utc"] else "",

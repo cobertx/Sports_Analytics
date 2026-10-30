@@ -246,3 +246,7 @@ footer { color: #64758d; font-size: 10px; margin-top: 30px; border-top: 1px soli
 @media (max-width: 600px) { main { padding: 25px 16px 18px; } header { padding: 16px; } .sport-tab { font-size: 11px; padding: 14px 5px !important; } .dataset-builder { padding: 18px; } .dataset-actions { padding-top: 0; flex-basis: 100%; } .analysis-filters { grid-template-columns: 1fr; gap: 0; } .kpi-grid { grid-template-columns: 1fr; gap: 10px; } .kpi { padding: 16px; } .kpi strong { font-size: 25px; } .panel-heading .eyebrow { display: none; } }
 
 .quick-filter-section { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+.quick-prompt-panel { margin: 18px 0; padding: 14px; border: 1px solid var(--line); border-radius: 6px; }
+.quick-prompt-panel summary { cursor: pointer; font-weight: 600; }
+.quick-prompt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; }
+.quick-prompt-method { min-width: 0; }

@@ -1,6 +1,6 @@
 # Forecasting models
 
-For proposed NBA/NFL injury and NFL weather inputs, see the [source audit and model integration design](../docs/INJURY_WEATHER_MODEL_INTEGRATION.md). It identifies the existing scenario/workload hooks, locally available weather fields, source requirements and validation needed before enabling automatic numerical adjustments.
+NBA/NFL dashboard market forecasts now support an evidence-gated injury overlay on the seven original methods. See [historical availability comparisons](../docs/AVAILABILITY_ADJUSTMENTS.md) for sources, playing/nonplaying comparisons, workload changes, limitations and replay rules. The underlying model engines and their baseline backtests remain unchanged. NFL weather integration remains a [design proposal](../docs/INJURY_WEATHER_MODEL_INTEGRATION.md).
 
 NBA, NFL and NCAAF forecasts now emphasize the current season across all seven methods. Existing recency weights are multiplied by `prior_season_weight ** seasons_old`, with default `prior_season_weight = 0.2`: an otherwise equal previous-season observation receives one fifth the weight, and an observation two seasons old receives 0.04. This is a per-observation discount, not a fixed 80/20 split of total season weight. Source season-start years are used where supplied; the date fallback follows the app's October NBA and March football boundaries, keeping January football playoffs in the preceding season.
 

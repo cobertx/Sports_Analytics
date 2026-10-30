@@ -63,7 +63,9 @@ function checkMarketTransitions(source) {
     ['#backtesting-player-stats-oam','NBA','backtesting'],['#research','RESEARCH','backtesting'],
     ['#nba-in-game-data','NBA','in-game'],['#nfl-information-weather','NFL','information'],
     ['#nba-information-roster','NBA','information'],['#pnl-history','PNL','pnl'],
-    ['#backtesting-summary-nfl-player-stats-whp-'+'a'.repeat(64),'NFL','backtesting']
+    ['#backtesting-summary-nfl-player-stats-whp-'+'a'.repeat(64),'NFL','backtesting'],
+    ['#backtesting-summary-nba-game-outcome-elo-'+'a'.repeat(64)+'?target=total&basis=all','NBA','backtesting'],
+    ['#backtesting-summary-nfl-game-outcome-elo-'+'a'.repeat(64)+'?target=margin&basis=common&reports=elo%3A'+'a'.repeat(64),'NFL','backtesting']
   ]) {
     check(api.destination(hash).page===page,'Resolve destination without a server request');
     check(screen(hash,sport).includes('workspace-screen-'+page),'Hide the prior page immediately for '+hash);

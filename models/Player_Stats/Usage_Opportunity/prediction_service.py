@@ -11,12 +11,13 @@ import numpy as np
 import pandas as pd
 
 from sports_analytics.data import DataSourceError
+from sports_analytics.result_cache import load_json, save_json
 from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
 from .config import MODEL_VERSION, UsageOpportunityConfig
 from .distributions import UsageOpportunityForecast
 from .errors import UsageOpportunityError
-from .historical_data import UsageHistoryRepository, eligible, match_player, atomic_json, identity_name
+from .historical_data import UsageHistoryRepository, eligible, match_player, identity_name
 from .market_comparison import compare_price
 from .markets import market_spec, prop_key, quote_index
 from .nba_model import simulate_nba
@@ -98,9 +99,9 @@ class UsageOpportunityMarketService:
                                   ['game_id', 'home_team', 'away_team', 'pulled_at', 'commence_time', 'rows']})
         digest = sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         destination = self.repository.root/'forecasts'/sport.lower()/f'{digest}.json'
-        if self.persist and destination.exists():
+        cached = load_json(destination,self.repository.root,identity) if self.persist else None
+        if cached is not None:
             try:
-                cached = json.loads(destination.read_text(encoding='utf-8'))
                 if cached['identity'] == identity:
                     return UsageMarketForecast(
                         {tuple(record['key']): UsageOpportunityForecast(**record['forecast']) for record in cached['forecasts']},
@@ -171,7 +172,7 @@ class UsageOpportunityMarketService:
                 **compare_price(price, row['odds'], quotes[0] if len(quotes) == 1 else None),
                 win=price.win if price else None, loss=price.loss if price else None, push=price.push if price else None,
                 detail=result.detail(row)))
-        atomic_json(destination, dict(identity=identity,
+        save_json(destination, dict(identity=identity,
             forecasts=[dict(key=list(key), forecast=asdict(value)) for key, value in result.forecasts.items()],
-            errors=[dict(key=list(key), error=value) for key, value in result.errors.items()], evaluations=evaluations))
+            errors=[dict(key=list(key), error=value) for key, value in result.errors.items()], evaluations=evaluations),self.repository.root)
         return result

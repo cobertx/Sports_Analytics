@@ -77,8 +77,10 @@ from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOG
 from .market_navigation import remembered_market
 from .mispricing import (FILTER_CATEGORY, criteria_values, filter_context, rank_markets, results as mispricing_results,
                          quick_controls, selected_methods, run_forecasts, consensus_rankings, ALL_PROBABILITIES)
+from . import quick_methods
 from .display_time import eastern_datetime, format_eastern
 from .information import InformationService,route as information_route
+from .availability_adjustment import AvailabilityAdjuster, note as availability_note
 from .information_view import layout as information_layout,navigation as information_navigation,register as register_information
 from .game_information import ADDITIONAL_INFORMATION,GameInformationService
 from .game_information_view import layout as game_information_layout,register as register_game_information
@@ -311,10 +313,11 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None,
                ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None,in_game_service=None,kalshi_service=None,
                polymarket_service=None,information_service=None,ledger=None,structure_service=None,filtered_results_service=None,
-               game_information_service=None):
+               game_information_service=None,availability_service=None):
     service = service or DataService()
     filtered_results_service = filtered_results_service or FilteredResults(service.path.with_name('filtered_results.sqlite3'))
     information_service=information_service or InformationService()
+    availability_service=availability_service or AvailabilityAdjuster(data=service)
     game_information_service=game_information_service or GameInformationService(information_service)
     ledger=ledger or Ledger()
     in_game_service = in_game_service or InGameService(data=service)
@@ -629,8 +632,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             ], id="sport-pages", className="page-shell"),
             html.Section([
                 html.Div([
-                    html.Div([html.H2("Monthly credit usage"),
-                              html.P("Your account's used and unused credits across all sports.")]),
+                    html.Div([html.H2("API credit usage"),
+                              html.P("Combined credits and individual balances for your configured API connections.")]),
                     html.Button("Connect / Refresh usage", id="odds-refresh", n_clicks=0, className="export-button"),
                 ], className="panel odds-heading"),
                 dcc.Loading(html.Div([
@@ -638,7 +641,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                              **{"aria-live": "polite"}, className="load-status"),
                     html.Div([
                         html.Div([
-                            html.Div(html.H2("Account quota"), className="panel-heading"),
+                            html.Div(html.H2("Combined account quota"), className="panel-heading"),
                             dcc.Graph(id="odds-usage", figure=empty_figure("Connect to view your credit usage"),
                                       config={"displaylogo": False, "displayModeBar": False}),
                             html.P("Usage follows your subscription's current quota cycle. The API does not provide a reset date in these usage headers.",
@@ -672,7 +675,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 html.Div([
                     html.Div(html.H2("API credit usage history"), className="panel-heading"),
                     dash_table.DataTable(id="odds-history-table", data=[], columns=[
-                        {"name": "Used at (EDT)", "id": "timestamp"}, {"name": "Sport", "id": "sport"},
+                        {"name": "Used at (EDT)", "id": "timestamp"}, {"name": "API connection", "id": "account"}, {"name": "Sport", "id": "sport"},
                         {"name": "Game", "id": "game"}, {"name": "Game time (EDT)", "id": "game_time"},
                         {"name": "Credits", "id": "credits", "type": "numeric"},
                         {"name": "Charge", "id": "charge"}, {"name": "Status", "id": "status"},
@@ -689,9 +692,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 ], className="panel table-panel"),
                 html.Div([
                     html.H2("Connection setup"),
-                    html.P("Add your API key to this project's .env file, then restart python index.py."),
-                    html.Pre("ODDS_API_KEY=your_api_key_here", className="odds-setup-code"),
-                    html.P("The key stays on the server. Usage refreshes every five minutes while this section is open. This check uses the sports-list endpoint and does not consume credits."),
+                    html.P("Add your primary key and optional backup to this project's .env file, then restart python index.py. The backup is used when the primary exhausts its credits."),
+                    html.Pre("ODDS_API_KEY=your_primary_api_key_here\nODDS_API_KEY_2=your_backup_api_key_here", className="odds-setup-code"),
+                    html.P("Keys stay on the server. Both balances refresh every five minutes while this section is open. These checks use the sports-list endpoint and do not consume credits. The original key is preferred again after its allowance replenishes."),
                     html.A("The Odds API documentation ↗", href=ODDS_DOCUMENTATION,
                            target="_blank", rel="noopener noreferrer"),
                 ], className="panel odds-setup"),
@@ -845,7 +848,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             options,_,_=backtesting_service.options(sport,model.group,model.key,previous)
             if research and player:options.insert(0,dict(label='All players',value='__all__'))
             chosen=previous if previous in {o['value'] for o in options} else options[0]['value'] if options else None
-            note='Saved inputs only. Missing history is reported; source and odds APIs are not called.'
+            note=('NBA game backtests reuse saved inputs and download missing older history automatically. No Odds API credits are used.'
+                  if sport=='NBA' and not player else 'Saved inputs only. Missing history is reported; source and odds APIs are not called.')
         except (DataSourceError,OSError,ValueError,TypeError) as exc:
             options=[];chosen=None;note=str(exc)
         return (context,options,chosen,'Player cohort' if research and player else 'Player' if player else 'Team',{'display':'block' if player else 'none'},
@@ -874,8 +878,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
 
     @app.callback(Output('backtest-available','children'),Input('backtest-context','data'),Input('backtest-entity','value'),
                   Input('backtest-statistic','value'),Input('backtest-start','date'),Input('backtest-end','date'),
-                  Input('backtest-playoffs','value'))
-    def backtest_available(context,entity,market,start,end,playoffs):
+                  Input('backtest-playoffs','value'),Input('backtest-result','modified_timestamp'))
+    def backtest_available(context,entity,market,start,end,playoffs,_updated=None):
         if not context or entity is None:return 'Select a team or player to count saved games.'
         try:
             extra=dict(team_filter=context.get('team_filter')) if context.get('workspace')=='research' else {}
@@ -883,7 +887,14 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 market,start,end,playoffs=='include',**extra)
             note=(' '+nfl_backtest_criteria(market)
                   if context['sport']=='NFL' and context['group']=='player-stats' else '')
-            return f'{count:,} saved games available with these filters. Insufficient training history may cause skips.'+note
+            scope=('all teams' if entity=='__all__' else entity) if context['group']=='game-outcome' else (
+                context.get('team_filter') or ('all players' if entity=='__all__' else 'this player'))
+            return (f'{count:,} saved games available for {scope} with these filters. '
+                    'Backtest Data Games selects the latest games within this scope. '
+                    +('Missing older seasons and earlier training history download automatically when you run an NBA game backtest. '
+                      if context['sport']=='NBA' and context['group']=='game-outcome' else
+                      'If you request more than are saved, load more historical data. ')+
+                    'Insufficient training history may cause skips.'+note)
         except (DataSourceError,OSError,ValueError,TypeError) as exc:return str(exc)
 
     @app.callback(Output('backtest-monitor-jobs','data'),Input('backtest-monitor-timer','n_intervals'),
@@ -1183,13 +1194,13 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 if snapshot['sport']=='NCAAF':
                     ncaaf_model_data.prepare([snapshot['home_team'],snapshot['away_team']],snapshot['commence_time'])
                     ncaaf_model_data.prepare_players(snapshot,[row])
-                forecast=whp_service.forecast({**snapshot,'rows':[row]})
+                forecast=availability_service.apply(snapshot,whp_service.forecast({**snapshot,'rows':[row]}),'WHP')
                 estimate=forecast.selection(row)
                 if estimate is None:error=forecast.detail(row)
                 fitted=forecast.forecasts.get((row['subject'],row['market_key'].removesuffix('_alternate')))
                 latest=fitted.diagnostics.get('last_game_date') if fitted else None
             elif row['market_key'] in {'alternate_spreads','alternate_totals'} and snapshot['sport'] in {'NBA','NFL','NCAAF'}:
-                forecast={'NBA':nba_ppp_service,'NFL':ppp_service,'NCAAF':ncaaf_forecast_services['PPP']}[snapshot['sport']].forecast(snapshot)
+                forecast=availability_service.apply(snapshot,{'NBA':nba_ppp_service,'NFL':ppp_service,'NCAAF':ncaaf_forecast_services['PPP']}[snapshot['sport']].forecast(snapshot),'PPP')
                 estimate=_market_probability(row,forecast)
                 latest=forecast.diagnostics.get('last_game_date')
             else:error='PPP is unavailable for this sport/market.'
@@ -1260,18 +1271,35 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         return criteria, (
             f"Applied to all calculated selections: estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Player tabs and Game Lines use their selected forecast methods."), category or FILTER_CATEGORY
 
+    prompt_fields=dict(type='market-quick-prompt-method',scope=ALL,prompt=ALL)
+
+    @app.callback(Output('market-quick-prompts','children'),Input('market-quick-prompts-panel','open'),
+                  Input('market-url','hash'),Input('market-snapshot','value'),Input('market-category','value'),
+                  Input('workspace-page','value'))
+    def quick_prompt_methods(opened,location_hash,selection,category,page):
+        if ctx.triggered_id=='market-quick-prompts-panel' and not opened:return no_update
+        if not opened or page!='market' or category!=FILTER_CATEGORY or not market_game_id(location_hash):return []
+        snapshot=saved_snapshot(location_hash,selection)
+        return quick_methods.controls('market',(snapshot or {}).get('rows',[]),
+            quick_methods.scope('market',market_game_sport(location_hash),market_game_id(location_hash)))
+
     @app.callback(Output('mispricing-request','data'),Output('market-quick-status','children'),
                   Input('market-quick-filter','n_clicks'),State('market-quick-probability','value'),State('market-quick-edge','value'),
                   State('market-quick-game-methods','value'),State('market-quick-player-methods','value'),
-                  State('market-url','hash'),State('market-snapshot','value'),prevent_initial_call=True)
-    def request_quick_filter(clicks,probability,edge,methods,player_methods,location_hash,selection):
+                  State('market-url','hash'),State('market-snapshot','value'),
+                  State(prompt_fields,'value'),State(prompt_fields,'id'),prevent_initial_call=True)
+    def request_quick_filter(clicks,probability,edge,methods,player_methods,location_hash,selection,prompt_values=None,prompt_ids=None):
         if not clicks:raise PreventUpdate
         try:
             criteria=criteria_values(probability,edge)
             methods,player_methods=selected_methods(methods,player_methods)
             if not market_game_id(location_hash) or not selection:
                 raise ValueError('Choose a saved game snapshot before using Quick Filtering.')
-            return {**filter_context(location_hash,selection,methods,player_methods,criteria),'sequence':clicks}, 'All selected methods must pass both Quick Filtering thresholds.'
+            overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope(
+                'market',market_game_sport(location_hash),market_game_id(location_hash)))
+            request={**filter_context(location_hash,selection,methods,player_methods,criteria),'sequence':clicks}
+            if overrides:request['prompt_methods']=overrides
+            return request, 'Every method assigned to a prompt must pass both Quick Filtering thresholds.'
         except ValueError as exc:return no_update,str(exc)
 
     @app.callback(Output('mispricing-filter-panel','style'),Output('saved-market-sections','style'),Input('market-category','value'))
@@ -1338,6 +1366,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             else:
                 if snapshot['sport']=='NCAAF':ncaaf_model_data.prepare_players(snapshot,rows)
                 forecast=whp_service.forecast({**snapshot,'rows':rows})
+            forecast=availability_service.apply(snapshot,forecast,player_method)
         except (DataSourceError,OSError,ValueError) as exc:
             error=str(exc)
             if 'No saved player history.' in error:
@@ -1352,24 +1381,32 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             if snapshot['sport']=='NCAAF':service=ncaaf_forecast_services[method]
             elif snapshot['sport']=='NBA':service={'PPP':nba_ppp_service,'EPA':nba_epa_service,'ELO':nba_elo_service}[method]
             else:service={'PPP':ppp_service,'EPA':epa_service,'ELO':elo_service}[method]
-            return service.forecast(snapshot),None
+            return availability_service.apply(snapshot,service.forecast(snapshot),method),None
         except (DataSourceError,OSError,ValueError) as exc:return None,str(exc)
 
     @app.callback(Output('mispricing-results','children'),Output('mispricing-forecast-history','data'),
                   Input('mispricing-request','data'),Input('market-category','value'),Input('market-url','hash'),
                   Input('market-snapshot','value'),Input('market-quick-game-methods','value'),Input('market-quick-player-methods','value'),
                   Input('market-quick-probability','value'),Input('market-quick-edge','value'),
-                  State('mispricing-forecast-history','data'),State('workspace-page','value'),prevent_initial_call=True,
+                  State('mispricing-forecast-history','data'),State('workspace-page','value'),
+                  Input(prompt_fields,'value'),State(prompt_fields,'id'),prevent_initial_call=True,
                   running=[(Output('market-quick-filter','disabled'),True,False)])
-    def quick_filter_markets(request,category,location_hash,selection,methods,player_methods,probability,edge,previous_history,page=None):
+    def quick_filter_markets(request,category,location_hash,selection,methods,player_methods,probability,edge,previous_history,page=None,prompt_values=None,prompt_ids=None):
         if (page is not None and page!='market') or not market_game_id(location_hash):raise PreventUpdate
         prompt=html.P('Click Quick Filtering to show the top three selections and all remaining matches.',className='saved-market-empty')
         if category!=FILTER_CATEGORY:return prompt,no_update
+        # Mounting or editing the per-prompt selectors only changes controls.
+        # Fitting starts when the button publishes a new request.
+        if page is not None and isinstance(ctx.triggered_id,dict):return prompt,no_update
         try:
             methods,player_methods=selected_methods(methods,player_methods)
             criteria=criteria_values(probability,edge)
+            overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope(
+                'market',market_game_sport(location_hash),market_game_id(location_hash)))
         except ValueError:return prompt,no_update
         expected=filter_context(location_hash,selection,methods,player_methods,criteria)
+        if overrides:expected['prompt_methods']=overrides
+        elif request and request.get('prompt_methods'):return prompt,no_update
         if not request or any(request.get(key)!=value for key,value in expected.items()):return prompt,no_update
         if (page is not None and ctx.triggered_id=='market-url' and previous_history
                 and previous_history.get('context')==[location_hash,selection] and previous_history.get('filter_key')==request):
@@ -1377,23 +1414,29 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         snapshot=saved_snapshot(location_hash,selection)
         if not snapshot:return html.P('That saved snapshot is unavailable. Choose a snapshot and run Quick Filtering again.',className='saved-market-empty'),no_update
         snapshot={**snapshot,'sport':market_game_sport(location_hash)}
-        tasks={method:lambda method=method:forecast_game_markets(snapshot,method) for method in methods}
+        assignments=quick_methods.plan(snapshot['rows'],methods,player_methods,overrides)
+        needed={method for choices in assignments.values() for method in choices}
+        game_methods=[method for method in quick_methods.GAME_METHODS if method in needed]
+        player_methods=[method for method in quick_methods.PLAYER_METHODS if method in needed]
+        tasks={method:lambda method=method:forecast_game_markets(snapshot,method) for method in game_methods}
         tasks.update({method:lambda method=method:forecast_player_markets(snapshot,method) for method in player_methods})
         forecasts=run_forecasts(tasks,snapshot['sport'])
         game_rows={**snapshot,'rows':[row for row in snapshot['rows'] if not row['market_key'].startswith('player_')]}
         player_rows={**snapshot,'rows':[row for row in snapshot['rows'] if row['market_key'].startswith('player_')]}
-        rankings=[[(method,rank_markets(game_rows,forecasts[method][0],None,ALL_PROBABILITIES,method)) for method in methods],
-                  [(method,rank_markets(player_rows,None,forecasts[method][0],ALL_PROBABILITIES,player_method=method)) for method in player_methods]]
-        ranked=consensus_rankings(rankings,criteria,lambda item:(item['row']['market_key'],item['row']['subject'],
-                                                                item['row']['selection'],str(item['row']['line'])))
+        rankings={method:rank_markets(game_rows,forecasts[method][0],None,ALL_PROBABILITIES,method) for method in game_methods}
+        rankings.update({method:rank_markets(player_rows,None,forecasts[method][0],ALL_PROBABILITIES,player_method=method) for method in player_methods})
+        ranked=quick_methods.consensus(rankings,assignments,snapshot['rows'],criteria,
+            lambda item:(item['row']['market_key'],item['row']['subject'],item['row']['selection'],str(item['row']['line'])),consensus_rankings)
         context=[location_hash,selection]
         previous=previous_history if previous_history and previous_history.get('context')==context else {}
         history=dict(context=context,filter_key=request,game=dict(previous.get('game',{})),player=dict(previous.get('player',{})),weighting_policy=POLICY_VERSION)
-        for method in methods:
+        for method in game_methods:
             forecast=forecasts[method][0]
             history['game'][method]={'latest_date':forecast.diagnostics.get('last_game_date') if forecast else None}
         for method in player_methods:history['player'][method]=forecasts[method][2]
         errors=[f'{method} forecast: {record[1]}' for method,record in forecasts.items() if record[1]]
+        injuries=availability_note(*(record[0] for record in forecasts.values()))
+        if injuries:errors.append(injuries)
         try:
             filtered_results_service.save(snapshot,ranked,criteria,request=request)
         except (DataSourceError,OSError,ValueError) as exc:
@@ -1448,6 +1491,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 source=sources[method]
             else:source={'WHP':whp_service,'UO':usage_opportunity_service,'OAM':opponent_adjusted_service,'PGE':pace_game_environment_service}[player_method]
             revision=forecast_revision(source,snapshot['sport'])
+            if snapshot['sport'] in {'NBA','NFL'}:revision.append(availability_service.revision(snapshot['sport']))
             if snapshot['sport']=='NCAAF' and category!='Game':revision+=forecast_revision(ncaaf_model_data,'NCAAF')
             key=hashlib.sha256(json.dumps([context,forecast_scope,POLICY_VERSION,revision,snapshot],sort_keys=True).encode()).hexdigest()
             # Preparing a cold forecast can itself create input files. Finish
@@ -1486,7 +1530,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             for markets in market_services.values():
                 if isinstance(markets, NflMarketService):
                     markets.export_existing()
-            summary = usage_summary(api_usage_log.records(account))
+            labels = odds_service.account_labels() if isinstance(odds_service,OddsApiService) else {account:'Primary'}
+            summary = usage_summary(api_usage_log.records(list(labels)), account_labels=labels)
         except (DataSourceError, OSError, ValueError, csv.Error) as exc:
             return (empty_figure("Credit history unavailable"),
                     [kpi(sport + " CREDITS THIS MONTH", "—", "History unavailable") for sport in USAGE_SPORTS],
@@ -1495,14 +1540,14 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         metrics = []
         for sport in USAGE_SPORTS:
             item = summary["monthly"][sport]
-            detail = f"{summary['month']} · {item['pulls']:,} logged pulls"
+            detail = f"{summary['month']} · {item['pulls']:,} logged requests"
             if item["unknown"]:
                 detail += f" · {item['unknown']:,} unreported charges"
             metrics.append(kpi(sport + " CREDITS THIS MONTH", f"{item['credits']:,}", detail))
-        note = (f"{summary['month']} (EDT) · {len(summary['history']):,} recorded pulls · "
+        note = (f"{summary['month']} (EDT) · {len(summary['history']):,} recorded requests · "
                 "Saved in data/API Log/api_credit_usage.csv. Totals include reported charges only.")
         if summary["unknown"]:
-            note += f" {summary['unknown']:,} pulls have unreported charges."
+            note += f" {summary['unknown']:,} requests have unreported charges."
         return composition, metrics, daily, summary["history"], note
 
     @app.callback(Output("odds-usage", "figure"), Output("odds-summary", "children"), Output("odds-status", "children"),
@@ -1520,10 +1565,28 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         status = ("Saved usage snapshot" if usage.stale else "Connected to The Odds API") + f" · Last checked {format_eastern(usage.checked_at)}."
         if usage.notice:
             status += " " + usage.notice
-        return credit_figure(usage), [
+        metrics = [
             kpi("CREDITS USED", f"{usage.used:,}", "Current quota cycle"),
             kpi("CREDITS UNUSED", f"{usage.remaining:,}", "Remaining before quota resets"),
-            kpi("TOTAL CREDITS", f"{usage.total:,}", "Used + unused credits")], status
+            kpi("TOTAL CREDITS", f"{usage.total:,}", "Used + unused credits")]
+        if usage.accounts:
+            def account_row(account):
+                saved=account.usage
+                state=('Exhausted' if account.exhausted else 'Preferred for requests' if account.active else 'Standby')
+                if saved is None:state+=' · Usage unavailable'
+                elif saved.stale:state+=' · Saved / refresh failed'
+                return html.Tr([html.Td(account.label),
+                    *[html.Td(f'{value:,}' if saved else '—') for value in
+                      ((saved.used,saved.remaining,saved.total) if saved else (None,None,None))],
+                    html.Td([state,html.Small(' '+(account.notice or (saved.notice if saved else '')))]),
+                    html.Td(format_eastern(saved.checked_at) if saved else '—')])
+            metrics.append(html.Div([
+                html.H3('API connections'),
+                html.Table([html.Thead(html.Tr([html.Th(label) for label in ['Connection','Used','Unused','Total','Status','Last checked']])),
+                            html.Tbody([account_row(a) for a in usage.accounts])],className='mispricing-table'),
+                html.P('Combined totals sum the reported counters from these connections. Each subscription may have a different reset date.',className='chart-note'),
+            ],className='panel mispricing-table-scroll',style={'gridColumn':'1 / -1'}))
+        return credit_figure(usage), metrics, status
 
     def register_card_pull(league):
         prefix = league.lower()

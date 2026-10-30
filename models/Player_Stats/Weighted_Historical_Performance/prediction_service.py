@@ -5,6 +5,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 import threading
 
@@ -15,10 +16,11 @@ from sports_analytics.data import DataSourceError
 from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
 from sports_analytics.display_time import format_eastern
+from sports_analytics.result_cache import load_json, save_json
 from models.replay import fingerprint as history_fingerprint
 from .core import MODEL_VERSION, WHPConfig, WHPForecast, WeightedHistoricalPerformance, eligible_history
 from .errors import WHPError
-from .historical_data import PlayerHistoryRepository, atomic_json, identity_name
+from .historical_data import PlayerHistoryRepository, identity_name
 from .markets import stat_spec
 from .market_comparison import compare_price
 
@@ -52,7 +54,7 @@ class PlayerMarketForecast:
         return (f"Mean {forecast.mean:.2f}; predictive SD {d['predictive_sd']:.2f}; {d['training_games']} appearances; "
                 f"effective N {d['effective_n']:.2f}; {d['validation_games']} walk-forward errors; "
                 f"distribution {forecast.family}; last observed game {pd.Timestamp(d['last_game_date']).strftime('%m/%d/%Y')}; "
-                f"cutoff {format_eastern(d['as_of'])}.")
+                f"cutoff {format_eastern(d['as_of'])}." + (' '+d['cache_notice'] if d.get('cache_notice') else ''))
 
 
 class WHPMarketService:
@@ -60,6 +62,29 @@ class WHPMarketService:
         self.repository = repository or PlayerHistoryRepository()
         self._memory = OrderedDict()
         self._memory_lock = threading.Lock()
+        self._ready = threading.Condition(self._memory_lock)
+        self._pending = set()
+
+    @staticmethod
+    def _valid_saved(stored):
+        identity = stored['identity']
+        forecast = WHPForecast(**stored['forecast'])
+        forecast.market(.5)  # Validate finite moments and settlement support.
+        d = forecast.diagnostics
+        required = {'predictive_sd','training_games','effective_n','validation_games','last_game_date','as_of'}
+        if not isinstance(d,dict) or not required <= set(d):return False
+        if (d.get('code_sha256')!=identity['code_sha256'] or d.get('input_sha256')!=identity['input_sha256'] or
+                d.get('model_version')!=identity['model_version'] or d.get('config')!=identity['config'] or
+                d['as_of']!=identity['cutoff']):return False
+        if not all(math.isfinite(d[key]) and d[key]>=0 for key in ('predictive_sd','training_games','effective_n','validation_games')):
+            return False
+        if not math.isclose(d['predictive_sd']**2,forecast.variance,rel_tol=1e-8):return False
+        last = pd.Timestamp(d['last_game_date'])
+        if pd.isna(last) or last.tz_localize('UTC')>=pd.Timestamp(identity['cutoff']):return False
+        return (isinstance(forecast.nonnegative,bool) and isinstance(forecast.samples,list) and
+                isinstance(forecast.weights,list) and len(forecast.samples)==len(forecast.weights)==d['training_games'] and
+                np.isfinite(np.asarray(forecast.samples,float)).all() and np.isfinite(np.asarray(forecast.weights,float)).all() and
+                np.asarray(forecast.weights).min()>=0 and math.isclose(sum(forecast.weights),1.,rel_tol=1e-8))
 
     def prepare(self, snapshot, refresh=False):
         return self.repository.prepare(snapshot["sport"], snapshot["commence_time"],
@@ -111,11 +136,23 @@ class WHPMarketService:
         cache_key = sha256(repr((implementation, asdict(config), history_fingerprint(data),
             str(self.repository.root), {key: snapshot.get(key) for key in
             ('sport', 'game_id', 'home_team', 'away_team', 'pulled_at', 'commence_time', 'rows')})).encode()).hexdigest()
-        with self._memory_lock:
+        with self._ready:
+            self._ready.wait_for(lambda:cache_key not in self._pending)
             cached = self._memory.get(cache_key)
-            if cached is not None and cached[1].is_file():
+            try:available = cached is not None and (cached[1] is None or cached[1].is_file())
+            except OSError:available = cached is not None
+            if available:
                 self._memory.move_to_end(cache_key)
                 return deepcopy(cached[0])
+            self._pending.add(cache_key)
+        try:
+            return self._calculate(snapshot,sport,cutoff,data,result,config,implementation,cache_key)
+        finally:
+            with self._ready:
+                self._pending.discard(cache_key)
+                self._ready.notify_all()
+
+    def _calculate(self,snapshot,sport,cutoff,data,result,config,implementation,cache_key):
         players, failed_players = {}, {}
         for row in snapshot["rows"]:
             if not row["market_key"].startswith("player_") or prop_key(row) in result.forecasts or prop_key(row) in result.errors:
@@ -153,20 +190,15 @@ class WHPMarketService:
                             "cutoff": cutoff.isoformat(), "input_sha256": fingerprint, "config": asdict(config)}
                 digest = sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
                 path = self.repository.root / "forecasts" / sport.lower() / f"{digest}.json"
-                if path.exists():
-                    try:
-                        stored = json.loads(path.read_text(encoding="utf-8"))
-                        forecast = WHPForecast(**stored["forecast"])
-                    except (ValueError, KeyError, TypeError):
-                        forecast = None
-                else:
-                    forecast = None
+                stored = load_json(path,self.repository.root,identity,self._valid_saved)
+                forecast = WHPForecast(**stored['forecast']) if stored else None
                 if forecast is None:
                     forecast = WeightedHistoricalPerformance(config).forecast(sample, cutoff, nonnegative=spec.nonnegative, count=spec.count)
                     forecast.diagnostics.update(player_id=str(sample.iloc[-1]["entity_id"]),
                         player_name=row["subject"], sport=sport, market=key[1], input_sha256=fingerprint,
                         code_sha256=implementation, source_availability="Conservative result-time proxy unless explicit available_at was supplied.")
-                    atomic_json(path, {"identity": identity, "forecast": asdict(forecast)})
+                    if not save_json(path,{"identity":identity,"forecast":asdict(forecast)},self.repository.root):
+                        forecast.diagnostics['cache_notice'] = 'Forecast available for this session; local storage could not be updated.'
                 result.forecasts[key] = forecast
             except WHPError as exc:
                 result.errors[key] = str(exc)
@@ -197,9 +229,14 @@ class WHPMarketService:
                  "cutoff": cutoff.isoformat(), "implementation": implementation, "evaluations": evaluations}
         digest = sha256(json.dumps(audit, sort_keys=True).encode()).hexdigest()
         audit_path = self.repository.root / "evaluations" / f"{digest}.json"
-        atomic_json(audit_path, audit)
+        saved = save_json(audit_path,audit,self.repository.root)
+        if not saved:
+            for forecast in result.forecasts.values():
+                forecast.diagnostics['cache_notice'] = 'Forecast available for this session; its local audit could not be saved.'
+        try:archive = audit_path if audit_path.is_file() else None
+        except OSError:archive = None
         with self._memory_lock:
-            self._memory[cache_key] = (deepcopy(result), audit_path)
+            self._memory[cache_key] = (deepcopy(result), archive)
             self._memory.move_to_end(cache_key)
             if len(self._memory) > 8:
                 self._memory.popitem(last=False)

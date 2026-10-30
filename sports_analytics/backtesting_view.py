@@ -7,6 +7,8 @@ from dataclasses import dataclass,asdict
 from importlib import import_module
 from pathlib import Path
 import re
+import math
+from urllib.parse import parse_qs,urlencode
 from dash import dcc,html
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -94,11 +96,42 @@ def backtesting_route(value):
 
 
 def summary_route(value):
-    if value=='#backtesting-summary':return dict(sport=None,run_id=None)
-    match=re.fullmatch(r'#backtesting-summary-(nba|nfl|ncaaf)-(game-outcome|player-stats)-([a-z]+)-([0-9a-f]{64})',value or '')
+    path,_,query=(value or '').partition('?')
+    if path=='#backtesting-summary' and not query:return dict(sport=None,run_id=None)
+    match=re.fullmatch(r'#backtesting-summary-(nba|nfl|ncaaf)-(game-outcome|player-stats)-([a-z]+)-([0-9a-f]{64})',path)
     if match and find_model(match[1].upper(),(match[2],match[3])):
-        return dict(sport=match[1].upper(),group=match[2],model=match[3],run_id=match[4])
+        route=dict(sport=match[1].upper(),group=match[2],model=match[3],run_id=match[4])
+        if not query:return route
+        try:
+            options=parse_qs(query,keep_blank_values=True,strict_parsing=True)
+            if set(options)-{'target','basis','reports','tolerance'} or any(len(v)!=1 for v in options.values()):return None
+            options={k:v[0] for k,v in options.items()}
+            if options.get('target','margin') not in {'margin','total'}:return None
+            if options.get('basis','all') not in {'common','all'}:return None
+            route.update(target=options.get('target','margin'),basis=options.get('basis','all'))
+            if 'tolerance' in options:
+                tolerance=float(options['tolerance'])
+                if not math.isfinite(tolerance) or tolerance<0:return None
+                route['tolerance']=tolerance
+            if route['basis']=='common':
+                reports={}
+                for item in options.get('reports','').split(','):
+                    key,run_id=item.split(':')
+                    if not find_model(route['sport'],(route['group'],key)) or not re.fullmatch('[0-9a-f]{64}',run_id) or key in reports:return None
+                    reports[key]=run_id
+                if reports.get(route['model'])!=route['run_id']:return None
+                route['reports']=reports
+            elif 'reports' in options:return None
+            return route
+        except (ValueError,TypeError):return None
     return None
+
+
+def summary_href(context,model,run_id,target='margin',basis='all',reports=None,tolerance=None):
+    query=dict(target=target,basis=basis)
+    if basis=='common':query['reports']=','.join(key+':'+report['run_id'] for key,report in sorted(reports.items()))
+    if tolerance is not None:query['tolerance']=tolerance
+    return f'#backtesting-summary-{context["sport"].lower()}-{context["group"]}-{model}-{run_id}?'+urlencode(query)
 
 
 def find_model(sport,route):

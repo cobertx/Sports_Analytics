@@ -12,12 +12,13 @@ import numpy as np
 import pandas as pd
 
 from sports_analytics.data import DataSourceError
+from sports_analytics.result_cache import load_json, save_json
 from sports_analytics.ncaaf_model_data import NcaafModelData
 from .config import UsageOpportunityConfig
 from .distributions import UsageOpportunityForecast
 from .efficiency_model import conversion,yards_per_event
 from .errors import UsageOpportunityError
-from .historical_data import eligible,match_player,atomic_json
+from .historical_data import eligible,match_player
 from models.replay import replay_instance
 from .markets import market_spec,prop_key
 from .nfl_model import split_completions
@@ -223,9 +224,9 @@ class CollegePlayerMarketService:
             input_sha256=sha256((players.to_json(orient='table',date_format='iso',index=False)+
                                 teams.to_json(orient='table',date_format='iso',index=False)).encode()).hexdigest())
         path=self.repository.root/'forecasts/ncaaf'/(sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
-        if self.persist and path.exists():
+        saved=load_json(path,self.repository.root,identity) if self.persist else None
+        if saved is not None:
             try:
-                saved=json.loads(path.read_text(encoding='utf-8'))
                 if saved['identity']==identity:
                     return CollegeForecast({tuple(r['key']):UsageOpportunityForecast(**r['forecast']) for r in saved['forecasts']},
                                            {tuple(r['key']):r['error'] for r in saved['errors']})
@@ -287,6 +288,6 @@ class CollegePlayerMarketService:
                     ('Pace and score-script scenarios use full-game plays; overtime is not separately identified.' if self.method=='PGE' else '')}
                 result.forecasts[key]=UsageOpportunityForecast.from_samples(sum(samples[f] for f in spec.fields),diagnostics)
         if self.persist:
-            atomic_json(path,dict(identity=identity,forecasts=[dict(key=list(k),forecast=asdict(v)) for k,v in result.forecasts.items()],
-                                  errors=[dict(key=list(k),error=v) for k,v in result.errors.items()]))
+            save_json(path,dict(identity=identity,forecasts=[dict(key=list(k),forecast=asdict(v)) for k,v in result.forecasts.items()],
+                                  errors=[dict(key=list(k),error=v) for k,v in result.errors.items()]),self.repository.root)
         return result

@@ -158,10 +158,11 @@ class NBAEPAData:
         self.service = service or DataService()
         self._memory = {}
 
-    def _season(self, season):
+    def _season(self, season, progress=None):
         paths = {kind: self.directory/"raw"/archive_source(kind, season)[0] for kind in ("possessions", "play_by_play")}
         for kind, path in paths.items():
             if not path.exists():
+                if progress:progress(0,0,f'Downloading NBA {season} {kind} archive')
                 prepare_archive(self.directory, kind, season, download=True)
         boxes, source_ids = [], []
         for phase in ("regular", "postseason"):
@@ -201,7 +202,10 @@ class NBAEPAData:
         e_groups = events.groupby("game_id").indices
         rows, xx, xy, game_ids, samples, quarantine = [], [], [], [], [], []
         states_count = corrected_count = 0
-        for game_id, paired in box.groupby("game_id", sort=True):
+        grouped=box.groupby('game_id',sort=True)
+        for number,(game_id, paired) in enumerate(grouped,1):
+            if progress and (number==1 or number%25==0 or number==len(grouped)):
+                progress(number,len(grouped),f'Reconciling NBA EPA {season} events: {number:,}/{len(grouped):,} games')
             try:
                 if game_id not in p_groups or game_id not in e_groups:
                     raise ValueError("Missing possession/event coverage")

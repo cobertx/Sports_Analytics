@@ -10,6 +10,7 @@ import pandas as pd
 from models.replay import replay_instance
 
 from sports_analytics.data import DataSourceError
+from sports_analytics.result_cache import load_json, save_json
 from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
 from models.Player_Stats.Usage_Opportunity.prediction_service import UsageMarketForecast
@@ -17,7 +18,7 @@ from models.Player_Stats.Usage_Opportunity.markets import market_spec,prop_key,q
 from models.Player_Stats.Usage_Opportunity.nba_model import simulate_nba
 from models.Player_Stats.Usage_Opportunity.nfl_model import simulate_nfl
 from .config import MODEL_VERSION,MatchupConfig
-from .historical_data import MatchupHistoryRepository,eligible,match_player,identity_name,atomic_json
+from .historical_data import MatchupHistoryRepository,eligible,match_player,identity_name
 from .features import feature_rows
 from .schedule_strength import ScheduleAdjustedDefense
 from .opponent_adjustment import MatchupContext
@@ -94,9 +95,9 @@ class OpponentAdjustedMarketService:
                       snapshot={k:snapshot.get(k) for k in ['sport','game_id','home_team','away_team','pulled_at','commence_time','rows']})
         digest=sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
         path=self.repository.root/'forecasts'/sport.lower()/f'{digest}.json'
-        if self.persist and path.exists():
+        saved=load_json(path,self.repository.root,identity) if self.persist else None
+        if saved is not None:
             try:
-                saved=json.loads(path.read_text(encoding='utf-8'))
                 if saved['identity']==identity:
                     return MatchupMarketForecast(
                         {tuple(r['key']):MatchupForecast(**r['forecast']) for r in saved['forecasts']},
@@ -107,9 +108,9 @@ class OpponentAdjustedMarketService:
         fit_path=self.repository.root/'defense'/sport.lower()/(sha256(json.dumps(fit_identity,sort_keys=True).encode()).hexdigest()+'.json')
         model=replay_instance(ScheduleAdjustedDefense,config)
         restored=False
-        if self.persist and fit_path.exists():
+        saved=load_json(fit_path,self.repository.root,fit_identity) if self.persist else None
+        if saved is not None:
             try:
-                saved=json.loads(fit_path.read_text(encoding='utf-8'))
                 if saved['identity']==fit_identity:
                     model.records=saved['records']
                     model.historical={tuple(r[:3]):r[3] for r in saved['historical']}
@@ -122,8 +123,8 @@ class OpponentAdjustedMarketService:
         if not restored:
             model.fit(feature_rows(sport,players,teams))
             if self.persist:
-                atomic_json(fit_path,dict(identity=fit_identity,records=model.records,
-                                         historical=[[*key,value] for key,value in model.historical.items()]))
+                save_json(fit_path,dict(identity=fit_identity,records=model.records,
+                                         historical=[[*key,value] for key,value in model.historical.items()]),self.repository.root)
         result,matched,failed_players=MatchupMarketForecast(),{},{}
         players['_whp_name']=players.entity_name.map(identity_name)
         for row in snapshot['rows']:
@@ -202,7 +203,7 @@ class OpponentAdjustedMarketService:
                 **compare_price(price,row['odds'],quotes[0] if len(quotes)==1 else None),
                 win=price.win if price else None,loss=price.loss if price else None,push=price.push if price else None,
                 detail=result.detail(row)))
-        atomic_json(path,dict(identity=identity,
+        save_json(path,dict(identity=identity,
             forecasts=[dict(key=list(k),forecast=asdict(v)) for k,v in result.forecasts.items()],
-            errors=[dict(key=list(k),error=v) for k,v in result.errors.items()],evaluations=evaluations))
+            errors=[dict(key=list(k),error=v) for k,v in result.errors.items()],evaluations=evaluations),self.repository.root)
         return result

@@ -148,7 +148,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         models['render_id']=uuid4().hex
         status=(f'{method} game / {player_method} player estimates. Historical cutoff: '+format_eastern(models['cutoff'])+'. '
                 'All providers use the earliest quote timestamp, capped at game start, to avoid using later history for older saved prices.' if models['cutoff'] else '')
-        return models,[html.Span(status),*[html.P(error,className='mispricing-error') for error in models['errors']]]
+        return models,[html.Span(status),*[html.P(error,className='ppp-comparison-note' if error.startswith('Game injuries:') else 'mispricing-error') for error in models['errors']]]
 
     @app.callback(Output('summary-market-sections','children'),Output('summary-rendered','data'),
                   Input('summary-quotes','data'),State('summary-models','data'),Input('summary-category','value'),

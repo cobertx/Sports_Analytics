@@ -283,12 +283,18 @@ def evaluated_records(result,target='margin'):
     return records
 
 
-def eligible_pairs(frame,entity,lower,upper,now):
+def eligible_pairs(frame,entity,lower,upper,now,limit=None):
+    """Newest eligible matchups in the requested scope, retaining both sides.
+
+    Apply the cap only after selecting the team's complete games. Never cap
+    league history first or reduce the training frame to the evaluation sample.
+    """
     candidates=frame[frame.event_date.ge(lower)&frame.event_date.lt(upper)&frame.available_at.lt(now)]
     if entity!='__all__':
         candidates=candidates[candidates.game_id.isin(candidates[candidates.team.eq(entity)].game_id)]
     games=[g for _,g in candidates.groupby('game_id') if len(g)==2 and g.is_home.eq(1).sum()==1 and g.is_home.eq(0).sum()==1]
-    return sorted(games,key=lambda g:(g.event_date.min(),str(g.iloc[0].game_id)))
+    games=sorted(games,key=lambda g:(g.event_date.min(),str(g.iloc[0].game_id)))
+    return games[-limit:] if limit is not None else games
 
 
 def season_phases(frame,sport,known=None,default=None):
@@ -425,10 +431,13 @@ class BacktestingService:
                     percent=min(99,int(100*done/total)) if total else 0)
         def work():
             try:
+                run_parameters=dict(parameters)
+                if parameters.get('sport')=='NBA' and parameters.get('group')=='game-outcome':
+                    run_parameters.setdefault('prepare_history',True)
                 if self._processes is None:
-                    result=self.run(**parameters,progress=progress)
+                    result=self.run(**run_parameters,progress=progress)
                 else:
-                    result=self._processes.run(self.root,self.data,self.now(),parameters,progress)
+                    result=self._processes.run(self.root,self.data,self.now(),run_parameters,progress)
                     context=result['context']
                     self._remember_report(self.root/context['sport'].lower()/context['group']/context['model']/(result['run_id']+'.json'))
                 with self._jobs_lock:
@@ -452,10 +461,10 @@ class BacktestingService:
 
     def available_games(self,sport,group,key,entity,market=None,start=None,end=None,include_playoffs=False,team_filter=None):
         lower,upper=evaluation_bounds(start,end,self.now())
-        frame=(self.game_inputs(sport,key)[0] if group=='game-outcome' else self.player_inputs(sport))
+        frame=(self.game_inputs(sport,'ppp' if sport=='NBA' else key)[0] if group=='game-outcome' else self.player_inputs(sport))
         frame=season_phases(frame,sport)
         frame=frame[frame.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
-        if group=='game-outcome':return len(eligible_pairs(frame,entity,lower,upper,self.now()))
+        if group=='game-outcome':return len(eligible_pairs(frame,team_filter or entity,lower,upper,self.now()))
         spec=stat_spec(sport,market or '')
         if spec is None or not set(spec.fields)<=set(frame):return 0
         selected=frame if entity=='__all__' else frame[frame.entity_id.eq(str(entity))]
@@ -638,7 +647,7 @@ class BacktestingService:
         return None
 
     def run(self,sport,group,key,entity='__all__',market=None,start=None,end=None,limit=None,tolerance=5,line=None,
-            include_playoffs=False,lookback=None,progress=None,config_overrides=None,team_filter=None,workspace='backtesting'):
+            include_playoffs=False,lookback=None,progress=None,config_overrides=None,team_filter=None,workspace='backtesting',prepare_history=False):
         if sport not in {'NBA','NFL','NCAAF'} or group not in {'game-outcome','player-stats'}:raise ValueError('Choose a valid sport and model.')
         if workspace not in {'backtesting','research'}:raise ValueError('Choose a valid backtesting workspace.')
         if team_filter is not None and not isinstance(team_filter,str):raise ValueError('Choose one saved team or all teams.')
@@ -654,12 +663,19 @@ class BacktestingService:
         lower,upper=evaluation_bounds(start,end,self.now())
         if progress:progress(0,0,'Preparing saved inputs')
         if group=='game-outcome':
-            model=game_model(sport,key);frame,dataset=self.game_inputs(sport,key)
+            model=game_model(sport,key)
             model.config=configured(model.config,config_overrides)
+            if prepare_history and sport=='NBA':
+                from .backtest_history import NBAReplayHistory
+                NBAReplayHistory(self).ensure(key,entity,limit,lower,upper,include_playoffs,model.config,progress)
+            frame,dataset=self.game_inputs(sport,key)
             frame=season_phases(frame,sport)
             frame=frame[frame.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
             # A complete pair must be known today, including both result lags.
-            games=eligible_pairs(frame,entity,lower,upper,self.now())[-limit:]
+            targets=self.game_inputs(sport,'ppp')[0] if sport=='NBA' and key=='epa' else frame
+            targets=season_phases(targets,sport)
+            targets=targets[targets.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
+            games=eligible_pairs(targets,entity,lower,upper,self.now(),limit=limit)
             config=asdict(model.config)
         else:
             if key not in {'whp','uo','oam','pge'}:raise ValueError('Choose an available player model.')
@@ -674,8 +690,8 @@ class BacktestingService:
             candidates=selected[selected.value.notna()&selected.event_date.ge(lower)&selected.event_date.lt(upper)]
             if team_filter:candidates=candidates[candidates.team.eq(team_filter)]
             candidates=player_backtest_rows(candidates,sport,market,history=frame,limit=limit)
+            candidates=candidates.sort_values(['event_date','game_id','entity_id'])
             if entity=='__all__':
-                candidates=candidates.sort_values(['event_date','game_id','entity_id'])
                 ids=candidates.drop_duplicates('game_id',keep='last').tail(limit).game_id
                 candidates=candidates[candidates.game_id.isin(ids)]
             else:candidates=candidates.tail(limit)
@@ -699,6 +715,7 @@ class BacktestingService:
         if workspace=='research' or team_filter is not None:identity.update(workspace=workspace,team_filter=team_filter)
         if sport=='NFL' and group=='player-stats':identity['player_cohort']=NFL_PLAYER_COHORT
         identity['evaluation_games']=[str((g.iloc[0] if group=='game-outcome' else g).game_id) for g in games]
+        if sport=='NBA' and group=='game-outcome' and key=='epa':identity['evaluation_inputs']=repr(fingerprint(targets))
         cache=self.root/sport.lower()/group/key/(sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
         if cache.exists():
             saved=json.loads(cache.read_text(encoding='utf-8'))

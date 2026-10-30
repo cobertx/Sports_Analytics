@@ -9,11 +9,10 @@ from models.season_weights import POLICY_VERSION
 from .market_view import MARKET_NAMES, _line_values, criteria_match, probability_text, selection_text
 from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
+from .quick_methods import GAME_METHODS,PLAYER_METHODS
 
 
 FILTER_CATEGORY = 'Mispricing'
-GAME_METHODS = ('PPP', 'EPA', 'ELO')
-PLAYER_METHODS = ('WHP', 'UO', 'OAM', 'PGE')
 ALL_PROBABILITIES = dict(probability=-1, edge=-2)
 
 
@@ -22,18 +21,26 @@ def quick_controls(prefix, result_id):
         return html.Div([html.Label(label, htmlFor=control.id), control], className='field')
     return html.Section([
         html.H3('Quick Filtering'),
-        html.P('Each game market must pass both thresholds under every selected Game Outcome method. '
-               'Each player market must pass under every selected Player Forecast method. '
+        html.P('Choose default methods below or assign methods to individual prompts under Methods by prompt. '
+               'Each market must pass both thresholds under every method assigned to its prompt. '
                'These inputs are independent of Apply Criteria.', className='ppp-comparison-note'),
         html.Div([
-            field('Game Outcome methods', dcc.Dropdown(id=prefix+'-quick-game-methods', multi=True,
+            field('Default Game Outcome methods', dcc.Dropdown(id=prefix+'-quick-game-methods', multi=True,
                 options=[dict(label=label,value=value) for label,value in
                          [('PPP','PPP'),('EPA','EPA'),('ELO / Power Rating','ELO')]], value=['PPP'], clearable=True)),
-            field('Player Forecast methods', dcc.Dropdown(id=prefix+'-quick-player-methods', multi=True,
+            field('Default Player Forecast methods', dcc.Dropdown(id=prefix+'-quick-player-methods', multi=True,
                 options=[dict(label=label,value=value) for label,value in
                          [('Weighted Historical Performance (WHP)','WHP'),('Usage & Opportunity (UO)','UO'),
                           ('Opponent-Adjusted Matchup (OAM)','OAM'),('Pace & Game Environment (PGE)','PGE')]], value=['WHP'], clearable=True)),
         ], className='forecast-methods'),
+        html.Details([
+            html.Summary('Methods by prompt'),
+            html.P('Assign methods separately to each team market or player statistic. “Use default methods” inherits '
+                   'the selections above. Selecting specific methods overrides that default; clear a prompt to skip it. '
+                   'All lines and sides of a prompt use its assigned methods, and every assigned method must pass.',
+                   className='ppp-comparison-note'),
+            dcc.Loading(html.Div(id=prefix+'-quick-prompts'),delay_show=500,color='#57dbc4'),
+        ],id=prefix+'-quick-prompts-panel',open=False,className='quick-prompt-panel'),
         html.Div([
             field('Estimated Probability (%)', dcc.Input(id=prefix+'-quick-probability', type='number', value=75, min=0, max=100, step='any')),
             field('Edge (percentage points)', dcc.Input(id=prefix+'-quick-edge', type='number', value=5, min=-100, max=100, step='any')),
@@ -65,6 +72,7 @@ def consensus_rankings(groups, criteria, selection_key):
     """Intersect available estimates within each market type, then apply strict criteria."""
     matches=[]; evaluated=unavailable=0
     for rankings in groups:
+        if not rankings:continue
         indexed=[(method, {selection_key(item): item for item in ranked['matches']}) for method, ranked in rankings]
         available=set.intersection(*(set(items) for _, items in indexed))
         evaluated+=len(available)
@@ -152,14 +160,15 @@ def results(snapshot, ranked, criteria, errors=()):
         html.Div([
             html.Strong(f"{len(matches)} qualifying selections across this game's saved markets."),
             html.Span(f" Estimated probability > {criteria['probability']*100:g}% and edge > {criteria['edge']*100:g} percentage points. "
-                      f"{ranked['evaluated']} quotes evaluated; {ranked['unavailable']} unavailable quotes excluded."),
+                      f"{ranked['evaluated']} quotes evaluated; {ranked['unavailable']} unavailable quotes excluded."
+                      +(f" {ranked['excluded']} quotes skipped by prompt selection." if ranked.get('excluded') else '')),
         ],className='criteria-evaluation'+(' criteria-evaluation-no-match' if not matches else ''),role='status'),
-        *[html.P(error,className='mispricing-error',role='status') for error in errors if error],
+        *[html.P(error,className='ppp-comparison-note' if error.startswith('Game injuries:') else 'mispricing-error',role='status') for error in errors if error],
         html.Section([html.H3('Top 3 by edge'),table(matches[:3],1)],className='mispricing-top'),
         html.Section([html.H3('Remaining qualifying markets'),table(matches[3:],4)],className='mispricing-remaining'),
         html.P('Ranked by estimated probability minus market implied probability, highest first. '
                'Estimates use the selected game/player methods and exclude pushes, matching the market tabs. '
                'Alternate lines are separate selections. '+
-               ('Every selected method must pass both thresholds. Ranking uses the lowest edge across those methods; '
+               ('Every method assigned to a prompt must pass both thresholds. Ranking uses the lowest edge across those methods; '
                 'missing estimates from any selected method exclude that selection.' if consensus else ''),className='ppp-comparison-note'),
     ],className='mispricing-results')

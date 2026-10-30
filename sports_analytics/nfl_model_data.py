@@ -14,6 +14,7 @@ import tempfile
 import pandas as pd
 
 from .data import DataSourceError, HttpClient
+from .result_cache import atomic_text
 
 ROOT = Path(__file__).resolve().parent.parent
 DIRECTORY = ROOT / "data" / "modeling" / "nfl"
@@ -29,21 +30,6 @@ VERSION = 3
 
 def canonical_team(value):
     return ALIASES.get(str(value), str(value))
-
-
-def atomic_text(path, text):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", dir=path.parent,
-                                         suffix=".tmp", delete=False) as file:
-            temporary = Path(file.name)
-            file.write(text)
-        temporary.replace(path)
-    finally:
-        if temporary:
-            temporary.unlink(missing_ok=True)
 
 
 def offensive_points(pbp, teams):

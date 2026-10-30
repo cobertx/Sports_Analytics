@@ -104,6 +104,20 @@ def per_game_axis(fig,data):
     return x,[[format_eastern(r.date),r.label,str(r.game_id)] for r in data.itertuples()]
 
 
+def range_accuracy(records,level=PREDICTIVE_INTERVAL):
+    """Inclusive interval coverage, using only valid ranges at the requested level."""
+    hits=[]
+    for row in records:
+        recorded_level=row.get('interval_level')
+        values=[row.get(key) for key in ('actual','lower','upper')]
+        if (not isinstance(recorded_level,(int,float)) or not math.isclose(recorded_level,level,rel_tol=1e-5)
+                or not all(isinstance(v,(int,float)) and math.isfinite(v) for v in values)):
+            continue
+        actual,lower,upper=values
+        if lower<=upper:hits.append(lower<=actual<=upper)
+    return dict(range_accuracy=sum(hits)/len(hits) if hits else None,range_samples=f'{sum(hits)} / {len(hits)}')
+
+
 def error_summary(errors):
     """Exact statistics of signed forecast errors, rather than histogram bins."""
     values=np.asarray(errors,dtype=float).ravel()
@@ -208,8 +222,9 @@ def render(result,target='margin'):
     records=evaluated_records(result,target);context=result['context'];game=context['group']=='game-outcome'
     metrics=diagnostics(records,context['tolerance']);data=pd.DataFrame(records)
     data['error']=data.predicted-data.actual
-    data['plot_date']=pd.to_datetime(data.date,utc=True).dt.tz_convert(EASTERN).dt.strftime('%Y-%m-%dT%H:%M:%S')
     interval_label=f'{100*records[0]["interval_level"]:.0f}%'
+    coverage=range_accuracy(records,records[0]['interval_level'])
+    metrics['interval_coverage']=coverage['range_accuracy']
     values=lambda key,suffix='':f'{metrics[key]:.2f}{suffix}' if metrics.get(key) is not None else '—'
     percent=lambda key:f'{100*metrics[key]:.1f}%' if metrics.get(key) is not None else '—'
     accuracy_note=('Home-winner classification; tied results excluded.' if game else
@@ -235,20 +250,23 @@ def render(result,target='margin'):
         card('PUSHES / TIES',str(metrics['pushes']),'Excluded from binary event accuracy and probability scoring.')]
     unit=('home margin (points)' if target=='margin' else 'total points') if game else context['market'].removeprefix('player_').replace('_',' ')
     timeline=figure('Predicted vs. actual over time','Game date (EDT)',unit)
-    timeline.add_trace(go.Scatter(x=data.plot_date,y=data.lower,mode='lines',line=dict(width=0),showlegend=False,hoverinfo='skip'))
-    timeline.add_trace(go.Scatter(x=data.plot_date,y=data.upper,mode='lines',line=dict(width=0),fill='tonexty',
+    timeline_x,timeline_hover=per_game_axis(timeline,data)
+    data['display_date']=[row[0] for row in timeline_hover]
+    timeline.add_trace(go.Scatter(x=timeline_x,y=data.lower,mode='lines',line=dict(width=0),showlegend=False,hoverinfo='skip'))
+    timeline.add_trace(go.Scatter(x=timeline_x,y=data.upper,mode='lines',line=dict(width=0),fill='tonexty',
         fillcolor='rgba(87,219,196,.13)',name=interval_label+' predictive interval',hoverinfo='skip'))
-    timeline.add_trace(go.Scatter(x=data.plot_date,y=data.predicted,name='Predicted',mode='lines+markers',line=dict(color='#57dbc4'),
-        marker=dict(size=3),text=data.label))
+    timeline.add_trace(go.Scatter(x=timeline_x,y=data.predicted,name='Predicted',mode='lines+markers',line=dict(color='#57dbc4'),
+        marker=dict(size=3),text=data.label,customdata=timeline_hover,
+        hovertemplate='%{customdata[0]}<br>%{customdata[1]}<br>Game %{customdata[2]}<br>Predicted: %{y:.2f}<extra>Predicted</extra>'))
     inside=data.actual.ge(data.lower)&data.actual.le(data.upper)
     for mask,color,symbol,label in [(inside,'#8197ff','circle','Actual — inside interval'),
                                     (~inside,'#ff7b87','x','Actual — outside interval')]:
-        timeline.add_trace(go.Scatter(x=data.loc[mask,'plot_date'],y=data.loc[mask,'actual'],name=label,mode='markers',
+        timeline.add_trace(go.Scatter(x=timeline_x[mask.to_numpy()],y=data.loc[mask,'actual'],name=label,mode='markers',
             marker=dict(color=color,size=4,symbol=symbol),text=data.loc[mask,'label'],
-            customdata=data.loc[mask,['lower','upper']],
-            hovertemplate='%{text}<br>%{x}<br>Actual: %{y:.2f}<br>'+interval_label+
-                ' interval: [%{customdata[0]:.2f}, %{customdata[1]:.2f}]<extra>%{fullData.name}</extra>'))
-    timeline.update_xaxes(tickformat='%m/%d/%Y')
+            customdata=data.loc[mask,['display_date','lower','upper']],
+            hovertemplate='%{text}<br>%{customdata[0]}<br>Actual: %{y:.2f}<br>'+interval_label+
+                ' interval: [%{customdata[1]:.2f}, %{customdata[2]:.2f}]<extra>%{fullData.name}</extra>'))
+    timeline.update_xaxes(type='linear')
     parity=figure('Prediction agreement','Actual '+unit,'Predicted '+unit)
     parity.add_trace(go.Scatter(x=data.actual,y=data.predicted,mode='markers',name='Evaluated game',
         marker=dict(color=data.error,colorscale='RdBu',showscale=True,colorbar=dict(title='Error')),text=data.label))
@@ -279,7 +297,8 @@ def render(result,target='margin'):
     calibration.update_xaxes(range=[0,1],tickformat='.0%');calibration.update_yaxes(range=[0,1],tickformat='.0%')
     accuracy=figure('Historical accuracy by game','Game date','Accuracy')
     historical_accuracy(accuracy,data,context)
-    chart_notes={id(residual):'Error = predicted − actual. Mean and median describe bias; sample SD describes spread. MAE and RMSE measure miss size. Hover a statistic for its definition, range and percentiles.',
+    chart_notes={id(timeline):'Evaluated games or player appearances are spaced evenly. Dates without evaluated results, including the offseason, are omitted. Hover for the actual game date.',
+        id(residual):'Error = predicted − actual. Mean and median describe bias; sample SD describes spread. MAE and RMSE measure miss size. Hover a statistic for its definition, range and percentiles.',
         id(rolling):'Each point averages absolute errors over the last up to 5 evaluated observations, including individual player appearances in cohort runs. Lower is better. Compare the model with the prior-data baseline on the same observations; rising values indicate worse recent point forecasts.',
         id(calibration):'Predictions are grouped in 2-percentage-point bins. The diagonal means forecast probability matches observed frequency; below it means the event happened less often than predicted. Hover for each bin’s sample count. '+
             ('This checks home-team win probabilities, even when the error charts show total points. It does not check every alternate spread or total line.' if game else
@@ -288,7 +307,8 @@ def render(result,target='margin'):
     for r in records:
         table.append(dict(date=format_eastern(r['date']),game=r['label'],actual=round(r['actual'],3),
             predicted=round(r['predicted'],3),error=round(r['predicted']-r['actual'],3),
-            lower=round(r['lower'],3),upper=round(r['upper'],3),
+            lower=round(r['lower'],3) if r.get('lower') is not None else None,
+            upper=round(r['upper'],3) if r.get('upper') is not None else None,
             probability=round(100*r['probability'],2) if r.get('probability') is not None else None,
             training_through=r.get('latest_training')))
     return html.Div([
@@ -312,8 +332,8 @@ def render(result,target='margin'):
             className='backtest-status')] if not game and records[0]['interval_level']!=PREDICTIVE_INTERVAL else []),
         html.Div([
             html.Div([dcc.Graph(figure=timeline,config={'displaylogo':False}),
-                html.Aside([html.Strong(f'{inside.mean():.1%}'),html.Span('Inside '+interval_label+' interval'),
-                    html.Small(f'{int(inside.sum()):,} of {len(data):,} actuals')],className='backtest-coverage')],
+                html.Aside([html.Strong(percent('interval_coverage')),html.Span('Inside '+interval_label+' interval'),
+                    html.Small(coverage['range_samples'].replace(' / ',' of ')+' actuals with valid ranges')],className='backtest-coverage')],
                 className='panel backtest-chart backtest-timeline'),
             *[html.Div([dcc.Graph(figure=fig,config={'displaylogo':False}),
                 *([html.P(chart_notes[id(fig)],className='chart-note backtest-chart-note')] if id(fig) in chart_notes else [])],className='panel backtest-chart')

@@ -12,7 +12,8 @@ from models.Game_Outcome.PPP.PPP import PPPError, PPPForecast, PPPModel
 from models import season_weights
 from .data import DataSourceError
 from .nfl_markets import NFL_TEAM_CODES
-from .nfl_model_data import NflModelData, atomic_text
+from .nfl_model_data import NflModelData
+from .result_cache import load_json, save_json
 
 MODEL_VERSION = 1
 
@@ -69,9 +70,9 @@ class PPPMarketService:
 
     def _forecast(self, snapshot, identity, key, pulled, kickoff, cutoff):
         path = self.data.directory / "forecasts" / f"{self.method.lower()}_{key}.json"
-        if path.exists():
+        saved = load_json(path,self.data.directory,identity)
+        if saved is not None:
             try:
-                saved = json.loads(path.read_text(encoding="utf-8"))
                 forecast = self.forecast_class(**saved["forecast"])
                 if saved["identity"] == identity:
                     return forecast
@@ -93,8 +94,6 @@ class PPPMarketService:
             {"file": source.name, "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
             for source in sorted({source for pattern in self.input_patterns for source in self.data.directory.glob(pattern)})
             if str(season) in source.stem or str(season - 1) in source.stem]
-        try:
-            atomic_text(path, json.dumps({"identity": identity, "forecast": asdict(forecast)}, indent=2))
-        except OSError:
+        if not save_json(path,{"identity":identity,"forecast":asdict(forecast)},self.data.directory):
             forecast.diagnostics["source_notices"].append("This estimate could not be archived; check modeling-folder access.")
         return forecast

@@ -1,6 +1,6 @@
 # Injury and weather inputs for existing forecasts
 
-Research and code audit: October 27, 2026. This is an implementation design; automatic injury/weather adjustments are not enabled by this document.
+Research and code audit: October 27, 2026. This is the original implementation design. The dashboard now implements a narrower, evidence-gated [historical availability overlay](AVAILABILITY_ADJUSTMENTS.md); that document describes the current behavior and limitations. Weather and the remaining integration proposals below are not enabled by this document.
 
 ## What the application already has
 

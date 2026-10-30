@@ -10,6 +10,8 @@ from .kalshi_analysis import adapter as kalshi_target,implied as exchange_implie
 from .market_view import MARKET_NAMES,_market_probability,selection_text
 from .mispricing import run_forecasts
 from .prompt_history import exchange_target
+from .availability import revision as availability_revision
+from .availability_adjustment import note as availability_note
 
 PROVIDERS=('FanDuel','Kalshi','Polymarket')
 
@@ -129,6 +131,7 @@ def entries(bundle):
 
 def current_models(models,bundle,method,player_method):
     return bool(models and models.get('weighting_policy')==POLICY_VERSION and
+                models.get('availability_revision')==availability_revision(bundle['sport']) and
                 [models.get('bundle_id'),models.get('method'),models.get('player_method')]==[bundle['id'],method,player_method])
 
 
@@ -174,8 +177,11 @@ def calculate(bundle,method,player_method,game_forecast,player_forecast):
         row.update(probability=probability,model_odds=fair_american_odds(probability),
                    edge=probability-row['implied'] if probability is not None and row['implied'] is not None else None,
                    detail='Forecast as of '+cutoff.isoformat() if probability is not None else 'History or this forecast target is unavailable.')
+    injuries=availability_note(*(record[0] for record in forecasts.values()))
     return dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(rows),cutoff=cutoff.isoformat(),weighting_policy=POLICY_VERSION,
-                errors=[f'{method if kind=="game" else player_method}: {record[1]}' for kind,record in forecasts.items() if record[1]])
+                availability_revision=availability_revision(sport),
+                errors=[f'{method if kind=="game" else player_method}: {record[1]}' for kind,record in forecasts.items() if record[1]]+
+                       ([injuries] if injuries else []))
 
 
 def clean(rows):

@@ -327,6 +327,8 @@ class KalshiFilterCallbacks(TestCase):
         with self.app.server.test_client() as client:
             for name in ['kalshi_quick_scan','kalshi_quick_results']:
                 key,meta=next((k,m) for k,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
+                for item in [*meta['inputs'],*meta['state']]:
+                    if item['id'].startswith('{'):values.setdefault(item['id'],[])
                 outputs=meta['output']
                 outputs=([dict(id=o.component_id,property=o.component_property) for o in outputs] if isinstance(outputs,list)
                          else dict(id=outputs.component_id,property=outputs.component_property))

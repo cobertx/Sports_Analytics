@@ -10,13 +10,13 @@ import json
 import os
 from pathlib import Path
 import re
-import tempfile
 import unicodedata
 
 import pandas as pd
 
 from sports_analytics.data import DataSourceError, HttpClient, Query
 from sports_analytics.service import DataService
+from sports_analytics.result_cache import atomic_json
 
 ROOT = Path(__file__).resolve().parents[3] / "data" / "modeling" / "player_stats" / "whp"
 
@@ -35,20 +35,6 @@ def seasons_for(sport, start):
     # A missed NBA season must not hide a returning player's last appearances.
     # Model windows/calibration minima still apply, and load() stays read-only.
     return [season - 2, season - 1, season] if sport == 'NBA' else [season - 1, season]
-
-
-def atomic_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
-                                         suffix=".tmp", delete=False) as file:
-            temporary = Path(file.name)
-            json.dump(data, file, allow_nan=False, indent=2)
-        temporary.replace(path)
-    finally:
-        if temporary:
-            temporary.unlink(missing_ok=True)
 
 
 def model_frame(frame):

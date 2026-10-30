@@ -9,6 +9,9 @@ from .data import DataSourceError
 from .kalshi import parse_time
 from .market_view import criteria_match
 from .mispricing import GAME_METHODS, PLAYER_METHODS, ALL_PROBABILITIES, consensus_rankings, run_forecasts
+from .availability import revision as availability_revision
+from .availability_adjustment import note as availability_note
+from . import quick_methods
 
 FILTER = 'Mispricing Filter'
 NBA_STATS = {'PTS':'points','REB':'rebounds','AST':'assists','3PT':'threes','STL':'steals',
@@ -29,7 +32,7 @@ def definition(row):
 
 def identity(game, selected, method, player_method):
     return [game['sport'],game['id'],game.get('start'),game.get('matchup_title') or game.get('title'),
-            game.get('teams'),bool(game.get('neutral',False)),POLICY_VERSION,selected,method,player_method]
+            game.get('teams'),bool(game.get('neutral',False)),POLICY_VERSION,availability_revision(game['sport']),selected,method,player_method]
 
 
 def implied(row, side):
@@ -135,6 +138,8 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
         pf,error,record=player_forecast({**source,'rows':player_rows},player_method)
         if error:errors.append(f'{player_method}: {error}')
         history['player']=record.get('latest_date')
+    message=availability_note(gf,pf)
+    if message:errors.append(message)
     for row in pending:
         item=mapped[row['ticker']];probability=None
         detail='This contract is not supported by the selected full-game models.'
@@ -154,7 +159,7 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
                 if probability is not None and not (math.isfinite(probability) and 0<=probability<=1):probability=None
             except (ValueError,TypeError,OverflowError) as exc:detail=str(exc)
         records[row['ticker']]=dict(definition=definition(row),probability=probability,method=model,detail=detail)
-    return dict(context=context,predictions=records,errors=list(dict.fromkeys([*old.get('errors',[]),*errors])),
+    return dict(context=identity(game,selected,method,player_method),predictions=records,errors=list(dict.fromkeys([*old.get('errors',[]),*errors])),
                 history=history,cutoff=source['pulled_at'])
 
 
@@ -190,16 +195,26 @@ def rank(snapshot, criteria):
     return dict(matches=matches,evaluated=evaluated,unavailable=unavailable)
 
 
-def quick_calculate(game, snapshot, selected, methods, player_methods, criteria, game_forecast, player_forecast):
+def prompt_targets(game,snapshot):
+    source=model_snapshot(game,snapshot)
+    targets={}
+    for row in snapshot['rows']:
+        target=adapter(row,game['sport'],[source['home_team'],source['away_team']])
+        targets[row['ticker']]=target[0] if target else dict(market_key='unsupported',market='Unsupported contracts')
+    return targets
+
+
+def quick_calculate(game, snapshot, selected, methods, player_methods, criteria, game_forecast, player_forecast,prompt_methods=None):
     """Fit each selected method once, with the same quotes and historical cutoff."""
     try:
-        source=model_snapshot(game,snapshot)
+        targets=prompt_targets(game,snapshot)
     except DataSourceError as exc:
         return dict(matches=[],evaluated=0,unavailable=2*len(snapshot['rows']),consensus=True), [str(exc)]
     groups={False:[],True:[]}
     for row in snapshot['rows']:
-        target=adapter(row,game['sport'],[source['home_team'],source['away_team']])
-        groups[bool(target and target[0]['market_key'].startswith('player_'))].append(row)
+        groups[targets[row['ticker']]['market_key'].startswith('player_')].append(row)
+    assignments=quick_methods.plan(targets.values(),methods,player_methods,prompt_methods)
+    needed={method for choices in assignments.values() for method in choices}
     def evaluate(method, player):
         subset={**snapshot,'rows':groups[player]}
         models=calculate(game,subset,selected,methods[0] if player else method,
@@ -207,10 +222,11 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
         displayed=decorate(subset,game,selected,methods[0] if player else method,
                            method if player else player_methods[0],models)
         return rank(displayed,ALL_PROBABILITIES),models.get('errors',[])
-    tasks={method:lambda method=method:evaluate(method,False) for method in methods}
-    tasks.update({method:lambda method=method:evaluate(method,True) for method in player_methods})
+    tasks={method:lambda method=method:evaluate(method,False) for method in GAME_METHODS if method in needed}
+    tasks.update({method:lambda method=method:evaluate(method,True) for method in PLAYER_METHODS if method in needed})
     forecasts=run_forecasts(tasks,game['sport'])
-    rankings=[[(method,forecasts[method][0]) for method in choices] for choices in (methods,player_methods)]
-    ranked=consensus_rankings(rankings,criteria,lambda item:(item['row']['ticker'],item['side']))
+    ranked=quick_methods.consensus({method:record[0] for method,record in forecasts.items()},assignments,
+        snapshot['rows'],criteria,lambda item:(item['row']['ticker'],item['side']),consensus_rankings,
+        prompt=lambda row:quick_methods.prompt_key(targets[row['ticker']]),sides=2)
     errors=list(dict.fromkeys(error for _, messages in forecasts.values() for error in messages))
     return ranked,errors

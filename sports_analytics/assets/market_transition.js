@@ -18,7 +18,7 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
       if(information&&(information[1]==='nba'?['injuries','roster']:['news','weather']).includes(information[2]))return {sport:information[1].toUpperCase(),page:'information'};
       const visual=/^#(nba|nfl)-in-game-data$/.exec(hash||'');
       if(visual)return {sport:visual[1].toUpperCase(),page:'in-game'};
-      const summary=/^#backtesting-summary(?:-(nba|nfl|ncaaf)-(game-outcome|player-stats)-[a-z]+-[0-9a-f]{64})?$/.exec(hash||'');
+      const summary=/^#backtesting-summary(?:-(nba|nfl|ncaaf)-(game-outcome|player-stats)-[a-z]+-[0-9a-f]{64}(?:\?[^#]*)?)?$/.exec(hash||'');
       if(summary)return {sport:summary[1]?.toUpperCase()||null,page:'backtesting'};
       if(/^#backtesting(?:-(game-outcome|player-stats)-[a-z0-9-]+|-performance)?$/.test(hash||''))return {sport:null,page:'backtesting'};
       return null;

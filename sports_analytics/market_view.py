@@ -20,6 +20,7 @@ from .historical_links import history_href
 from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
 from .player_distribution import panel as distribution_panel
+from .availability_view import panel as availability_panel
 
 NFL_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NFL" / "Team Logos"
 NFL_LOGO_FILES = {path.stem.casefold(): path.name for path in NFL_LOGO_DIRECTORY.glob("*.png")}
@@ -248,21 +249,21 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=N
     else:
         status = error or f"{method} estimate unavailable."
     methodology = ("The EPA model uses the PDF's fitted scoring bridge and normal score-error baseline; key-number probabilities are approximate. "
-                   "No drive-state simulator, injury or weather adjustment is applied.") if method == "EPA" else (
-                   "The PPP model uses the PDF's normal baseline with historical forecast errors; key-number probabilities are approximate. No injury or weather adjustment is applied.")
+                   "The base model has no drive-state simulator or weather adjustment.") if method == "EPA" else (
+                   "The PPP model uses the PDF's normal baseline with historical forecast errors; key-number probabilities are approximate. The base model has no weather adjustment.")
     if snapshot.get("sport") == "NBA":
         methodology = ("NBA EPA uses reconciled events, pre-action EPV and signed possession residual ratings with chronological normal score-error calibration. "
                        "This is an event-based research baseline; tracking, projected lineups and an explicit overtime simulator are not modeled.") if method == "EPA" else (
-                       "NBA PPP uses estimated possessions, opponent-adjusted efficiency and chronological score-error calibration. Overtime is included; lineup and injury adjustments are not modeled.")
+                       "NBA PPP uses estimated possessions, opponent-adjusted efficiency and chronological score-error calibration. Overtime is included. Availability adjustments are shown separately when supported.")
     if method == "ELO":
         methodology = ("ELO uses sequential neutral ratings, opponent-adjusted ridge power margins and a separate positive offense/defense "
                        "scoring/pace model for totals. Elo calibration and the margin blend are fitted on chronological forecast records. "
-                       "This is a normal research baseline; roster, weather and explicit drive/possession/overtime simulation are not modeled.")
+                       "This is a normal research baseline; weather and explicit drive/possession/overtime simulation are not modeled. Availability adjustments are shown separately when supported.")
     if snapshot.get("sport") == "NCAAF":
         methodology = (f"NCAAF {method} uses selected-school CFBD CSV history and college-only chronological score-error calibration. "
                        "PPP models total scoring per play; EPA uses signed provider PPA with a fitted scoring bridge; ELO combines ratings/power with scoring. "
                        "This scoped cohort is not a full FBS conference model; roster and explicit overtime adjustments are not connected.")
-    children = [html.Div(status, className="load-status ppp-status", role="status"),
+    children = [html.Div(status, className="load-status ppp-status", role="status"), availability_panel(forecast),
                 html.P(f"Market probabilities include the bookmaker margin. {method} probabilities and fair odds exclude pushes; hover a model value to see its win, loss and push probabilities. "
                        + methodology,
                        className="ppp-comparison-note")]
@@ -402,15 +403,17 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
     if player_method:
         note = ("PGE forecasts regulation pace from lagged own/opponent volume, then draws shared game scripts and overtime before player participation, allocation and efficiency. Hover for projected game volume, usage-only baseline, opportunities, intervals and EV. Uses saved boxes and available NFL play-by-play; no market lines enter the forecast. NFL TD/order props remain unavailable."
                 if method == "PGE" else
-                "OAM neutralizes past matchup effects and adjusts opportunity/efficiency using schedule-adjusted, recency-weighted defensive factors with small-sample shrinkage. Hover for neutral and adjusted means, opponent multiplier, uncertainty and EV. Uses saved box scores; live tactical, injury, route and tracking feeds are not connected. NFL TD/order props remain unavailable."
+                "OAM neutralizes past matchup effects and adjusts opportunity/efficiency using schedule-adjusted, recency-weighted defensive factors with small-sample shrinkage. Hover for neutral and adjusted means, opponent multiplier, uncertainty and EV. The base simulation uses saved box scores; the availability overlay is shown separately. Live tactical, route and tracking feeds are not connected. NFL TD/order props remain unavailable."
                 if method == "OAM" else
-                "UO simulates historical team volume, player participation/allocation and conversion efficiency jointly. Hover for opportunities, distribution intervals, simulation error and EV. Uses saved box scores; tracking, injuries, route and red-zone feeds are not connected. NFL TD/order props remain unavailable. Research defaults have not been validated for betting accuracy."
+                "UO simulates historical team volume, player participation/allocation and conversion efficiency jointly. Hover for opportunities, distribution intervals, simulation error and EV. The base simulation uses saved box scores; the availability overlay is shown separately. Tracking, route and red-zone feeds are not connected. NFL TD/order props remain unavailable. Research defaults have not been validated for betting accuracy."
                 if method == "UO" else
                 "WHP uses saved player appearances, recency weighting and walk-forward predictive dispersion. Hover a model value for sample size, mean, uncertainty and availability. Fair probabilities exclude pushes; market implied probabilities include the bookmaker margin. First/last scorer and props without sufficient history remain unavailable.")
         sections.insert(0, html.P(model_error or
             note + (' NBA forecasts can use the current season and two prior seasons, including returning players’ earlier appearances.'
                     if snapshot.get('sport') == 'NBA' else ''),
             className="ppp-comparison-note"))
+        if not loading and forecast is not None:
+            sections.insert(0,availability_panel(forecast))
     if loading:
         sections.insert(0,indicator('Quotes are ready. Calculating the selected forecast in the background…'))
     if not loading and category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):

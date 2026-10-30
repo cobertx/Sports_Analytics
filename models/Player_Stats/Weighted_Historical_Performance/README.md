@@ -1,5 +1,17 @@
 # Weighted Historical Performance (WHP)
 
+Forecasts and quote audits tolerate temporary Windows access/share locks during
+JSON replacement. Identical saves reuse the existing file, writes are serialized
+per path and retried briefly, and a blocked JSON result is stored durably in
+`model_cache/result_recovery.sqlite3` under the model data root. Matching recovery
+records can be loaded after an app restart without refitting, and are restored to
+JSON when the destination becomes writable. Readers validate model/input/config
+identity, distribution values and required diagnostics before reuse; corrupt or
+mismatched output is recalculated. Concurrent identical WHP requests share one
+calculation. Source-history writes remain strict. If both local storage locations
+are unavailable, a valid forecast remains usable for the session with a storage
+notice; disk persistence cannot be guaranteed without a writable location.
+
 ## 0. What runs, how much history, and new seasons
 
 This package implements the supplied **Weighted Historical Performance: NBA, NFL and NCAAF** research document as a player-game forecasting baseline. It is separate from the team-score models in `models/Game_Outcome`. The original research PDF is retained unchanged; `WHP_Implementation_Guide.pdf` explains the code in this folder. None of the source document's instructions trigger wagers, messages, or API requests.

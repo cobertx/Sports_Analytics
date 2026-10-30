@@ -13,6 +13,23 @@ skip list distinguish attempted and successfully evaluated games. Defaults and
 minimum-sample rules are not relaxed to manufacture results. Larger replays,
 especially models with nested calibration, can take several minutes.
 
+NBA Game Outcome runs started from the dashboard automatically prepare missing
+older seasons until the requested team/game sample and an earlier training and
+calibration period are available. Public NBA box-score archives are cached in
+`data/cache` and paired observations in `data/modeling/nba`; later runs reuse them.
+Preparation appears in the backtest progress panel and never uses Odds API credits.
+Dates and postseason choices remain binding. If a source fails or the selected
+period cannot supply the requested count, the worker reports that limitation
+instead of completing a smaller sample as if it fulfilled the request.
+
+NBA EPA uses independent paired box scores for evaluation targets and reconciled
+possession/event data for training. A target game does not need its own possession
+states: only earlier eligible states enter its forecast. Missing/quarantined
+training events remain excluded, and EPA never substitutes PPP inputs for EPV.
+Earlier event archives are downloaded and reconciled only when needed.
+The core `BacktestingService.run` remains offline by default; use
+`prepare_history=True` for the same automatic NBA preparation outside the dashboard.
+
 ### Evaluation and estimation controls
 
 Changing sport or team/player scope resets the editable **Backtest Data Games**
@@ -28,6 +45,14 @@ The separate **Evaluation start** and **Evaluation end** calendar/date fields
 accept MM/DD/YYYY. Either can be blank. Both bounds include the selected EDT
 calendar day. The newest-game limit applies after date, scope and season filters;
 it is a maximum requested sample, not a promise of that many saved/valid forecasts.
+For example, selecting GSW and entering 30 evaluates GSW's latest 30 eligible
+games, with either home or away appearances counting toward 30. It does not
+select the NBA's latest 30 games and then filter to GSW. All teams uses the
+latest requested number of league games. Earlier league history remains
+available for fitting each model. The controls show how many selected-scope
+games are saved now. NBA Game Outcome workers load missing older history before
+evaluating the requested count. Other replays require the saved historical inputs.
+Missing training inputs can still cause explicit skips, without inventing forecasts.
 
 **Include playoff / postseason games** defaults to **No**. No uses only verified
 regular-season rows for both evaluation and estimation/calibration. Yes includes

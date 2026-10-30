@@ -171,6 +171,8 @@ class MispricingChecks(TestCase):
         with self.app.server.test_client() as client:
             for name in ['request_quick_filter','quick_filter_markets']:
                 key,meta=next((k,m) for k,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
+                for item in [*meta['inputs'],*meta['state']]:
+                    if item['id'].startswith('{'):values.setdefault(item['id'],[])
                 response=client.post('/_dash-update-component',json=dict(output=key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
                     inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],

@@ -231,19 +231,20 @@ class NflMarketService:
 
     def _saved(self, selected):
         try:
-            account = self.api.account_id()
+            accounts = self._accounts()
         except DataSourceError:
             return []
         # A game is read by several Dash callbacks. Reuse its saved snapshots
         # only while SQLite, exported CSVs and the credit log are unchanged.
         revision = self._saved_revision() if selected is not None and len(selected) == 1 else None
-        key = (account, tuple(sorted(selected)), revision) if revision is not None else None
+        key = (tuple(accounts), tuple(sorted(selected)), revision) if revision is not None else None
         if key is not None:
             with self._history_lock:
                 if key in self._history_cache:
                     self._history_cache.move_to_end(key)
                     return self._copy_snapshots(self._history_cache[key])
-        snapshots = self._saved_account(account, selected)
+        snapshots = sorted((snapshot for account in accounts for snapshot in self._saved_account(account, selected)),
+                           key=lambda item:item['pulled_at'], reverse=True)
         if key is not None and revision == self._saved_revision():
             with self._history_lock:
                 self._history_cache[key] = snapshots
@@ -251,6 +252,28 @@ class NflMarketService:
                 if len(self._history_cache) > 8:
                     self._history_cache.popitem(last=False)
         return self._copy_snapshots(snapshots)
+
+    def _accounts(self):
+        configured = getattr(self.api, 'account_ids', None)
+        accounts = configured() if callable(configured) else None
+        if isinstance(accounts, (list, tuple)) and accounts and all(isinstance(a,str) for a in accounts):
+            return list(dict.fromkeys(accounts))
+        return [self.api.account_id()]
+
+    @staticmethod
+    def _paying_account(response, default):
+        account = getattr(response, 'odds_account_id', None)
+        return account if isinstance(account,str) and account else default
+
+    @staticmethod
+    def _attempt_audits(response, audit, *, failed=False):
+        attempts = getattr(response, 'odds_attempts', [])
+        if not isinstance(attempts,list):return []
+        if failed and attempts and attempts[-1]['account'] == audit['account']:
+            attempts = attempts[:-1]  # The terminal failed request is audit itself.
+        return [{**audit, 'usage_id':audit['usage_id']+f':quota:{i}', 'account':attempt['account'],
+                 'headers':attempt['headers'], 'status':attempt['status']}
+                for i,attempt in enumerate(attempts)]
 
     @staticmethod
     def _copy_snapshots(snapshots):
@@ -301,7 +324,9 @@ class NflMarketService:
                 failed = db.execute(f"SELECT payload FROM {self.table} WHERE account = ? AND state = 'failed' AND payload IS NOT NULL",
                                     (account,)).fetchall()
             for (audit,) in failed:
-                self.usage_log.record(**json.loads(audit))
+                entry = json.loads(audit)
+                for attempt in entry.pop('attempts',[]):self.usage_log.record(**attempt)
+                self.usage_log.record(**entry)
         except (OSError, ValueError, csv.Error):
             raise DataSourceError("Saved markets are available, but the API credit log could not be updated. Check data/API Log folder access and CSV format; do not pull again to repair the log.") from None
         return snapshots
@@ -325,12 +350,12 @@ class NflMarketService:
         namespace = "" if self.sport == "NFL" else self.sport + ":"
         request_key = hashlib.sha256((account + ":" + namespace + str(request_id)).encode()).hexdigest()
         with self._lock, closing(self._connect()) as db:
-            previous = db.execute(f"SELECT state, payload, error FROM {self.table} WHERE request_id = ?", (request_key,)).fetchone()
+            previous = db.execute(f"SELECT state, payload, error, account FROM {self.table} WHERE request_id = ?", (request_key,)).fetchone()
             if previous:
                 if previous[0] == "done":
                     snapshot = json.loads(previous[1])
-                    self._export_csv(snapshot, account)
-                    self.usage_log.import_snapshot(snapshot, account)
+                    self._export_csv(snapshot, previous[3])
+                    self.usage_log.import_snapshot(snapshot, previous[3])
                     return snapshot
                 raise DataSourceError(previous[2] or "This pull was already submitted. It will not be repeated automatically.")
             response = self.api.get(f"sports/{self.sport_key}/events")
@@ -350,9 +375,12 @@ class NflMarketService:
                 raise DataSourceError("This pull was already submitted. No second odds request was sent.")
             taken = datetime.now(timezone.utc).isoformat(timespec="microseconds")
             paid_headers = {}
+            paid_response = None
             try:
                 response = self.api.get(f"sports/{self.sport_key}/events/{event['id']}/odds", params={
                     "bookmakers": "fanduel", "markets": ",".join(self.markets), "oddsFormat": "american", "dateFormat": "iso"})
+                account = self._paying_account(response, account)
+                paid_response = response
                 paid_headers = response.headers
                 try:
                     payload = response.json()
@@ -361,26 +389,40 @@ class NflMarketService:
                 snapshot = snapshot_data(payload, event, game["id"], response.headers, self.markets, self.sport)
                 snapshot["pulled_at"] = taken
                 snapshot["usage_log_id"] = request_key
+                snapshot['api_account_id'] = account
                 snapshot["game"] = {key: value for key, value in game.items() if key != "token"}
                 snapshot["raw_response"] = payload
+                audit = dict(usage_id=request_key, account=account, sport=self.sport, game_id=game['id'],
+                             event_id=event['id'],home_team=event['home_team'],away_team=event['away_team'],
+                             game_start=event['commence_time'],timestamp=taken,markets=list(self.markets))
+                snapshot['usage_attempts'] = self._attempt_audits(response,audit)
             except DataSourceError as exc:
+                if paid_response is not None and not hasattr(exc,'odds_attempts'):
+                    exc.odds_attempts = getattr(paid_response,'odds_attempts',[])
+                account = self._paying_account(exc, account)
                 audit = dict(usage_id=request_key, account=account, sport=self.sport, game_id=game["id"],
                              event_id=event["id"], home_team=event["home_team"], away_team=event["away_team"],
                              game_start=event["commence_time"], timestamp=taken, markets=list(self.markets),
                              headers=dict(getattr(exc, "usage_headers", paid_headers)), status="Failed / not saved")
+                if getattr(exc,'no_request_sent',False):
+                    audit.update(cost=0,status='Credits exhausted / no odds request sent')
+                attempts = self._attempt_audits(exc,audit,failed=True)
+                stored_audit = {**audit,'attempts':attempts}
                 with db:
-                    db.execute(f"UPDATE {self.table} SET state = 'failed', payload = ?, error = ? WHERE request_id = ?",
-                               (json.dumps(audit), str(exc), request_key))
+                    db.execute(f"UPDATE {self.table} SET state = 'failed', account = ?, payload = ?, error = ? WHERE request_id = ?",
+                               (account,json.dumps(stored_audit), str(exc), request_key))
                 try:
+                    for attempt in attempts:self.usage_log.record(**attempt)
                     self.usage_log.record(**audit)
                 except (OSError, ValueError, csv.Error):
                     raise DataSourceError(f"{exc} The API usage log could not be written. Check data/API Log access; do not retry this pull to repair the log.") from None
                 raise
             with db:
-                db.execute(f"UPDATE {self.table} SET state = 'done', pulled_at = ?, payload = ? WHERE request_id = ?",
-                           (snapshot["pulled_at"], json.dumps(snapshot), request_key))
+                db.execute(f"UPDATE {self.table} SET state = 'done', account = ?, pulled_at = ?, payload = ? WHERE request_id = ?",
+                           (account,snapshot["pulled_at"], json.dumps(snapshot), request_key))
             try:
                 self._export_csv(snapshot, account)
+                for attempt in snapshot['usage_attempts']:self.usage_log.record(**attempt)
                 self.usage_log.record(usage_id=request_key, account=account, sport=self.sport, game_id=game["id"],
                                       event_id=event["id"], home_team=event["home_team"], away_team=event["away_team"],
                                       game_start=event["commence_time"], timestamp=taken, markets=list(self.markets),

@@ -67,6 +67,15 @@ requests share one fetch. Failure retains the original data/timestamp and shows 
 These pages do not change model forecasts or backtesting inputs. Run
 `python scripts/check_information.py` for offline source, cache, filter and navigation checks.
 
+NBA/NFL market calculations separately use structured ESPN availability statuses
+to apply supported historical playing/nonplaying adjustments to PPP/EPA/ELO and
+WHP/UO/OAM/PGE forecasts. The **Injury & roster adjustment** panel shows the
+comparison, sample sizes, workload/scoring changes and skipped inputs. Small or
+incomplete samples retain the baseline; questionable statuses are not converted
+to arbitrary participation probabilities. Status snapshots are cached locally
+and archived before future historical use. See [availability adjustments](docs/AVAILABILITY_ADJUSTMENTS.md).
+Existing research/backtest accuracy describes the original baselines, not this overlay.
+
 Each NBA/NFL **FanDuel game → Additional Information** also shows injury and roster
 headlines matched to the two teams, merged from both team feeds and the league feed,
 with duplicate links removed. The tab works without a paid odds pull. Official injury
@@ -89,16 +98,21 @@ all teams. Choose an evaluation period/game limit, then click **Load performance
 missing simulations**. Compatible saved reports load immediately; missing methods run
 independently in the shared progress monitor and continue after navigation. Missing
 source inputs or unsupported statistics are reported per model. This page uses saved
-historical inputs and does not pull odds or download source data.
+historical inputs and never pulls odds. NBA game models prepare missing older
+history automatically before a new simulation; other sports use saved inputs.
 Reports must match the scope, statistic/reference line, postseason setting, Model Default
 lookback and current default parameters. Summaries persist under `data/backtesting/performance/`;
 method JSON/CSV results remain in the normal sport/method folders. Accuracy metrics use
-the identical evaluated observations shared by completed models by default; the sample selector
-can also show every evaluated observation per model. The table shows sample and skip
+every evaluated observation per model by default, matching each model's saved backtest.
+The sample selector can instead compare identical observations shared by completed models.
+The accuracy trend shows rolling coverage over the last up to ten observations, with an
+80% calibration target and dates plus valid range hit counts in the hover details.
+Opening results retains the selected margin/total target, error tolerance and exact comparison
+cohort; common-sample views include a link to the complete original run. The table shows sample and skip
 counts alongside MAE, RMSE, bias, tolerance accuracy, interval coverage and baseline MAE.
 Winner accuracy/Brier/log loss use the home-winner event; total-point summaries omit these
 unrelated event scores. Player event scores require a shared reference line. Each row links
-to its complete saved report. Error tolerance can be changed without refitting.
+to its saved report using the selected comparison sample. Error tolerance can be changed without refitting.
 
 **Filtered Results** (`#nba-filtered-results`, `#nfl-filtered-results`, `#ncaaf-filtered-results`)
 collects every qualifying selection from completed FanDuel and Kalshi Quick Filtering
@@ -195,9 +209,13 @@ browser tab's session. **Back to upcoming games** still opens the schedule.
 Each saved game also has a **Mispricing Filter** tab beside Game Lines and the player-prop tabs.
 **Apply Criteria** keeps its single Game Outcome and Player Forecast selectors and probability/edge
 thresholds for highlighting market tabs. **Quick Filtering** has independent thresholds and
-multi-select method dropdowns. Select at least one method of each type. Game selections must pass
-both thresholds under every selected game method; player selections must pass under every selected
-player method. A missing estimate from any required method excludes that selection. Each method's
+multi-select default method dropdowns. Expand **Methods by prompt** to select methods separately for
+each team's winner/spread, the game total, and each player's individual statistic (including combo props).
+For example, use PPP + EPA for a spread, ELO for totals, and WHP + UO for one player's points.
+**Use default methods** inherits the defaults; choosing specific methods overrides them, and clearing
+a prompt skips it. All alternate lines and sides within a prompt share its method choices. Select at least
+one default method of each type. Each selection must pass both thresholds under every method assigned
+to its prompt. A missing estimate from any required method excludes that selection. Each method's
 probability and edge are displayed, and ranking uses the lowest edge across the required methods.
 The first table shows up to three selections with the highest qualifying edge; the next
 table shows all remaining matches in descending edge order. Both thresholds must be exceeded.
@@ -228,14 +246,22 @@ count, MAE and RMSE above the plot. Hover a statistic for its definition, min/ma
 quartiles and 5th/95th percentiles. Errors are predicted minus actual; sample SD
 uses the n−1 denominator and is unavailable for a single observation. Notes below
 the error, calibration and rolling-error charts explain their interpretation.
-Individual reports use a trailing five-observation MAE; comparison charts use ten.
+Individual reports use a trailing five-observation MAE; methodology comparison error charts
+use ten. Performance Summary instead plots trailing ten-observation 80% range accuracy.
 Game calibration checks home wins, while player calibration checks Over a fixed
 reference line, excluding pushes. These are not separate calibration checks of
 every sportsbook spread, total or alternate player line.
 Game pages switch between home margin and total points. A detailed table,
 skipped-game reasons and CSV export support inspection. Reports and model replay
-caches stay in ignored `data/backtesting/`; source or odds APIs are never called
-by a run. See [backtesting details](docs/BACKTESTING.md).
+caches stay in ignored `data/backtesting/`. NBA Game Outcome dashboard runs download
+missing public historical seasons plus earlier training/calibration data, with progress
+shown in the backtest panel. Later runs reuse the saved inputs. For example, GSW + 400
+selects GSW's latest 400 eligible completed games across seasons. It does not cap a
+single saved season or a league-wide sample first. Source failures or an insufficient
+date range are reported instead of silently treating 50–60 games as the requested 400.
+NBA EPA evaluates independent box-score targets using only earlier reconciled event
+states; held-out target events are not needed. No Odds API credits are used.
+See [backtesting details](docs/BACKTESTING.md).
 
 NBA and NFL each include **Visualized In-Game Data** in the left navigation.
 Choose a season, phase, team and recorded game. NBA shots appear on a maple
@@ -312,8 +338,9 @@ preserving open market groups. Missing or slow model history does not hide marke
 
 Each game's **Mispricing Filter** tab offers PPP/EPA/ELO game methods and
 WHP/UO/OAM/PGE player methods. **Apply Criteria** retains its single-method selectors and
-thresholds. **Quick Filtering** has independent thresholds and multi-select method dropdowns,
-requiring both thresholds to pass under every selected method for that market type. Both sections
+thresholds. **Quick Filtering** has independent thresholds, default method dropdowns and a
+**Methods by prompt** section with separate choices for each team outcome or player statistic.
+Clear a prompt's methods to skip it. Both thresholds must pass under every method assigned to that prompt. Both sections
 scan all linked live categories, show the
 top three qualifying selections by edge, then the remaining matches. Applied
 criteria also highlight matching rows in the category tabs. Quick Filtering shows each method's
@@ -429,9 +456,16 @@ Saved snapshots reopen without API requests. Only public market-data endpoints
 are connected; the page does not place orders. Run
 `python scripts/check_polymarket.py` for offline discovery, pricing, snapshot and UI checks.
 
-The separate **Odds API** tab connects to your [The Odds API](https://the-odds-api.com/) account and shows monthly credit usage as a donut chart, with used, unused, and total credits. Add `ODDS_API_KEY=your_api_key_here` to the ignored `.env` file and restart `python index.py`. The key stays on the server and is never placed in browser components or stored in the usage cache.
+The separate **Odds API** tab shows combined credit usage as a donut chart, with used, unused and total credits, plus a table of each configured connection's balance, status and last check. Add your keys to the ignored `.env` file and restart `python index.py`:
 
-Usage comes from the provider's `x-requests-used` and `x-requests-remaining` headers on `GET /v4/sports/`, which [does not consume usage credits](https://the-odds-api.com/liveapi/guides/v4/#get-sports). Counters cover the subscription's current quota cycle across all sports; the app does not infer a calendar-month reset date. Usage loads when Odds API is opened, refreshes every five minutes while visible, and can be checked immediately using **Connect / Refresh usage**. The server shares a five-minute memory cache for the account. A failed refresh labels any saved snapshot explicitly; missing keys and invalid responses show setup/errors rather than invented credit values.
+```dotenv
+ODDS_API_KEY=your_primary_api_key_here
+ODDS_API_KEY_2=your_backup_api_key_here
+```
+
+The second key is optional. The app prefers the primary and switches to the backup when the provider explicitly reports [OUT_OF_USAGE_CREDITS](https://the-odds-api.com/liveapi/guides/v4/api-error-codes.html#out-of-usage-credits), or an already reported balance is exhausted. It rechecks an exhausted allowance through the free sports endpoint after five minutes and prefers the primary again when its credits replenish. Timeouts, rate limits, invalid keys, malformed responses and potentially charged errors do not trigger a duplicate paid request. If both allowances are exhausted, the pull stops. Identical key values are counted only once. Keys stay on the server; browser components, snapshots and credit logs contain no raw credentials.
+
+Usage comes from each key's `x-requests-used` and `x-requests-remaining` headers on `GET /v4/sports/`, which [does not consume usage credits](https://the-odds-api.com/liveapi/guides/v4/#get-sports). Counters cover each subscription's current quota cycle across all sports; the app does not infer a reset date or assume that both subscriptions reset together. Usage loads when Odds API is opened, refreshes every five minutes while visible, and can be checked immediately using **Connect / Refresh usage**. Each connection has its own five-minute memory cache. A failed refresh labels saved counters explicitly; if a key's balance is unknown, combined totals are labeled partial and sum only reported balances.
 
 FanDuel Market loads public ESPN schedules without an API key. Choose a 7- or 14-day window to see dated cards with away/home teams, EDT start times (`MM/DD/YYYY HH:MM:SS EDT`, or Time TBD), venues, neutral-site labels, and game-detail links. Games are grouped by their displayed EDT calendar date, including evening games after midnight UTC. Live, completed, canceled, and postponed games are excluded. The FanDuel link opens the selected sport's sportsbook page. **NBA, NFL and NCAAF** cards offer **Pull Live Markets** beside **Game details**, saved snapshots and dedicated game views.
 
@@ -477,7 +511,7 @@ Market snapshots live in **`data/market_data`**. The former top-level `market_da
 
 The Excel-readable credit ledger is **`data/API Log/api_credit_usage.csv`**. Each paid pull records its sport, matchup, game/event IDs, requested markets, exact `x-requests-last` credit charge, account counters when reported, timestamp in UTC and formatted EDT, and outcome. Missing charges remain blank and are labeled **Unreported** in the dashboard; they are never replaced with an estimated maximum. A request that fails after being sent is recorded as failed, with its reported charge or an unknown charge. Account identifiers are irreversible fingerprints; API keys are never written to this file. Generated snapshots and logs are ignored by Git.
 
-The **Odds API** page places a current-month NBA/NFL/NCAAF composition pie beside the account quota donut, followed by per-sport monthly credit metrics, an all-history daily usage line chart, and a searchable, sortable table with CSV export. These reports read the local ledger without paid API requests. Calendar months and daily totals use EDT (UTC-4); timestamps display as `MM/DD/YYYY HH:MM:SS EDT`. Unknown charges are excluded from chart totals and explicitly counted. Activity outside this app remains reflected in the provider's quota donut, but cannot be attributed to a sport in the local ledger.
+The **Odds API** page places a current-month NBA/NFL/NCAAF composition pie beside the combined quota donut, followed by per-sport monthly credit metrics, an all-history daily usage line chart, and a searchable, sortable table with CSV export and an API connection column. These reports combine the local ledger for both configured keys without paid API requests. Charges and failed quota attempts are attributed to the key that made each request; quota failover does not change the click's duplicate-request guard. Calendar months and daily totals use EDT (UTC-4); timestamps display as `MM/DD/YYYY HH:MM:SS EDT`. Unknown charges are excluded from chart totals and explicitly counted. Activity outside this app remains reflected in provider counters, but cannot be attributed to a sport in the local ledger. Run `python scripts/check_odds_accounts.py` for offline failover, quota, persistence and credential-isolation checks.
 
 Existing saved NBA and NFL snapshots are imported into the ledger without making API requests. Reopening a saved game, repeating the same click, or restarting the app does not create duplicate log entries. The SQLite snapshot index can recover missing log entries without another paid pull. NBA pulls are logged as NBA and included in the same usage charts and history table. The ledger and reports support all three sports.
 
@@ -539,7 +573,7 @@ After a pull, the game card only updates **Latest data** directly beneath **Game
 
 Each pull writes a separate CSV in **`data/market_data`**, for example `nfl_sf_wsh_2026-10-19_20261019T233523000000Z.csv`. The filename is `nfl_<home abbreviation>_<away abbreviation>_<Eastern game date>_<UTC snapshot timestamp>.csv`. Every outcome gets a row with event IDs, teams, abbreviations, game date, snapshot time, market category/key, player/team, selection, line, American odds, and source update time. The first row also includes snapshot metadata and the complete original API response as JSON cells, preserving source fields beyond the displayed markets. Existing SQLite-only pulls are exported from the fields already saved; the original API response cannot be reconstructed if it was not previously retained.
 
-Saved CSVs are loaded on the next visit without an API request, including when the SQLite index is missing. The existing `data/cache/nfl_markets.sqlite3` remains a secondary snapshot index and duplicate-request guard. Both stores are scoped to the connected account, and generated CSVs are ignored by Git. Keep the same `ODDS_API_KEY` configured to reopen that account's saved data. Game-detail links such as `#nfl-game-401873011` can be bookmarked and restore the NFL market view after reopening the app.
+Saved CSVs are loaded on the next visit without an API request, including when the SQLite index is missing. The existing `data/cache/nfl_markets.sqlite3` remains a secondary snapshot index and duplicate-request guard. Stores retain the actual paying account's fingerprint; history includes both configured keys, so switching to the backup does not hide primary-key snapshots. Generated CSVs are ignored by Git. Keep a key configured in either slot to reopen its saved data. Game-detail links such as `#nfl-game-401873011` can be bookmarked and restore the NFL market view after reopening the app.
 
 Only the button initiates a paid request. Opening pages, refreshing schedules, switching snapshots/categories, and expanding saved markets do not pull odds. The clicked button is disabled while loading; identical click identifiers are deduplicated across app restarts. A failed or timed-out paid request is not automatically retried, since its charge may already have been applied. Another deliberate click requests a fresh snapshot. Unmatched or ambiguous games are rejected before any paid request.
 

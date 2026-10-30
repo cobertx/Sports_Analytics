@@ -15,7 +15,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from models.replay import calibration_tail, cached_calculation, replay_cache, fingerprint
-from sports_analytics.backtesting_service import BacktestingService, estimation_history, game_model
+from sports_analytics.backtesting_service import BacktestingService, estimation_history, game_model, eligible_pairs
 from models.Player_Stats.Weighted_Historical_Performance.core import WHPConfig, WeightedHistoricalPerformance, eligible_history
 from models.Player_Stats.Usage_Opportunity.historical_data import UsageHistoryRepository
 from models.Player_Stats.Pace_Game_Environment.config import PaceConfig
@@ -60,6 +60,125 @@ def saved_game_report(run_id='a'*64,created='2025-10-01T12:00:00Z'):
 
 
 class ReplayChecks(TestCase):
+    def test_prediction_timeline_omits_offseason_gaps_and_retains_dates_and_intervals(self):
+        from copy import deepcopy
+        from sports_analytics.backtesting_results import render
+        from sports_analytics.display_time import format_eastern
+        dates=['2025-04-10T00:00:00Z','2025-04-12T00:00:00Z',
+               '2025-10-21T00:00:00Z','2025-10-21T02:00:00Z']
+        for sport in ('NBA','NFL','NCAAF'):
+            for group,target in [('game-outcome','margin'),('game-outcome','total'),('player-stats','margin')]:
+                with self.subTest(sport=sport,group=group,target=target):
+                    source=saved_game_report()
+                    source['context'].update(sport=sport,group=group,market='player_points',limit=4)
+                    source['records']=[dict(source['records'][i%2],game_id=str(i),date=stamp,
+                        actual=10.,predicted=9.,baseline=8.,lower=8.,upper=10.,interval_level=.8,
+                        margin_sd=.01 if i==2 else 10.,total_sd=.01 if i==2 else 20.) for i,stamp in enumerate(dates)]
+                    source['attempted']=4;original=deepcopy(source)
+                    content=render(source,target)
+                    grid=next(c for c in content.children if getattr(c,'className','')=='backtest-chart-grid')
+                    timeline=next(c.children[0].figure for c in grid.children
+                                  if c.children[0].figure.layout.title.text=='Predicted vs. actual over time')
+                    self.assertEqual(timeline.layout.xaxis.type,'linear')
+                    self.assertEqual(list(timeline.layout.xaxis.tickvals),[1,2,3,4])
+                    self.assertEqual(list(timeline.data[2].x),[1,2,3,4])
+                    self.assertTrue(all(list(trace.x)==[1,2,3,4] for trace in timeline.data[:3]))
+                    expected=[format_eastern(stamp) for stamp in dates]
+                    self.assertEqual([row[0] for row in timeline.data[2].customdata],expected)
+                    self.assertEqual(sorted(x for trace in timeline.data[3:] for x in trace.x),[1,2,3,4])
+                    for trace in timeline.data[3:]:
+                        for x,custom in zip(trace.x,trace.customdata):
+                            self.assertEqual(custom[0],expected[x-1])
+                            self.assertEqual(custom[1],timeline.data[0].y[x-1])
+                            self.assertEqual(custom[2],timeline.data[1].y[x-1])
+                    self.assertEqual(source,original)
+
+    def test_team_game_limit_counts_home_and_away_games_before_replaying_every_model(self):
+        frame=team_history().assign(season_type='regular')
+        # A alternates home/away; unrelated C/D games fill half the league sample.
+        flip=frame.game_id.str.endswith('-0') & frame.game_id.str[:2].astype(int).mod(2).eq(1)
+        frame.loc[flip,'is_home']=1-frame.loc[flip,'is_home']
+        frame=frame.sample(frac=1,random_state=13)
+        with tempfile.TemporaryDirectory() as directory:
+            service=BacktestingService(root=directory,now=lambda:pd.Timestamp('2026-01-01',tz='UTC'))
+            service.game_inputs=lambda sport,key:(frame.copy(),None)
+            def evaluate(result,model,history,dataset,games,progress):
+                pd.testing.assert_frame_equal(history,frame,check_dtype=False)  # Full league training inputs remain intact.
+                for pair in games:
+                    row=dict(saved_game_report()['records'][0])
+                    row.update(game_id=str(pair.iloc[0].game_id),date=pair.event_date.min().isoformat(),
+                        actual=5.,predicted=4.,baseline=3.,lower=-10.,upper=20.,interval_level=.8)
+                    result['records'].append(row)
+            with patch.object(service,'_games',side_effect=evaluate),patch(
+                    'sports_analytics.backtesting_service.implementation_signature',return_value='scope-test'):
+                for sport in ('NBA','NFL','NCAAF'):
+                    for key in ('ppp','epa','elo'):
+                        with self.subTest(sport=sport,key=key):
+                            for scope in (dict(entity='A'),dict(entity='__all__',team_filter='A')):
+                                result=service.run(sport,'game-outcome',key,limit=3,**scope)
+                                self.assertEqual([r['game_id'] for r in result['records']],['19-0','20-0','21-0'])
+                                self.assertEqual(result['attempted'],3)
+                                self.assertEqual(result['context']['entity'],'A')
+                            self.assertEqual(service.available_games(sport,'game-outcome',key,'__all__',team_filter='A'),22)
+                league=service.run('NBA','game-outcome','ppp',limit=3)
+                self.assertEqual([r['game_id'] for r in league['records']],['20-1','21-0','21-1'])
+                fewer=service.run('NBA','game-outcome','ppp',entity='A',limit=100)
+                self.assertEqual(fewer['attempted'],22)
+
+    def test_team_sample_respects_dates_and_complete_available_pairs(self):
+        frame=team_history().assign(season_type='regular')
+        lower=pd.Timestamp('2025-09-20',tz='UTC');upper=pd.Timestamp('2025-10-02',tz='UTC')
+        now=pd.Timestamp('2026-01-01',tz='UTC')
+        # An incomplete latest pair and a result not yet available cannot consume the cap.
+        frame=frame[~(frame.game_id.eq('20-0')&frame.team.eq('B'))].copy()
+        frame.loc[frame.game_id.eq('19-0')&frame.team.eq('B'),'available_at']=now
+        games=eligible_pairs(frame,'A',lower,upper,now,limit=2)
+        self.assertEqual([g.iloc[0].game_id for g in games],['17-0','18-0'])
+        self.assertTrue(all(len(g)==2 for g in games))
+
+    def test_player_team_scope_and_single_player_limits_use_latest_appearances(self):
+        frame=team_history().rename(columns={'team':'entity_name'}).assign(season_type='regular')
+        frame['entity_id']=frame.entity_name;frame['team']=frame.entity_name.map(dict(A='TARGET',B='TARGET',C='OTHER',D='OTHER'))
+        frame['pts']=frame.points
+        # The target team's final games precede the newest unrelated league games.
+        frame=frame[~frame.entity_name.isin(['A','B'])|frame.game_id.str[:2].astype(int).le(18)]
+        frame=frame.sample(frac=1,random_state=7)
+        with tempfile.TemporaryDirectory() as directory:
+            service=BacktestingService(root=directory,now=lambda:pd.Timestamp('2026-01-01',tz='UTC'))
+            service.player_inputs=lambda sport:frame.copy()
+            def evaluate(result,sport,key,history,selected,games,spec,market,line,progress):
+                self.assertEqual(set(history.entity_id),{'A','B','C','D'})
+                for g in games:
+                    result['records'].append(dict(game_id=g.game_id,date=g.event_date.isoformat(),label=g.entity_name,
+                        actual=float(g.value),predicted=10.,baseline=10.,lower=0.,upper=100.,interval_level=.8))
+            with patch.object(service,'_players',side_effect=evaluate),patch(
+                    'sports_analytics.backtesting_service.implementation_signature',return_value='scope-test'),patch(
+                    'sports_analytics.backtesting_service.source_revisions',return_value=[]):
+                for key in ('whp','uo','oam','pge'):
+                    with self.subTest(key=key):
+                        result=service.run('NBA','player-stats',key,'__all__','player_points',team_filter='TARGET',limit=3)
+                        self.assertEqual([r['game_id'] for r in result['records']],['16-0']*2+['17-0']*2+['18-0']*2)
+                        self.assertEqual({r['label'] for r in result['records']},{'A','B'})
+                        own=service.run('NBA','player-stats',key,'A','player_points',limit=3)
+                        self.assertEqual([r['game_id'] for r in own['records']],['16-0','17-0','18-0'])
+
+    def test_game_count_note_explains_team_scope_and_insufficient_saved_games(self):
+        from sports_analytics.dashboard import create_app
+        service=BacktestingService()
+        app=create_app(backtesting_service=service)
+        callback=next(m['callback'].__wrapped__ for m in app.callback_map.values()
+                      if m.get('callback') and m['callback'].__wrapped__.__name__=='backtest_available')
+        with patch.object(service,'available_games',return_value=86):
+            context=dict(sport='NBA',group='game-outcome',model='ppp')
+            note=callback(context,'GSW',None,None,None,'exclude')
+            self.assertIn('86 saved games available for GSW',note)
+            self.assertIn('latest games within this scope',note)
+            self.assertIn('download automatically',note)
+            # Editing the cap must not reread/rank every saved player appearance.
+            metadata=next(m for m in app.callback_map.values() if m.get('callback') and
+                          m['callback'].__wrapped__.__name__=='backtest_available')
+            self.assertNotIn('backtest-limit',[item['id'] for item in metadata['inputs']])
+
     def test_error_distribution_statistics_follow_saved_report_targets(self):
         from sports_analytics.backtesting_results import render,error_distribution,figure,error_summary
         source=saved_game_report()

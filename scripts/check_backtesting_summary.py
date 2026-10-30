@@ -14,7 +14,7 @@ from dash import no_update
 from dash.exceptions import PreventUpdate
 from sports_analytics.dashboard import create_app
 from sports_analytics.backtesting_service import BacktestingService
-from sports_analytics.backtesting_view import available_models,navigation,summary_route
+from sports_analytics.backtesting_view import available_models,navigation,summary_route,summary_href
 from sports_analytics.backtesting_summary import catalog
 from check_backtesting import saved_game_report
 
@@ -80,6 +80,19 @@ class BacktestSummaryChecks(TestCase):
                      '#backtesting-summary-nba-player-stats-ppp-'+'a'*64,
                      '#backtesting-summary-nba-game-outcome-ppp-../report',self.href()+'?bad=1']:
             self.assertIsNone(summary_route(href))
+
+    def test_comparison_links_initialize_the_selected_target_and_reject_invalid_scope(self):
+        report=self.reports['NBA','game-outcome','elo']
+        href=summary_href(report['context'],'elo',report['run_id'],'total',tolerance=7)
+        values={'market-url':href}
+        selected=self.post('backtest_summary_target',values,'market-url.hash')
+        self.assertEqual(selected['backtest-summary-target']['value'],'total')
+        self.assertEqual(self.cb['restore_game_route'](href),('NBA','backtesting'))
+        for suffix in ('?target=bogus','?target=total&target=margin','?basis=other',
+                       '?basis=common','?tolerance=nan','?tolerance=-1',
+                       '?basis=all&reports=elo:'+report['run_id'],
+                       '?basis=common&reports=elo:'+'f'*64):
+            self.assertIsNone(summary_route(self.href(key='elo')+suffix))
 
     def test_all_methods_research_legacy_and_archives_are_listed_once_per_sport(self):
         for sport in ['NBA','NFL','NCAAF']:

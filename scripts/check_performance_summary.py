@@ -16,10 +16,10 @@ from dash.exceptions import PreventUpdate
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from sports_analytics.backtesting_service import BacktestingService,NFL_PLAYER_COHORT
-from sports_analytics.backtesting_view import GROUPS,available_models,model_config,navigation,page,PERFORMANCE_ROUTE
+from sports_analytics.backtesting_view import GROUPS,available_models,model_config,navigation,page,PERFORMANCE_ROUTE,summary_route
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
-from sports_analytics.performance_summary import PerformanceSummaries,settings,render,range_accuracy
+from sports_analytics.performance_summary import PerformanceSummaries,settings,render,range_accuracy,comparison_charts
 from check_backtesting import saved_game_report
 from check_kalshi import components
 
@@ -78,6 +78,77 @@ class PerformanceSummaryChecks(TestCase):
             if identity in values and len(props)==1:values[identity]=next(iter(props.values()))
         return payload
 
+    def test_elo_coverage_matches_opened_results_for_full_and_common_samples(self):
+        for key in ('ppp','epa','elo'):
+            report=self.seed(key)
+            count=500 if key=='elo' else 409
+            prototype=report['records'][0]
+            report['records']=[dict(prototype,game_id=str(i),date=(pd.Timestamp('2025-01-01',tz='UTC')+pd.Timedelta(hours=i)).isoformat(),
+                actual_total=210,predicted_total=210 if i<335 or 409<=i<489 else 310,total_sd=1,
+                actual_margin=10,predicted_margin=10,margin_sd=1) for i in range(count)]
+            report['attempted']=count;report['skipped']=[]
+            path=self.backend.root/'nba/game-outcome'/key/(report['run_id']+'.json')
+            path.write_text(json.dumps(dict(result=report)),encoding='utf-8')
+        manifest=self.manager.latest(self.context,'total','__all__')
+        before={str(p):p.read_bytes() for p in self.backend.root.rglob('*.json')}
+        app,callbacks=self.app()
+        basis_control=next(c for c in components(app.layout) if getattr(c,'id',None)=='performance-basis')
+        self.assertEqual(basis_control.value,'all')
+        with patch.object(self.backend,'start',side_effect=AssertionError('Do not rerun saved backtests')):
+            for basis,rate,count,hits in [('all','83.0%',500,415),('common','81.9%',409,335)]:
+                content=render(self.manager,manifest,'total',7,basis)
+                summary=next(row for row in performance_rows(content) if 'ELO' in row['Model'])
+                self.assertEqual(summary['Accuracy (80% range)'],rate)
+                self.assertEqual(summary['80% range hits / samples'],f'{hits} / {count}')
+                href=next(c.href for c in components(content) if getattr(c,'children',None)=='Open results' and '-elo-' in c.href)
+                route=summary_route(href)
+                self.assertEqual(route['target'],'total');self.assertEqual(route['basis'],basis)
+                if basis=='common':self.assertEqual(set(route['reports']),{'ppp','epa','elo'})
+                self.assertEqual(callbacks['restore_game_route'](href),('NBA','backtesting'))
+                self.assertEqual(callbacks['backtest_summary_target'](href),'total')
+                detail,settings,status,disabled,_,_=callbacks['backtest_summary_result']('backtesting','NBA',href,'total')
+                self.assertFalse(disabled)
+                card=next(c for c in components(detail) if getattr(c,'className',None)=='kpi' and c.children[0].children=='80% INTERVAL COVERAGE')
+                self.assertEqual(card.children[1].children,rate)
+                aside=next(c for c in components(detail) if getattr(c,'className',None)=='backtest-coverage')
+                self.assertEqual(aside.children[0].children,rate)
+                self.assertEqual(len(next(c for c in components(detail) if c.__class__.__name__=='DataTable').data),count)
+                with patch('sports_analytics.backtesting_summary.ctx',SimpleNamespace(triggered_id='backtest-summary-export')):
+                    download=callbacks['backtest_summary_export'](1,'backtesting','NBA',href,'total')
+                from io import StringIO
+                self.assertEqual(len(pd.read_csv(StringIO(download['content']))),count)
+                self.assertEqual(download['filename'].startswith('common_'),basis=='common')
+                if basis=='common':
+                    self.assertIn('409 of 500',status)
+                    full=next(c.href for c in components(settings) if getattr(c,'children',None)=='Open the complete saved backtest')
+                    self.assertEqual(summary_route(full)['basis'],'all')
+                    saved_reports=self.manager.reports(manifest)
+                    with patch.object(self.backend,'saved',side_effect=lambda sport,group,key,run:None if key=='epa' else saved_reports.get(key)):
+                        # Missing cohort inputs must never silently change the result to full-sample coverage.
+                        missing=callbacks['backtest_summary_result']('backtesting','NBA',href,'total')
+                        self.assertTrue(missing[3]);self.assertIn('unavailable',missing[2])
+        self.assertEqual(before,{str(p):p.read_bytes() for p in self.backend.root.rglob('*.json')})
+
+    def test_linked_coverage_uses_identical_valid_ranges_for_player_results(self):
+        context=dict(sport='NBA',group='player-stats');request=settings(context,'player_points','__all__',10)
+        report=self.seed('whp',request,context)
+        base=report['records'][0]
+        report['records']=[dict(base,game_id=str(i),actual=actual,lower=lower,upper=upper)
+                           for i,(actual,lower,upper) in enumerate([(10,10,20),(20,10,20),(21,10,20),(15,None,20)])]
+        path=self.backend.root/'nba/player-stats/whp'/(report['run_id']+'.json')
+        path.write_text(json.dumps(dict(result=report)),encoding='utf-8')
+        manifest=self.manager.latest(context,'player_points','__all__')
+        content=render(self.manager,manifest,'player_points',5)
+        summary=performance_rows(content)[0]
+        self.assertEqual(summary['Accuracy (80% range)'],'66.7%')
+        self.assertEqual(summary['80% range hits / samples'],'2 / 3')
+        href=next(c.href for c in components(content) if getattr(c,'children',None)=='Open results')
+        _,callbacks=self.app()
+        detail=callbacks['backtest_summary_result']('backtesting','NBA',href,'margin')[0]
+        aside=next(c for c in components(detail) if getattr(c,'className',None)=='backtest-coverage')
+        self.assertEqual(aside.children[0].children,'66.7%')
+        self.assertEqual(aside.children[2].children,'2 of 3 actuals with valid ranges')
+
     def test_latest_history_uses_newest_nonempty_saved_report_per_model_and_retains_original_settings(self):
         for sport in ['NBA','NFL','NCAAF']:
             context=dict(sport=sport,group='game-outcome')
@@ -131,7 +202,7 @@ class PerformanceSummaryChecks(TestCase):
             self.assertEqual(values['performance-limit'],10)
             self.assertEqual(values['performance-state']['source'],'latest-saved')
             payload=self.post_callback(app,'performance_results',values,'performance-state.data')
-            self.assertIn('Recent forecast error by model',str(payload))
+            self.assertIn('Recent 80% range accuracy by model',str(payload))
             values['performance-team']='BOS'
             self.post_callback(app,'performance_load',values,'performance-team.value')
             self.assertEqual(values['performance-limit'],20)
@@ -164,14 +235,14 @@ class PerformanceSummaryChecks(TestCase):
         self.assertEqual(values['performance-state']['id'],pending['id'])
         self.assertTrue(any(e['state']=='running' for e in values['performance-state']['entries'].values()))
 
-    def test_comparison_charts_plot_coverage_error_and_chronological_rolling_error_from_the_same_sample(self):
+    def test_comparison_charts_plot_coverage_error_and_chronological_rolling_accuracy_from_the_same_sample(self):
         reports={key:self.seed(key) for key in ['ppp','epa']}
         for report in reports.values():
             for index,row in enumerate(report['records']):
                 row.update(predicted_margin=row['actual_margin']+10*index,margin_sd=1)
         manager=SimpleNamespace(reports=lambda _:reports)
         manifest=dict(context=self.context,settings=self.request,entries={key:dict(state='completed') for key in reports})
-        content=render(manager,manifest,'margin',5)
+        content=render(manager,manifest,'margin',5,'common')
         charts=[c.figure for c in components(content) if c.__class__.__name__=='Graph']
         self.assertEqual(len(charts),3)
         self.assertEqual(list(charts[0].data[0].y),[.5,.5])
@@ -179,15 +250,46 @@ class PerformanceSummaryChecks(TestCase):
         self.assertEqual(list(charts[1].data[0].y),[5,5])
         self.assertAlmostEqual(charts[1].data[1].y[0],50**.5)
         self.assertEqual(list(charts[1].data[2].y),[2.5,2.5])
-        self.assertEqual(list(charts[2].data[0].y),[0,5])
+        self.assertEqual(list(charts[2].data[0].y),[1,.5])
+        self.assertEqual(list(charts[2].data[0].x),[1,2])
+        self.assertEqual(charts[2].data[0].customdata[-1][3],'1 / 2')
+        self.assertEqual(charts[2].layout.shapes[0].y0,.8)
+        self.assertEqual(charts[2].layout.yaxis.tickformat,'.0%')
         self.assertIn('same shared observations',str(content))
         full=render(manager,manifest,'margin',5,'all')
         self.assertIn('equal positions can represent different games',str(full))
         reports['epa']['records'][0]['game_id']='another-game'
         reports['epa']['records']=reports['epa']['records'][:1]
-        empty=render(manager,manifest,'margin',5)
+        empty=render(manager,manifest,'margin',5,'common')
         self.assertIn('No shared evaluated observations to plot',str(empty))
         self.assertFalse(any(c.__class__.__name__=='Graph' for c in components(empty)))
+
+    def test_accuracy_trend_rolls_ten_observations_and_excludes_invalid_or_other_level_ranges(self):
+        rows=[dict(actual=10,lower=10,upper=20,interval_level=.8,date=pd.Timestamp('2026-01-01',tz='UTC'),label='Player')
+              for _ in range(12)]
+        rows[0]['interval_level']=.9
+        rows[2]['lower']=None
+        rows[3]['upper']=float('nan')
+        rows[4].update(lower=20,upper=10)
+        rows[6]['actual']=21
+        rows[10]['actual']=20
+        rows[11]['date']=pd.Timestamp('2026-10-01',tz='UTC')
+        metric=dict(method='WHP',label='Player points',compared=12,**range_accuracy(rows))
+        content=comparison_charts(dict(records={'whp':rows}),{'whp':metric},'all')
+        chart=[c.figure for c in components(content) if c.__class__.__name__=='Graph'][2]
+        self.assertEqual(list(chart.data[0].x),list(range(1,13)))
+        self.assertIsNone(chart.data[0].y[0])
+        self.assertEqual(chart.data[0].y[1],1)
+        self.assertAlmostEqual(chart.data[0].y[10],6/7)
+        self.assertAlmostEqual(chart.data[0].y[11],6/7)
+        self.assertEqual(chart.data[0].customdata[11][2:],[10,'6 / 7'])
+        self.assertIn('09/30/2026',chart.data[0].customdata[11][0])
+        self.assertFalse(chart.data[0].connectgaps)
+        for row in rows:row['interval_level']=.9
+        empty=comparison_charts(dict(records={'whp':rows}),{'whp':{**metric,**range_accuracy(rows)}},'all')
+        chart=[c.figure for c in components(empty) if c.__class__.__name__=='Graph'][2]
+        self.assertTrue(all(value is None for value in chart.data[0].y))
+        self.assertTrue(any('No valid 80% ranges' in note.text for note in chart.layout.annotations))
 
     def test_matching_completed_reports_load_without_starting_jobs_and_reuse_the_manifest(self):
         for key in ['ppp','epa','elo']:self.seed(key)
@@ -250,7 +352,7 @@ class PerformanceSummaryChecks(TestCase):
         path=self.backend.root/'nba/game-outcome/epa'/(changed['run_id']+'.json')
         path.write_text(json.dumps(dict(result=changed)),encoding='utf-8')
         manifest=self.manager.ensure(self.context,self.request,'__all__')
-        content=render(self.manager,manifest,'total',5)
+        content=render(self.manager,manifest,'total',5,'common')
         self.assertIn('1 identical evaluated',str(content));self.assertIn('MAE',str(content))
         self.assertNotIn('Winner accuracy',str(content));self.assertNotIn('Brier score',str(next(c for c in components(content) if c.__class__.__name__=='Thead')))
         rows=performance_rows(content)
@@ -258,7 +360,7 @@ class PerformanceSummaryChecks(TestCase):
         self.assertTrue(all(row['MAE']=='2.000' for row in rows))
         self.assertEqual(list(rows[0])[2],'Accuracy (80% range)')
         self.assertTrue(all(row['Accuracy (80% range)']=='100.0%' for row in rows))
-        margin=render(self.manager,manifest,'margin',5)
+        margin=render(self.manager,manifest,'margin',5,'common')
         self.assertIn('Winner accuracy',str(margin));self.assertIn('Open results',str(margin));self.assertIn('100.0%',str(margin))
         full=render(self.manager,manifest,'margin',5,'all')
         self.assertEqual([row['Compared'] for row in performance_rows(full)],['2','1','2'])
@@ -289,11 +391,11 @@ class PerformanceSummaryChecks(TestCase):
             manager=SimpleNamespace(reports=lambda _:reports)
             manifest=dict(context=context,settings=self.request,
                           entries={key:dict(state='completed') for key in reports})
-            common=performance_rows(render(manager,manifest,'margin',5))
+            common=performance_rows(render(manager,manifest,'margin',5,'common'))
             self.assertEqual([row['Accuracy (80% range)'] for row in common[:2]],['0.0%','0.0%'])
             self.assertEqual([row['80% range hits / samples'] for row in common[:2]],['0 / 1','0 / 1'])
             self.assertEqual(common[0]['Winner accuracy'],'100.0%')
-            total=performance_rows(render(manager,manifest,'total',5))
+            total=performance_rows(render(manager,manifest,'total',5,'common'))
             self.assertEqual([row['Accuracy (80% range)'] for row in total[:2]],['100.0%','100.0%'])
             full=performance_rows(render(manager,manifest,'winner',5,'all'))
             self.assertEqual([row['Accuracy (80% range)'] for row in full[:2]],['50.0%','0.0%'])
