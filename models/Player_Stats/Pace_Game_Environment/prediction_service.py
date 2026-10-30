@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
+from models.replay import replay_instance
 
 from sports_analytics.data import DataSourceError
 from sports_analytics.nba_markets import NBA_TEAM_CODES
@@ -51,9 +52,10 @@ class PaceMarketForecast(UsageMarketForecast):
 
 
 class PaceGameEnvironmentMarketService:
-    def __init__(self, repository=None, config=None):
+    def __init__(self, repository=None, config=None, *, persist=True):
         self.repository = repository or PaceHistoryRepository()
         self.config = config
+        self.persist = persist
 
     def prepare(self, snapshot, refresh=False):
         return self.repository.prepare(snapshot['sport'], snapshot['commence_time'],
@@ -63,7 +65,7 @@ class PaceGameEnvironmentMarketService:
         sport = snapshot['sport']
         if sport == 'NCAAF':
             from models.Player_Stats.Usage_Opportunity.ncaaf_model import CollegePlayerMarketService
-            return CollegePlayerMarketService('PGE',self.repository,self.config).forecast(snapshot)
+            return CollegePlayerMarketService('PGE',self.repository,self.config,persist=self.persist).forecast(snapshot)
         config = self.config or PaceConfig.for_sport(sport)
         if sport not in {'NBA', 'NFL'}:
             raise DataSourceError('Pace & Game Environment is currently available for NBA and NFL only.')
@@ -96,7 +98,7 @@ class PaceGameEnvironmentMarketService:
                                   ['game_id', 'home_team', 'away_team', 'pulled_at', 'commence_time', 'rows']})
         digest = sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         destination = self.repository.root/'forecasts'/sport.lower()/f'{digest}.json'
-        if destination.exists():
+        if self.persist and destination.exists():
             try:
                 cached = json.loads(destination.read_text(encoding='utf-8'))
                 if cached['identity'] == identity:
@@ -106,7 +108,7 @@ class PaceGameEnvironmentMarketService:
             except (KeyError, ValueError, TypeError):
                 pass
         volumes = volume_rows(sport,all_teams)
-        model = PaceModel(config).fit(volumes)
+        model = replay_instance(PaceModel, config).fit(volumes)
         valid_keys = set(zip(volumes.game_id,volumes.team))
         teams = teams[[ (str(r.game_id),r.team) in valid_keys for _,r in teams.iterrows() ]].copy()
         result, matched, failed_players = PaceMarketForecast(), {}, {}
@@ -169,6 +171,8 @@ class PaceGameEnvironmentMarketService:
                                'as_of': cutoff.isoformat(), 'input_sha256': fingerprint,
                                'implementation': signature, 'config': asdict(config)}
                 result.forecasts[key] = PaceForecast.from_samples(values, diagnostics)
+        if not self.persist:
+            return result
         evaluations = []
         indexed_quotes = quote_index(snapshot['rows'])
         for row in snapshot['rows']:

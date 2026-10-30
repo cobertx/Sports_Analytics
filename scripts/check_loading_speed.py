@@ -68,6 +68,45 @@ class LoadingSpeedChecks(TestCase):
         self.assertEqual(service.read(second[0]['key']).frame.pts.iloc[0],40.)
         print(f'Historical cached page: {1000*elapsed:.1f} ms while source was blocked.')
 
+    def test_first_history_visit_returns_while_download_is_blocked_and_polls_once(self):
+        service,query,frame=self.history()
+        with service.connect() as db:db.execute('DELETE FROM datasets')
+        entered,release=Event(),Event()
+        def slow(*args):
+            entered.set()
+            if not release.wait(5):raise AssertionError('Source was not released')
+            return frame
+        app=create_app(service=service)
+        cb=next(m['callback'].__wrapped__ for m in app.callback_map.values() if m.get('callback') and m['callback'].__wrapped__.__name__=='load_data')
+        def load(previous=None):
+            with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='historical-cache-poll')):
+                return cb(0,0,'NBA',2025,'player','regular',None,None,'historical',previous,'#historical-player',1)
+        with patch('sports_analytics.service.fetch',side_effect=slow) as source:
+            try:
+                started=perf_counter();first=load();elapsed=perf_counter()-started
+                self.assertLess(elapsed,1)
+                self.assertIsNone(first[0]);self.assertTrue(first[4]);self.assertTrue(entered.wait(2))
+                for _ in range(3):self.assertTrue(load()[4])
+                source.assert_called_once_with(query)
+            finally:release.set()
+            service._refresh.tasks.join()
+            ready=load()
+        self.assertFalse(ready[4]);self.assertIsNotNone(ready[0])
+        self.assertEqual(service.read(ready[0]['key']).frame.pts.iloc[0],25.)
+        print(f'First historical visit: {1000*elapsed:.1f} ms while initial download was blocked.')
+
+    def test_cold_history_source_failure_stops_pending_and_refresh_can_retry(self):
+        service=DataService(self.root/'cold.sqlite3');self.queue(service)
+        query=Query('NBA',2025,'player')
+        with patch('sports_analytics.service.fetch',side_effect=DataSourceError('Source offline')):
+            self.assertEqual(service.load(query,local_first=True).status,'loading cache')
+            service._refresh.tasks.join()
+            with self.assertRaisesRegex(DataSourceError,'Source offline'):service.load(query,local_first=True)
+        frame=pd.DataFrame(dict(entity_id=['1'],position=['G'],matchup=['A @ B'],pts=[20]))
+        with patch('sports_analytics.service.fetch',return_value=frame):
+            self.assertEqual(service.load(query,refresh=True,local_first=True).status,'downloaded')
+        self.assertEqual(service.load(query,local_first=True).frame.pts.iloc[0],20)
+
     def test_refresh_failure_preserves_original_timestamp_backs_off_and_manual_refresh_bypasses_it(self):
         service,query,frame=self.history()
         with patch('sports_analytics.service.fetch',side_effect=DataSourceError('Offline')) as source:

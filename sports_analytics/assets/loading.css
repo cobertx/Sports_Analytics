@@ -1,10 +1,12 @@
 /* Feedback stays at the beginning of its own result, never over the page. */
 .action-loading { position: relative; min-width: 0; }
 .action-loading > .action-loading { padding-top: 28px; min-height: 28px; }
-.action-loading > div:last-child { pointer-events: none; }
+/* Only the overlay gets this marker. Inline progress messages in market
+   content must not disable the headers and links beside them. */
+.action-loading > div:has(> .action-loading-overlay) { pointer-events: none; }
 .action-loading-message { display: inline-flex; align-items: center; gap: 9px; color: var(--accent, #57dbc4);
   font-size: 12px; line-height: 20px; }
-.action-loading > div:last-child > .action-loading-message { position: absolute; left: 0; top: 0;
+.action-loading > div:has(> .action-loading-overlay) > .action-loading-overlay { position: absolute; left: 0; top: 0;
   padding: 2px 8px; border-radius: 5px; background: var(--panel, #111d2e); }
 .action-spinner { display: inline-block; width: 14px; height: 14px; flex: 0 0 14px;
   border: 2px solid #36535d; border-top-color: #57dbc4; border-radius: 50%;

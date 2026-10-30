@@ -4,6 +4,7 @@
 .market-screen #sport-pages { display: grid !important; }
 .market-screen #historical-page,.market-screen #backtesting-page,.market-screen #in-game-page,
 .market-screen #odds-api-page,.market-screen #historical-navigation,.market-screen #backtesting-navigation,
+.market-screen #information-page,.market-screen #pnl-page,
 .market-screen #market-page,.market-screen #kalshi-page,.market-screen #polymarket-page,.market-screen #market-summary-page,
 .market-screen #filtered-results-page { display: none !important; }
 .market-screen-market #market-page { display: block !important; }
@@ -28,3 +29,22 @@
 }
 .market-screen-kalshi #parlay-drawer,.market-screen-polymarket #parlay-drawer,.market-screen-summary #parlay-drawer,
 .market-screen-filtered #parlay-drawer { display: none !important; }
+.market-sections-transition { display: none; padding: 16px 0; }
+.market-quotes-pending #saved-market-sections { display: none !important; }
+.market-quotes-pending #market-sections-transition { display: block; }
+.exchange-sections-transition { display: none; padding: 16px 0; }
+.exchange-quotes-pending #kalshi-market-sections,.exchange-quotes-pending #polymarket-market-sections,
+.exchange-quotes-pending .kalshi-detail-table,.exchange-quotes-pending .kalshi-rules { display: none !important; }
+.exchange-quotes-pending .exchange-sections-transition { display: block; }
+/* Leaving a market must hide it before the new page's server callbacks finish. */
+.workspace-screen #historical-page,.workspace-screen #market-page,.workspace-screen #kalshi-page,
+.workspace-screen #polymarket-page,.workspace-screen #market-summary-page,.workspace-screen #filtered-results-page,
+.workspace-screen #backtesting-page,.workspace-screen #in-game-page,.workspace-screen #information-page,
+.workspace-screen #odds-api-page,.workspace-screen #pnl-page,.workspace-screen #parlay-drawer { display: none !important; }
+.workspace-screen #sport-pages { display: grid !important; }
+.workspace-screen-historical #historical-page { display: grid !important; }
+.workspace-screen-backtesting #backtesting-page { display: block !important; }
+.workspace-screen-in-game #in-game-page,.workspace-screen-information #information-page { display: grid !important; }
+.workspace-screen-pnl #pnl-page { display: block !important; }
+.workspace-screen-odds #odds-api-page { display: block !important; }
+.workspace-screen-pnl #sport-pages,.workspace-screen-odds #sport-pages { display: none !important; }

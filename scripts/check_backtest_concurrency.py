@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 from types import SimpleNamespace
 from unittest import TestCase, main
 from unittest.mock import Mock, patch
@@ -70,6 +71,38 @@ def simulated_player_inputs():
 
 
 class ConcurrencyChecks(TestCase):
+    def test_long_fit_heartbeat_keeps_real_completed_counts_and_stops_cleanly(self):
+        from sports_analytics.backtest_worker import progress_channel
+        messages=[];received=threading.Event()
+        def send(kind,**message):
+            messages.append(dict(type=kind,**message))
+            if 'working' in message.get('message',''):received.set()
+        with progress_channel(send,interval=.02) as progress:
+            progress(6,10,'Calculating PGE: away @ home')
+            self.assertTrue(received.wait(2))
+        self.assertEqual(messages[-1]['done'],6)
+        self.assertEqual(messages[-1]['total'],10)
+        self.assertIn('Calculating PGE: away @ home',messages[-1]['message'])
+        self.assertFalse(any(t.name=='backtest-heartbeat' for t in threading.enumerate()))
+
+    def test_failed_joint_forecast_runs_once_per_game_and_preserves_skip_rows(self):
+        from models.Player_Stats.Weighted_Historical_Performance.markets import stat_spec
+        from sports_analytics.research_config import player_config
+        with tempfile.TemporaryDirectory() as directory,simulated_player_inputs():
+            backend=BacktestingService(root=directory)
+            frame=backend.player_inputs('NBA').assign(value=lambda f:f.pts)
+            ids=frame.drop_duplicates('game_id',keep='last').tail(2).game_id
+            games=[row for _,row in frame[frame.game_id.isin(ids)].sort_values(['event_date','game_id','entity_id']).iterrows()]
+            fake=Mock(repository=Mock(root=Path(directory)),forecast=Mock(side_effect=ValueError('Insufficient league history')))
+            fake.repository.load.return_value=(frame.copy(),backend.game_inputs('NBA','ppp')[0])
+            result=dict(run_id='a'*64,config=asdict(player_config('NBA','oam')),
+                context=dict(entity='__all__',lookback=None,include_playoffs=False),records=[],skipped=[])
+            with patch.object(backend,'player_service',return_value=fake):
+                backend._players(result,'NBA','oam',frame,frame,games,stat_spec('NBA','player_points'),'player_points',None)
+            self.assertEqual(fake.forecast.call_count,2)
+            self.assertEqual(len(result['skipped']),len(games))
+            self.assertTrue(all('Insufficient league history' in row['reason'] for row in result['skipped']))
+
     def test_dashboard_enables_cpu_isolation(self):
         with patch('sports_analytics.dashboard.BacktestingService', wraps=BacktestingService) as backend:
             create_app()
@@ -206,7 +239,8 @@ with simulated_player_inputs():
                 sequential = reference.run(**parameters[key])
                 for field in ('records', 'skipped', 'metrics', 'config', 'run_id'):
                     self.assertEqual(state['result'][field], sequential[field], (key, field))
-                self.assertTrue(list((root/'reports/model_cache'/key/state['result']['run_id']).rglob('*.json')))
+                self.assertFalse(list((root/'reports/model_cache'/key/state['result']['run_id']).rglob('*.json')))
+                self.assertTrue((root/'reports'/state['result']['saved_directory']/'report.json').exists())
             self.assertTrue(all(child.poll() is not None for child in children))
 
 

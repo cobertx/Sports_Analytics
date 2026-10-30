@@ -13,7 +13,7 @@ from time import time
 from threading import Lock
 
 from dash import ALL, Dash, Input, MATCH, Output, State, ctx, dash_table, dcc, html, no_update
-from dash.exceptions import PreventUpdate
+from dash.exceptions import PreventUpdate, MissingCallbackContextException
 from flask import abort, send_from_directory
 import pandas as pd
 import plotly.graph_objects as go
@@ -53,8 +53,9 @@ from .page_cache import PageTasks,QuotePages,forecast_revision
 from .loading import configure as configure_loading,register as register_loading,indicator,loading as action_loading
 from .research_config import form_parameters
 from .historical_view import historical_route,statistics_kind,navigation as historical_navigation
-from .historical_links import history_target,matches_dataset,target_entity,target_metric,market_metrics
+from .historical_links import history_target,matches_dataset,target_entity,target_metric,market_metrics,NBA_COMBINATIONS
 from .prompt_history import prior_history,outcomes as prompt_outcomes,annotate as annotate_prompt
+from .player_distribution import register as register_player_distribution
 from .metrics import metric_label, preferred_metric, relevant_metrics, statistic_categories, statistic_category
 from .service import DataService
 from .schedule import FANDUEL_LINKS, SCHEDULE_LINKS, ScheduleService
@@ -161,8 +162,17 @@ def performance_figure(history, metric, window, prediction):
     details = game_labels(history)
     figure = go.Figure()
     hover = "%{customdata[0]}<br>%{customdata[1]}<br>%{y:.2f}<extra>%{fullData.name}</extra>"
-    figure.add_trace(go.Bar(x=x, y=history[metric], name=label, width=.65,
-                           marker={"color": "#57dbc4"}, customdata=details, hovertemplate=hover))
+    components=NBA_COMBINATIONS.get(metric,()) if history.iloc[0]['sport']=='NBA' else ()
+    if components and set(components)<=set(history):
+        colors={'pts':'#57dbc4','reb':'#8197ff','ast':'#f6c667'}
+        for component in components:
+            figure.add_trace(go.Bar(x=x,y=history[component],name=metric_label(component,'NBA'),width=.65,
+                marker={'color':colors[component]},customdata=[(*detail,float(total)) for detail,total in zip(details,history[metric])],
+                hovertemplate=hover.replace('<extra>','<br>Combined total: %{customdata[2]:.2f}<extra>')))
+    else:
+        components=()
+        figure.add_trace(go.Bar(x=x, y=history[metric], name=label, width=.65,
+                               marker={"color": "#57dbc4"}, customdata=details, hovertemplate=hover))
     figure.add_trace(go.Scatter(x=x, y=history["baseline"], mode="lines", name=f"Prior {window}-game mean",
                                line={"color": "#8197ff", "dash": "dot"}, customdata=details, hovertemplate=hover))
     step = max(1, math.ceil(len(history) / 10))
@@ -176,7 +186,8 @@ def performance_figure(history, metric, window, prediction):
         ticks.append(len(history) + 1)
         labels.append("Next appearance<br>Matchup TBD")
     figure = style_figure(figure)
-    figure.update_layout(height=440, barmode="overlay", margin={"l": 55, "r": 25, "t": 35, "b": 115})
+    figure.update_layout(height=440, barmode="stack" if components else "overlay",
+                         meta={'stat_components':list(components)},margin={"l": 55, "r": 25, "t": 35, "b": 115})
     figure.update_xaxes(title="Game date · Matchup (away @ home)", tickmode="array", tickvals=ticks,
                         ticktext=labels, tickangle=-35, automargin=True)
     figure.update_yaxes(title=label)
@@ -378,7 +389,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
 
     app.layout = html.Div([
         dcc.Store(id="dataset"), dcc.Download(id="download"),
-        dcc.Store(id='historical-cache-pending',data=False),dcc.Interval(id='historical-cache-poll',interval=1500,disabled=True),
+        dcc.Store(id='historical-cache-pending',data=False),dcc.Interval(id='historical-cache-poll',interval=500,disabled=True),
         html.Div([dcc.Input(id='workspace-page',type='hidden',value='historical'),
                   dcc.Input(id='entity-type',type='hidden',value='team')],style={'display':'none'}),
         dcc.Location(id="market-url", refresh=False), dcc.Store(id="market-schedule", data=[]),
@@ -387,6 +398,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         dcc.Store(id="market-applied-criteria"),
         dcc.Store(id='market-return',data={},storage_type='session'),
         dcc.Store(id='mispricing-request'),
+        dcc.Store(id='mispricing-forecast-history'),
         dcc.Store(id="market-forecast-history"),
         dcc.Interval(id='market-model-poll',interval=1000,disabled=True),
         dcc.Store(id="parlay-store",storage_type="session",data={"version":1,"legs":[],"collapsed":False}),
@@ -483,9 +495,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                     kpi("BACKTEST MAE", "—", "Mean absolute error on past games")]),
                                 html.Div([html.Div([html.H2("Performance over time"), html.Span("HISTORY + BASELINE", className="eyebrow")],
                                                    className="panel-heading"),
-                                          dcc.Graph(id="trend", figure=empty_figure(), config={"displaylogo": False}),
+                                          action_loading(dcc.Graph(id="trend", figure=empty_figure(), config={"displaylogo": False}),
+                                                         'Loading historical performance…'),
                                           html.P("Baseline uses only prior appearances. This reference forecast does not account for opponent, injuries, minutes, or roster changes.",
-                                                 className="chart-note")], className="panel chart-panel"),
+                                                 className="chart-note")], id='historical-performance-panel',className="panel chart-panel"),
                                 html.Div([
                                     html.Div([html.H2("Player career"), html.Span("ALL AVAILABLE SEASONS", className="eyebrow")],
                                              className="panel-heading"),
@@ -584,6 +597,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                      id="market-criteria-status", role="status", **{"aria-live": "polite"}, className="criteria-status"),
                             quick_controls('market', 'mispricing-results'),
                             ],id='mispricing-filter-panel',className='panel market-criteria',style={'display':'none'}),
+                            html.Div(indicator('Loading the selected markets…'),id='market-sections-transition',className='market-sections-transition'),
                             dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),
                             ], className="sportsbook-view"),
                         ], id="market-game-detail", className="market-detail-view", style={"display": "none"}),
@@ -691,13 +705,16 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     ], id='app-shell',className="app-shell")
     app.layout=configure_loading(app.layout)
     register_loading(app)
+    register_player_distribution(app)
 
     app.clientside_callback(
-        'function(hash,sport,game,kalshi,polymarket,scope,kalshiGames,polymarketGames) {'
-        ' return window.dash_clientside.market_transition.screen(hash,sport,game,kalshi,polymarket,scope,kalshiGames,polymarketGames); }',
+        'function(hash,sport,game,kalshi,polymarket,scope,kalshiGames,polymarketGames,page,forecast,snapshot,category,kalshiView,kalshiCategory,polyView,polyCategory) {'
+        ' return window.dash_clientside.market_transition.reconcile(hash,sport,game,kalshi,polymarket,scope,kalshiGames,polymarketGames,page,forecast,snapshot,category,kalshiView,kalshiCategory,polyView,polyCategory); }',
         Output('app-shell','className'),Input('market-url','hash'),Input('sport','value'),
         Input('market-detail-context','data'),Input('kalshi-context','data'),Input('polymarket-context','data'),
-        Input('market-schedule-scope','data'),Input('kalshi-games','data'),Input('polymarket-games','data'))
+        Input('market-schedule-scope','data'),Input('kalshi-games','data'),Input('polymarket-games','data'),
+        Input('workspace-page','value'),Input('market-forecast-history','data'),Input('market-snapshot','value'),Input('market-category','value'),
+        Input('kalshi-rules-signature','data'),Input('kalshi-category','value'),Input('polymarket-rules-signature','data'),Input('polymarket-category','value'))
 
     app.clientside_callback('''function(page,history,hash,snapshot,category){
         return page!=='market'||category==='Mispricing'||category==='Additional Information'||!history||!history.pending||
@@ -1279,9 +1296,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     @app.callback(Output("game-forecast-history", "children"), Output("player-forecast-history", "children"),
                   Input("market-forecast-history", "data"), Input("market-url", "hash"),
                   Input("market-snapshot", "value"), Input("market-forecast-method", "value"),
-                  Input("player-forecast-method", "value"))
-    def forecast_history(history, location_hash, selection, game_method, player_method):
+                  Input("player-forecast-method", "value"),Input('mispricing-forecast-history','data'))
+    def forecast_history(history, location_hash, selection, game_method, player_method,quick_history=None):
         current = history if history and history.get("context") == [location_hash, selection] else {}
+        quick=quick_history if quick_history and quick_history.get('context')==[location_hash,selection] else {}
+        current={**current,'game':{**quick.get('game',{}),**current.get('game',{})},
+                 'player':{**quick.get('player',{}),**current.get('player',{})}}
         def label(kind, method, prefix):
             if not selection:
                 return prefix + "No saved snapshot selected"
@@ -1335,11 +1355,11 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             return service.forecast(snapshot),None
         except (DataSourceError,OSError,ValueError) as exc:return None,str(exc)
 
-    @app.callback(Output('mispricing-results','children'),Output('market-forecast-history','data',allow_duplicate=True),
+    @app.callback(Output('mispricing-results','children'),Output('mispricing-forecast-history','data'),
                   Input('mispricing-request','data'),Input('market-category','value'),Input('market-url','hash'),
                   Input('market-snapshot','value'),Input('market-quick-game-methods','value'),Input('market-quick-player-methods','value'),
                   Input('market-quick-probability','value'),Input('market-quick-edge','value'),
-                  State('market-forecast-history','data'),State('workspace-page','value'),prevent_initial_call=True,
+                  State('mispricing-forecast-history','data'),State('workspace-page','value'),prevent_initial_call=True,
                   running=[(Output('market-quick-filter','disabled'),True,False)])
     def quick_filter_markets(request,category,location_hash,selection,methods,player_methods,probability,edge,previous_history,page=None):
         if (page is not None and page!='market') or not market_game_id(location_hash):raise PreventUpdate
@@ -1396,6 +1416,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         context = [location_hash, selection]
         previous = previous_history if previous_history and previous_history.get("context") == context else {}
         view_key=[category,method,player_method,criteria,POLICY_VERSION]
+        if (page is not None and ctx.triggered_id=='market-model-poll' and previous.get('view_key')==view_key
+                and previous.get('pending') and previous.get('job')
+                and market_page_tasks.queue.state(previous['job'])['pending']):
+            # Polling a running fit needs no snapshot reads, filesystem scans,
+            # hashes or quote/accordion reconstruction.
+            return no_update,no_update
         if page is not None and ctx.triggered_id=='market-url' and previous.get('view_key')==view_key and not previous.get('pending'):
             return no_update,no_update
         history = {"context": context, "view_key":view_key,"game": dict(previous.get("game", {})), "player": dict(previous.get("player", {}))}
@@ -1637,6 +1663,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             result = service.load(query, refresh=ctx.triggered_id == "refresh",local_first=True)
         except (DataSourceError, ValueError, TypeError) as exc:
             return None, str(exc), "No dataset loaded", True,False
+        if result.status=='loading cache':
+            name=target['name'] if target else f'{sport} {kind} statistics'
+            return None,f'Loading historical data for {name}…',f'{sport} · {season} · {phase} · Loading saved/source data',True,True
         summary = (f"{sport} · {season} · {phase} · {len(result.frame):,} appearances · "
                    f"{result.frame['entity_id'].nunique():,} {kind}s")
         message = f"{result.status.capitalize()} · Retrieved {format_eastern(result.fetched_at)}."
@@ -1681,6 +1710,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         target=historical_target(location_hash)
         if not target:return ''
         if not dataset and load_status:
+            if isinstance(load_status,str) and load_status.startswith('Loading historical data'):return load_status
             return f"Historical data for {target['name']} could not be loaded. {load_status}"
         if not matches_dataset(target,dataset):return f"Loading historical data for {target['name']}…"
         try:
@@ -1721,6 +1751,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             frame = historical_frame(dataset)
         except DataSourceError:
             return [], None, True, "Reload the historical data"
+        if matches_dataset(historical_target(location_hash),dataset):team=ALL_TEAMS
         frame = filter_team(frame, dataset["kind"], team)
         entities = frame.reindex(columns=["entity_id", "entity_name", "team", "position"]).drop_duplicates("entity_id").sort_values("entity_name")
         options = [{"label": (f"{r.entity_name} ({r.team}" + (f" · {r.position}" if pd.notna(r.position) and r.position else "") + ")")
@@ -1828,14 +1859,24 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         blank = [kpi("OBSERVED AVERAGE", "—", "Selected statistic per appearance"),
                  kpi("NEXT APPEARANCE", "—", "Rolling-average baseline"),
                  kpi("BACKTEST MAE", "—", "Mean absolute error on past games")]
-        if not supported_dataset(dataset) or entity is None or metric is None:
+        if not supported_dataset(dataset):
             return empty_figure(), blank, [], []
         frame = historical_frame(dataset)
+        target=historical_target(location_hash)
+        try:trigger=ctx.triggered_id
+        except MissingCallbackContextException:trigger=None
+        if matches_dataset(target,dataset) and trigger in {'dataset','market-url','entity'}:
+            resolved=target_entity(frame,target)
+            if trigger!='entity' or entity==resolved:
+                entity=resolved;team=ALL_TEAMS
+                own=frame[frame.entity_id.eq(entity)]
+                metric=target_metric(target,relevant_metrics(own,dataset['sport'],dataset['kind']),own)
+        if entity is None or metric is None:
+            return empty_figure(),blank,[],[]
         frame = filter_team(frame, dataset["kind"], team)
         if metric not in frame:
             return empty_figure(), blank, [], []
         selected = frame[frame["entity_id"] == entity]
-        target=historical_target(location_hash)
         if not matches_dataset(target,dataset) or target_entity(frame,target)!=entity:target=None
         selected=prior_history(selected,target)
         if selected.empty and target:return empty_figure('No prior appearances in the selected historical scope'),blank,[],[]
@@ -1851,12 +1892,13 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                  kpi("BACKTEST MAE", f"{mae:,.2f}" if mae is not None else "—",
                      f"{evaluated} past predictions evaluated" if evaluated else f"Requires more than {window} appearances")]
         fields = ["event_date"] + ([] if dataset["sport"] == "NBA" else ["week"])
-        table = history.reindex(columns=fields + ["team", "opponent", "matchup", metric, "baseline"]).copy()
+        components=list((figure.layout.meta or {}).get('stat_components',[]))
+        table = history.reindex(columns=fields + ["team", "opponent", "matchup",*components,metric,"baseline"]).copy()
         table["event_date"] = table["event_date"].dt.strftime("%Y-%m-%d")
         table = table.sort_index(ascending=False).round(3)
         # JSON nulls rather than NaN/NaT if schedule metadata is unavailable.
         records = table.astype(object).where(pd.notna(table), None).to_dict("records")
-        columns = [{"name": metric_label(c, dataset["sport"]) if c == metric else c.replace("_", " ").title(), "id": c}
+        columns = [{"name": metric_label(c, dataset["sport"]) if c == metric or c in components else c.replace("_", " ").title(), "id": c}
                    for c in table]
         result=prompt_outcomes(history,metric,target)
         if result is not None:

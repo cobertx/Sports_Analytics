@@ -5,3 +5,4 @@
 .market-prompt > span { display: block; }
 .market-history-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .market-history-actions > div { display: flex; flex-direction: column; align-items: flex-start; }
+#historical-performance-panel { scroll-margin-top: 24px; }

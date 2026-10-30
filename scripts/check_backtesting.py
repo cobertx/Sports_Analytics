@@ -428,6 +428,18 @@ class ReplayChecks(TestCase):
             cached_calculation(model, 'same', (), lambda: 30)
             self.assertEqual(cache.hits, 0)
 
+    def test_league_scalar_calibrations_do_not_thrash_the_fit_cache(self):
+        model=SimpleNamespace(config=WHPConfig())
+        calculate=Mock(return_value=1.5)
+        with replay_cache() as cache:
+            for _ in range(2):
+                for player in range(30):
+                    for fold in range(40):
+                        cached_calculation(model,'calibration_point',(player,fold),calculate)
+            self.assertEqual(calculate.call_count,1200)
+            self.assertEqual(cache.hits,1200)
+            self.assertEqual(len(cache.calculations),0)
+
     def test_game_models_match_full_calibration_with_rolling_windows(self):
         frame = team_history()
         from models.Game_Outcome.EPA.NBA_EPA import FEATURES

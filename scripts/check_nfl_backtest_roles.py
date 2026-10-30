@@ -67,7 +67,7 @@ class NFLBacktestRoleChecks(TestCase):
     def test_every_football_prompt_uses_its_position_family(self):
         expected={
             'pass':{'QB'},'rush':{'QB','RB','FB','HB'},
-            'reception':{'RB','FB','HB','WR','TE'},'receptions':{'RB','FB','HB','WR','TE'},
+            'reception':{'RB','FB','HB','WR'},'receptions':{'RB','FB','HB','WR'},
             'tds':{'QB','RB','FB','HB','WR','TE'},'anytime':{'QB','RB','FB','HB','WR','TE'},
         }
         for market in FOOTBALL:
@@ -138,9 +138,9 @@ class NFLBacktestRoleChecks(TestCase):
         target=frame[frame.game_id.eq('19')].copy()
         target.index=[0]*len(target)  # Row selection must also handle repeated indexes.
         expected={
-            'player_pass_yds':{'QB'},
+            'player_pass_yds':{'QB','QB backup'},
             'player_rush_yds':{'QB','RB','RB second'},
-            'player_reception_yds':{'RB','RB second','WR','WR second','WR third','TE'},
+            'player_reception_yds':{'RB','RB second','WR','WR second','WR third'},
             'player_anytime_td':{'QB','RB','RB second','WR','WR second','WR third','TE'},
         }
         original=frame.copy(deep=True)
@@ -164,7 +164,7 @@ class NFLBacktestRoleChecks(TestCase):
         revised=pd.concat([revised,delayed],ignore_index=True)
         pd.testing.assert_frame_equal(player_backtest_rows(target,'NFL','player_pass_yds',history=revised),expected)
         revised.loc[revised.game_id.eq('delayed'),'available_at']=cutoff-pd.Timedelta(microseconds=1)
-        self.assertEqual(set(player_backtest_rows(target,'NFL','player_pass_yds',history=revised).entity_id),{'QB backup'})
+        self.assertEqual(set(player_backtest_rows(target,'NFL','player_pass_yds',history=revised).entity_id),{'QB','QB backup'})
 
     def test_backup_promotion_requires_prior_workload_and_absences_lower_team_game_average(self):
         frame=depth_history()
@@ -181,11 +181,14 @@ class NFLBacktestRoleChecks(TestCase):
 
     def test_single_player_requests_rank_against_team_and_use_history_outside_date_range(self):
         self.frame=depth_history()
-        self.assertEqual(self.backend.available_games('NFL','player-stats','whp','QB backup','player_pass_yds'),0)
+        self.assertEqual(self.backend.available_games('NFL','player-stats','whp','QB backup','player_pass_yds'),19)
+        self.assertEqual(self.backend.available_games('NFL','player-stats','whp','QB third','player_pass_yds'),0)
         cutoff=self.frame[self.frame.game_id.eq('19')].event_date.iloc[0].tz_convert('America/New_York').date().isoformat()
         self.assertEqual(self.backend.available_games('NFL','player-stats','whp','QB','player_pass_yds',start=cutoff),1)
         with self.assertRaisesRegex(DataSourceError,'regular pregame workload'):
-            self.backend.run('NFL','player-stats','whp','QB backup','player_pass_yds',limit=2)
+            self.backend.run('NFL','player-stats','whp','QB third','player_pass_yds',limit=2)
+        backup=self.backend.run('NFL','player-stats','whp','QB backup','player_pass_yds',limit=2)
+        self.assertEqual(len(backup['records']),2)
         result=self.backend.run('NFL','player-stats','whp','__all__','player_rush_yds',limit=1,start=cutoff)
         self.assertEqual(result['attempted'],3)
         self.assertEqual({row['label'].split(' · ')[0] for row in result['records']},{'QB','RB','RB second'})
@@ -197,6 +200,15 @@ class NFLBacktestRoleChecks(TestCase):
         prior=self.frame.copy()
         prior.loc[prior.entity_id.eq('RB')&prior.game_id.eq('18'),'carries']=float('nan')
         self.assertEqual(set(player_backtest_rows(target,'NFL','player_rush_yds',history=prior).entity_id),{'QB'})
+
+    def test_short_cohorts_match_full_selection_without_ranking_every_old_date(self):
+        frame=depth_history()
+        for market in FOOTBALL:
+            complete=player_backtest_rows(frame,'NFL',market,history=frame)
+            ids=complete.sort_values(['event_date','game_id','entity_id']).drop_duplicates('game_id',keep='last').tail(2).game_id
+            short=player_backtest_rows(frame,'NFL',market,history=frame,limit=2)
+            pd.testing.assert_frame_equal(short[short.game_id.isin(ids)],complete[complete.game_id.isin(ids)])
+            self.assertLess(short.event_date.nunique(),complete.event_date.nunique())
 
     def test_contributor_limits_apply_independently_to_each_team(self):
         frame=depth_history()

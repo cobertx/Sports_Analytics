@@ -2,6 +2,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 from unittest import TestCase,main
 from unittest.mock import patch
@@ -212,6 +213,44 @@ class PromptChartChecks(TestCase):
         figure,_,records,_=self.cb['analyze'](dataset,'p','points_rebounds_assists',3,ALL_TEAMS,href)
         self.assertEqual(len(records),2);self.assertEqual(sum(r['prompt_result']=='Hit' for r in records),1)
         self.assertIn('1/2 historical hits',str(figure.layout.annotations))
+
+    def test_all_combo_charts_stack_components_keep_colors_and_score_the_total(self):
+        self.fixture.frame=pd.DataFrame(dict(sport='NBA',entity_id='p',entity_name='Player One',team='BOS',opponent='DET',
+            season=2026,season_type='regular',week=None,game_id=['1','2','3'],
+            event_date=pd.date_range('2026-10-01',periods=3,freq='2D',tz='UTC'),pts=[30,20,None],reb=[5,8,None],ast=[4,6,7]))
+        dataset=dict(self.dataset,sport='NBA')
+        for metric,fields,total,line in [
+            ('points_assists',['pts','ast'],[34,26],30),
+            ('points_rebounds',['pts','reb'],[35,28],30),
+            ('rebounds_assists',['reb','ast'],[9,14],10),
+            ('points_rebounds_assists',['pts','reb','ast'],[39,34],35.5),
+        ]:
+            s=dict(snapshot(),sport='NBA',home_team='Boston Celtics',away_team='Detroit Pistons')
+            r=dict(row(),subject='Player One',market_key='player_'+metric+'_alternate',line=line)
+            href=button(s,r).href
+            figure,cards,records,columns=self.cb['analyze'](dataset,'p',metric,3,ALL_TEAMS,href)
+            bars=[trace for trace in figure.data if trace.type=='bar']
+            self.assertEqual(figure.layout.barmode,'stack')
+            self.assertEqual(len(bars),len(fields))
+            self.assertEqual([sum(trace.y[i] for trace in bars) for i in range(2)],total)
+            self.assertEqual(len({trace.marker.color for trace in bars}),len(fields))
+            self.assertEqual(sum(record['prompt_result']=='Hit' for record in records),1)
+            self.assertIn('1/2 historical hits (50.0%)',str(figure.layout.annotations))
+            self.assertIn('PROMPT HIT RATE',str(cards))
+            self.assertTrue(set(fields)<={column['id'] for column in columns})
+            self.assertTrue(all('Combined total' in trace.hovertemplate for trace in bars))
+            self.assertEqual(figure.layout.shapes[0].y0,line)
+            self.assertIn('/',bars[0].marker.pattern.shape)
+
+    def test_url_renders_linked_chart_without_waiting_for_stale_dropdowns(self):
+        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-url')):
+            figure,cards,records,_=self.cb['analyze'](self.dataset,'a','receptions',3,'DEN',self.href,'historical')
+        self.assertEqual(len(records),7)
+        self.assertTrue(all(record['receiving_yards']<100 for record in records))
+        self.assertEqual(figure.layout.shapes[0].y0,52)
+        self.assertIn('4/7 historical hits',str(figure.layout.annotations))
+        self.assertIn('PROMPT HIT RATE',str(cards))
+        self.assertEqual(self.cb['select_options'](self.dataset,'DEN','a',self.href)[1],'j')
 
     def test_college_team_alias_and_paired_game_history_are_selected(self):
         self.fixture.frame=pd.DataFrame([dict(sport='NCAAF',entity_id=name,entity_name=name,team=name,opponent=opponent,

@@ -18,6 +18,7 @@ from .distributions import UsageOpportunityForecast
 from .efficiency_model import conversion,yards_per_event
 from .errors import UsageOpportunityError
 from .historical_data import eligible,match_player,atomic_json
+from models.replay import replay_instance
 from .markets import market_spec,prop_key
 from .nfl_model import split_completions
 from .opportunity_model import observed,share_rows,allocate
@@ -171,8 +172,9 @@ def simulate_college(players,teams,config,rng,*,adjustment=None,environment=None
 
 
 class CollegePlayerMarketService:
-    def __init__(self,method,repository,config=None):
+    def __init__(self,method,repository,config=None,*,persist=True):
         self.method,self.repository,self.config=method,repository,config
+        self.persist=persist
 
     def forecast(self,snapshot):
         from .prediction_service import UsageMarketForecast
@@ -221,7 +223,7 @@ class CollegePlayerMarketService:
             input_sha256=sha256((players.to_json(orient='table',date_format='iso',index=False)+
                                 teams.to_json(orient='table',date_format='iso',index=False)).encode()).hexdigest())
         path=self.repository.root/'forecasts/ncaaf'/(sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
-        if path.exists():
+        if self.persist and path.exists():
             try:
                 saved=json.loads(path.read_text(encoding='utf-8'))
                 if saved['identity']==identity:
@@ -247,7 +249,7 @@ class CollegePlayerMarketService:
             adjustment=environment=None;method_details={};latest=[]
             if self.method=='OAM':
                 from models.Player_Stats.Opponent_Adjusted_Matchup.schedule_strength import ScheduleAdjustedDefense
-                model=ScheduleAdjustedDefense(config).fit(defense_features(teams))
+                model=replay_instance(ScheduleAdjustedDefense,config).fit(defense_features(teams))
                 adjustment=college_context(model,opponents,config,cutoff,np.random.default_rng(seed+1))
                 if not all(any(club==c for c,component in adjustment.profiles) for club in clubs):
                     raise DataSourceError('OAM needs more pre-snapshot college defensive history; prepare prior seasons.')
@@ -257,7 +259,7 @@ class CollegePlayerMarketService:
                 from models.Player_Stats.Pace_Game_Environment.pace_model import PaceModel
                 from models.Player_Stats.Pace_Game_Environment.game_environment import GameEnvironment
                 volumes=volume_features(teams)
-                model=PaceModel(config).fit(volumes)
+                model=replay_instance(PaceModel,config).fit(volumes)
                 environment=GameEnvironment('NCAAF',model,clubs,config,np.random.default_rng(seed+1))
                 valid=set(zip(volumes.game_id,volumes.team))
                 club_data={club:frame[[(str(r.game_id),r.team) in valid for _,r in frame.iterrows()]]
@@ -284,6 +286,7 @@ class CollegePlayerMarketService:
                     ('Defense priors use the saved school/opponent cohort, not all FBS teams. ' if self.method=='OAM' else '')+
                     ('Pace and score-script scenarios use full-game plays; overtime is not separately identified.' if self.method=='PGE' else '')}
                 result.forecasts[key]=UsageOpportunityForecast.from_samples(sum(samples[f] for f in spec.fields),diagnostics)
-        atomic_json(path,dict(identity=identity,forecasts=[dict(key=list(k),forecast=asdict(v)) for k,v in result.forecasts.items()],
-                              errors=[dict(key=list(k),error=v) for k,v in result.errors.items()]))
+        if self.persist:
+            atomic_json(path,dict(identity=identity,forecasts=[dict(key=list(k),forecast=asdict(v)) for k,v in result.forecasts.items()],
+                                  errors=[dict(key=list(k),error=v) for k,v in result.errors.items()]))
         return result

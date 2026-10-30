@@ -226,7 +226,9 @@ class PageSpeedChecks(TestCase):
         self.assertIn('Calculating',json.dumps(payload));self.assertNotIn('dash_core_components.Graph',json.dumps(payload))
         previous=payload['market-forecast-history']['data'];self.assertTrue(previous['pending'])
         cb=fixture.cb['show_saved_markets']
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-model-poll')):
+        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-model-poll')), \
+                patch.object(fixture.markets,'history',side_effect=AssertionError('A pending poll needs no disk reads')), \
+                patch('sports_analytics.dashboard.forecast_revision',side_effect=AssertionError('A pending poll needs no file scans')):
             self.assertEqual(cb('Game',fixture.saved['pulled_at'],'#nfl-game-123',None,'PPP','WHP',previous,'market',1),(no_update,no_update))
         release.set();self.assertTrue(finished.wait(2));deadline=perf_counter()+3
         while perf_counter()<deadline:

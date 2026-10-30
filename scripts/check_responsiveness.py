@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
+from os import utime
 import sys
 import tempfile
 from threading import Event
@@ -16,7 +17,7 @@ from dash import dcc
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from models.Game_Outcome.PPP.PPP import PPPConfig,PPPForecast
 from sports_analytics.data import DataSourceError
-from sports_analytics.loading import MESSAGES
+from sports_analytics.loading import MESSAGES,indicator
 from sports_analytics.nba_model_data import NbaModelData,aggregate_team_games
 from sports_analytics.ppp_service import PPPMarketService
 from sports_analytics.page_cache import forecast_revision
@@ -82,11 +83,16 @@ class ResponsivenessChecks(TestCase):
         (base/'forecasts/a.json').write_text('{}',encoding='utf-8')
         revision=source_revisions(self.root)
         self.assertEqual(len(revision),1)
+        # Same-size writes can share a timestamp on Windows; advance it explicitly.
+        stamp=source.stat()
         source.write_text('pts\n25\n',encoding='utf-8')
+        utime(source,ns=(stamp.st_atime_ns,stamp.st_mtime_ns+1_000_000_000))
         self.assertNotEqual(revision,source_revisions(self.root))
         code=self.root/'model.py';code.write_text('VERSION=1',encoding='utf-8')
         first=implementation_signature((file_revision(code),))
+        stamp=code.stat()
         code.write_text('VERSION=2',encoding='utf-8')
+        utime(code,ns=(stamp.st_atime_ns,stamp.st_mtime_ns+1_000_000_000))
         self.assertNotEqual(first,implementation_signature((file_revision(code),)))
 
     def test_nba_preparation_reuses_exact_content_and_rebuilds_revised_or_deleted_files(self):
@@ -212,12 +218,13 @@ class ResponsivenessChecks(TestCase):
             self.assertEqual(loader.overlay_style,{'visibility':'visible'})
             self.assertEqual(loader.parent_className,'action-loading')
             self.assertEqual(loader.custom_spinner.role,'status')
+            self.assertIn('action-loading-overlay',loader.custom_spinner.className)
             self.assertFalse(getattr(loader,'fullscreen',False))
         for identity in ['kalshi-quick-status','market-detail-pull-status','performance-results','load-status','pnl-import-message']:
             self.assertTrue(any(any(getattr(child,'id',None)==identity for child in components(loader.children)) for loader in loaders),identity)
         identifiers=[node.id for node in nodes if isinstance(getattr(node,'id',None),str)]
         self.assertEqual(len(identifiers),len(set(identifiers)))
-        for identity in ['load-status','information-status','game-information-content','kalshi-quote-status','polymarket-quote-status']:
+        for identity in ['load-status','trend','information-status','game-information-content','kalshi-quote-status','polymarket-quote-status']:
             self.assertIn(identity+'-loading',identifiers)
             callback=fixture.app.callback_map[identity+'-loading.display']
             self.assertNotIn('callback',callback,'Background feedback must not require another HTTP request')
@@ -225,6 +232,12 @@ class ResponsivenessChecks(TestCase):
             self.assertEqual(client.get('/_dash-layout').status_code,200)
             self.assertEqual(client.get('/assets/loading.css').status_code,200)
         self.assertIn('kalshi-quick-status',MESSAGES)
+        css=(Path(__file__).resolve().parents[1]/'sports_analytics/assets/loading.css').read_text(encoding='utf-8')
+        # Dash uses parent_className twice: wrapper -> content -> actual child.
+        # A descendant :last-child rule also disables the entire content child.
+        self.assertNotIn('.action-loading > div:last-child { pointer-events: none;',css)
+        self.assertIn('.action-loading > div:has(> .action-loading-overlay) { pointer-events: none;',css)
+        self.assertNotIn('action-loading-overlay',indicator('Inline market progress').className)
 
 
 if __name__=='__main__':main()

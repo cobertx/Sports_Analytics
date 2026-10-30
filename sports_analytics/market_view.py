@@ -19,6 +19,7 @@ from .parlay import quote_key
 from .historical_links import history_href
 from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
+from .player_distribution import panel as distribution_panel
 
 NFL_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NFL" / "Team Logos"
 NFL_LOGO_FILES = {path.stem.casefold(): path.name for path in NFL_LOGO_DIRECTORY.glob("*.png")}
@@ -298,13 +299,18 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
     matched_counts = {"alternate_spreads": 0, "alternate_totals": 0}
     for index, ((key, player), rows) in enumerate(groups.items()):
         sport = snapshot.get("sport", "NFL")
-        def history_link(name, kind, market_key=key):
-            return html.A(name, href=history_href(sport, kind, name, market_key, snapshot),
-                          className="market-history-link", title=f"View {name} historical statistics for this market")
-        title = [history_link(player, "player"), " - ", MARKET_NAMES.get(key, (rows[0]['market'], ''))[0]] if player else rows[0]["market"]
         rows = sorted(rows, key=lambda row: (row["subject"].casefold() if not player else "",
                                             0 if row["selection"] == "Over" else 1,
                                             row["line"] if row["line"] is not None else 0))
+        if player:
+            # A ladder header opens the first displayed selection. Each row's
+            # Historical Data button continues to carry its own exact threshold.
+            prompt_link=history_button(snapshot,rows[0])
+            link=html.A(player,href=getattr(prompt_link,'href',None) or history_href(sport,'player',player,key,snapshot),
+                        className='market-history-link',
+                        title=f"View {player} history for {selection_text(rows[0])}; use a row's Historical Data button for another line")
+            title=[link,' - ',MARKET_NAMES.get(key,(rows[0]['market'],''))[0]]
+        else:title=rows[0]['market']
         comparison = key in {"alternate_spreads", "alternate_totals"} or (player_method and key.startswith("player_"))
         values = {id(row): _line_values(row, forecast) for row in rows} if comparison else {}
         matches = {identity: criteria_match(estimate.probability if estimate else None, edge, criteria)
@@ -374,6 +380,9 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                           ]),
                           html.Div([outcome(row) for row in rows[6:]])], className="more-market-lines",
                          open=False) if len(rows) > 6 else None,
+            distribution_panel(rows,forecast,method,market_section_id(snapshot,key,player),
+                               MARKET_NAMES.get(key,(rows[0]['market'],rows[0]['market']))[1])
+                if player and player_method and not loading else None,
         ], id=market_section_id(snapshot,key,player),key=f"{snapshot.get('game_id', snapshot.get('event_id', ''))}:{snapshot.get('pulled_at', '')}:{key}:{player}",
            open=index < 2, className="sportsbook-market" + (
             " market-criteria-group" if match_count else " market-criteria-no-match" if no_match else "")))

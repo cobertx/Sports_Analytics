@@ -1,7 +1,10 @@
 """Exact equivalence of optimized OAM/PGE history preparation; no HTTP."""
-from dataclasses import replace
+from dataclasses import asdict,replace
+from contextlib import nullcontext
 from pathlib import Path
 import sys
+import tempfile
+from types import SimpleNamespace
 from unittest import TestCase, main
 from unittest.mock import patch
 
@@ -10,7 +13,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from models.season_weights import apply_season_weights, season_ids
-from models.replay import replay_cache
+from models.replay import replay_cache,replay_instance
 from models.Player_Stats.Opponent_Adjusted_Matchup.config import MatchupConfig
 from models.Player_Stats.Opponent_Adjusted_Matchup import schedule_strength as defense
 from models.Player_Stats.Pace_Game_Environment.config import PaceConfig
@@ -81,6 +84,113 @@ def history():
 
 
 class PlayerBacktestSpeedChecks(TestCase):
+    def test_incremental_forecasts_preserve_full_distributions_and_live_persistence(self):
+        from scripts.check_research import player_inputs
+        from models.Player_Stats.Opponent_Adjusted_Matchup import prediction_service as matchup
+        from models.Player_Stats.Pace_Game_Environment import prediction_service as environment
+        players,teams=player_inputs()
+        for module,kind,config in [
+            (matchup,matchup.OpponentAdjustedMarketService,MatchupConfig()),
+            (environment,environment.PaceGameEnvironmentMarketService,PaceConfig()),
+        ]:
+            config=replace(config,minimum_league_games=4,league_window=16,
+                           baseline=replace(config.baseline,simulations=1000,minimum_games=3))
+            results=[]
+            for persist in [True,False]:
+                with tempfile.TemporaryDirectory() as directory,replay_cache(),patch(
+                        'requests.sessions.Session.request',side_effect=AssertionError('No HTTP')):
+                    repo=SimpleNamespace(root=Path(directory),load=lambda *args:(players.copy(),teams.copy()))
+                    service=kind(repo,config,persist=persist)
+                    cold=patch.object(module,'replay_instance',side_effect=lambda cls,cfg:cls(cfg)) if persist else nullcontext()
+                    forecasts=[]
+                    with cold:
+                        for number in [32,33,34]:
+                            game=teams[teams.game_id.eq(str(number))].iloc[0]
+                            snapshot=dict(sport='NBA',game_id=str(number),home_team='Boston Celtics',away_team='Detroit Pistons',
+                                commence_time=game.event_date.isoformat(),pulled_at=(game.event_date-pd.Timedelta(microseconds=1)).isoformat(),
+                                rows=[dict(subject=name,market_key='player_points',market='Points',line=15.5,
+                                    selection='Over',odds=None,group='Player Stats',updated='Not reported')
+                                    for name in ['Player A','Player B','Player C']])
+                            fitted=service.forecast(snapshot)
+                            self.assertEqual(fitted.errors,{})
+                            forecasts.append({key:asdict(value) for key,value in fitted.forecasts.items()})
+                    self.assertEqual(bool(list(Path(directory).rglob('*.json'))),persist)
+                    results.append(forecasts)
+            self.assertEqual(results[0],results[1],kind.__name__)
+
+    def test_incremental_defense_equals_cold_fits_after_appends_revisions_and_windows(self):
+        rows=history().rename(columns=dict(team='offense',opponent='defense',volume='actual',allowed_volume='exposure'))
+        rows['component']='nfl:catch:WR'
+        rows=pd.concat([rows,rows.assign(component='nfl:rush_ypc:RB')],ignore_index=True)
+        for sport in ['NBA','NFL','NCAAF']:
+            config=replace(MatchupConfig.for_sport(sport),league_window=16,minimum_league_games=4,
+                           defense_window=8,minimum_defense_games=2)
+            revised=rows.copy();revised.loc[revised.index[5],'actual']+=7
+            variants=[rows[rows.event_date.lt(rows.event_date.max())],rows,rows,revised,rows.iloc[8:]]
+            actual=defense.ScheduleAdjustedDefense(config)
+            for frame in variants:
+                expected=defense.ScheduleAdjustedDefense(config).fit(frame)
+                actual.fit(frame)
+                self.assertEqual(actual.records,expected.records)
+                self.assertEqual(actual.historical,expected.historical)
+                for component in frame.component.unique():
+                    for club in ['A','B','C','D']:
+                        self.assertEqual(actual.profile(club,component),expected.profile(club,component))
+            changed=replace(config,defense_prior=config.defense_prior+2)
+            actual.config=changed;actual.fit(rows)
+            expected=defense.ScheduleAdjustedDefense(changed).fit(rows)
+            self.assertEqual(actual.records,expected.records)
+
+    def test_incremental_pace_processes_only_new_dates_and_rebuilds_changed_inputs(self):
+        rows=history();config=replace(PaceConfig(),minimum_league_games=4)
+        actual=pace.PaceModel(config)
+        prefix=rows.iloc[:-4]
+        actual.fit(prefix)
+        with patch.object(actual,'_validation_batch',wraps=actual._validation_batch) as batch:
+            actual.fit(rows)
+        self.assertEqual(batch.call_count,1)
+        revised=rows.copy();revised.loc[revised.index[12],'volume']+=5
+        # Appending another game at an existing date must replay that entire date.
+        for frame in [rows,rows.iloc[:-2],rows,revised,rows.iloc[20:]]:
+            expected=reference_fit(config,frame)
+            actual.fit(frame)
+            self.assertEqual(actual.training,expected.training)
+            self.assertEqual(actual.residuals,expected.residuals)
+            np.testing.assert_array_equal(actual.coefficients,expected.coefficients)
+
+    def test_incremental_instances_are_separate_between_replays_and_configurations(self):
+        config=PaceConfig()
+        with replay_cache():
+            first=replay_instance(pace.PaceModel,config)
+            self.assertIs(first,replay_instance(pace.PaceModel,config))
+            self.assertIsNot(first,replay_instance(pace.PaceModel,replace(config,ridge=config.ridge+1)))
+        with replay_cache():self.assertIsNot(first,replay_instance(pace.PaceModel,config))
+
+    def test_failed_incremental_batches_are_discarded_before_retry(self):
+        rows=history();config=replace(PaceConfig(),minimum_league_games=4)
+        model=pace.PaceModel(config).fit(rows.iloc[:-8])
+        original=model._validation_batch
+        calls=[]
+        def interrupted(*args):
+            calls.append(1)
+            if len(calls)==2:raise ValueError('Interrupted fit')
+            return original(*args)
+        with patch.object(model,'_validation_batch',side_effect=interrupted),self.assertRaisesRegex(ValueError,'Interrupted'):
+            model.fit(rows)
+        model.fit(rows);expected=reference_fit(config,rows)
+        self.assertEqual(model.training,expected.training)
+        self.assertEqual(model.residuals,expected.residuals)
+        np.testing.assert_array_equal(model.coefficients,expected.coefficients)
+
+        features=rows.rename(columns=dict(team='offense',opponent='defense',volume='actual',allowed_volume='exposure')).assign(component='nba:oreb')
+        config=replace(MatchupConfig(),minimum_league_games=4,minimum_defense_games=2)
+        model=defense.ScheduleAdjustedDefense(config).fit(features.iloc[:-8])
+        with patch.object(defense,'shrunk_factor',side_effect=ValueError('Interrupted fit')),self.assertRaisesRegex(ValueError,'Interrupted'):
+            model.fit(features)
+        model.fit(features);expected=defense.ScheduleAdjustedDefense(config).fit(features)
+        self.assertEqual(model.records,expected.records)
+        self.assertEqual(model.historical,expected.historical)
+
     def test_defense_weights_are_exact_and_cache_does_not_share_mutable_arrays(self):
         for sport in ['NBA','NFL','NCAAF']:
             config = MatchupConfig.for_sport(sport)

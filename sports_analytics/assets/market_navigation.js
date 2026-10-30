@@ -67,6 +67,14 @@
     pending = oldHash.startsWith('#historical') && entry?.route === location.hash ? {...entry} : null;
     restoredElement = null;
     restore();
+    if (/^#historical-player\?/.test(location.hash)) {
+      const target = location.hash;
+      requestAnimationFrame(() => {
+        if (location.hash === target) {
+          document.getElementById('historical-performance-panel')?.scrollIntoView({block: 'start', behavior: 'instant'});
+        }
+      });
+    }
   });
 
   // Dash replaces the market subtree after forecasts arrive. Reapply the

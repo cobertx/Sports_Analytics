@@ -31,13 +31,7 @@ ROOT=Path(__file__).resolve().parents[1]
 PREDICTIVE_INTERVAL=.8
 PREDICTIVE_Z=NormalDist().inv_cdf((1+PREDICTIVE_INTERVAL)/2)
 CALIBRATION_BINS=50
-NFL_PLAYER_COHORT='nfl-regular-contributors-v2'
-NFL_MARKET_ROLES={
-    'passing':{'passer'},
-    'rushing':{'passer','runner'},
-    'receiving':{'runner','receiver'},
-    'scoring':{'passer','runner','receiver'},
-}
+NFL_PLAYER_COHORT='nfl-regular-contributors-v3'
 NFL_POSITION_ALIASES={
     'QB':ROLE_POSITIONS['passer'],'RB':ROLE_POSITIONS['runner'],
     'TE':{'TE','TIGHTEND'},'WR':ROLE_POSITIONS['receiver']-{'TE','TIGHTEND'},
@@ -45,9 +39,9 @@ NFL_POSITION_ALIASES={
 # (workload fields, minimum per team game, maximum players per position).
 # Rank opportunities rather than yards, scores or the held-out game's output.
 NFL_PRIMARY_USAGE={
-    'passing':{'QB':(('attempts',),15,1)},
+    'passing':{'QB':(('attempts',),15,2)},
     'rushing':{'QB':(('carries',),3,1),'RB':(('carries',),5,2)},
-    'receiving':{'RB':(('targets',),2,2),'WR':(('targets',),3,3),'TE':(('targets',),2,1)},
+    'receiving':{'RB':(('targets',),2,2),'WR':(('targets',),3,3)},
     'scoring':{'QB':(('carries',),3,1),'RB':(('carries','targets'),7,2),
                'WR':(('targets',),3,3),'TE':(('targets',),2,1)},
 }
@@ -76,15 +70,14 @@ def player_position_rows(frame,sport,market):
     spec=stat_spec(sport,market or '')
     if spec is None or 'position' not in frame:return frame.iloc[:0]
     group=nfl_market_group(market)
-    roles=NFL_MARKET_ROLES.get(group,set())
-    positions=set().union(*(ROLE_POSITIONS[role] for role in roles))
+    positions=set().union(*(NFL_POSITION_ALIASES[role] for role in NFL_PRIMARY_USAGE.get(group,{})))
     labels=frame.position.astype('string').fillna('')
     relevant=[label for label in labels.unique() if any(
         re.sub(r'\s+','',part) in positions for part in re.split(r'[/,;\-]',label.upper()))]
     return frame[labels.isin(relevant)]
 
 
-def player_backtest_rows(frame,sport,market,*,history=None):
+def player_backtest_rows(frame,sport,market,*,history=None,limit=None):
     """Evaluate regular contributors using strictly pregame team-wide usage.
 
     Absent players contribute zero to a team-game average. Rank against the
@@ -112,9 +105,14 @@ def player_backtest_rows(frame,sport,market,*,history=None):
     source['entity_id']=source.entity_id.astype(str)
     keep=np.zeros(len(candidates),dtype=bool)
     targets=candidates.assign(_cohort_row=np.arange(len(candidates)))
-    for team,team_targets in targets.groupby('team',sort=False):
-        team_history=source[source.team.eq(team)].sort_values(['event_date','game_id','entity_id'])
-        for cutoff,batch in team_targets.groupby('event_date',sort=False):
+    histories={team:rows.sort_values(['event_date','game_id','entity_id']) for team,rows in source.groupby('team',sort=False)}
+    found=set()
+    # Evaluate newest dates first. A short requested replay should not rank
+    # players for every older game in multiple saved seasons.
+    for cutoff,date_targets in targets.sort_values('event_date',ascending=False).groupby('event_date',sort=False):
+        for team,batch in date_targets.groupby('team',sort=False):
+            team_history=histories.get(team)
+            if team_history is None:continue
             prior=team_history[team_history.event_date.lt(cutoff)&team_history.available_at.lt(cutoff)]
             games=prior.drop_duplicates('game_id',keep='last').tail(3).game_id
             if games.empty:continue
@@ -137,6 +135,8 @@ def player_backtest_rows(frame,sport,market,*,history=None):
                 selected.update(top.entity_id)
             eligible=batch[batch.entity_id.astype(str).isin(selected)]
             keep[eligible._cohort_row.to_numpy()]=True
+            found.update(eligible.game_id)
+        if limit is not None and len(found)>=limit:break
     return candidates.iloc[np.flatnonzero(keep)]
 
 
@@ -393,6 +393,7 @@ class BacktestingService:
         self.data=data or DataService()
         self.now=now or (lambda:pd.Timestamp.now(tz='UTC'))
         self._jobs={};self._jobs_lock=threading.RLock()
+        self._report_lock=threading.Lock()
         self._publish_latest=publish_latest
         self._processes=None
         if isolated:
@@ -403,7 +404,7 @@ class BacktestingService:
         if self._publish_latest:
             # Dashboard workers send completed reports to the parent; only the
             # parent writes this shared marker, including on Windows.
-            with self._jobs_lock:atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
+            with self._report_lock:atomic_json(cache.parent/'last_run.json',dict(report=cache.name))
 
     def start(self,*,display_label=None,**parameters):
         """Run independently of other jobs and the HTTP request thread."""
@@ -671,8 +672,8 @@ class BacktestingService:
             selected['value']=selected[list(spec.fields)].apply(pd.to_numeric,errors='coerce').sum(axis=1,min_count=len(spec.fields))
             if spec.opportunity and spec.opportunity in selected:selected['opportunity']=selected[spec.opportunity]
             candidates=selected[selected.value.notna()&selected.event_date.ge(lower)&selected.event_date.lt(upper)]
-            candidates=player_backtest_rows(candidates,sport,market,history=frame)
             if team_filter:candidates=candidates[candidates.team.eq(team_filter)]
+            candidates=player_backtest_rows(candidates,sport,market,history=frame,limit=limit)
             if entity=='__all__':
                 candidates=candidates.sort_values(['event_date','game_id','entity_id'])
                 ids=candidates.drop_duplicates('game_id',keep='last').tail(limit).game_id
@@ -719,6 +720,7 @@ class BacktestingService:
             reasons=list(dict.fromkeys(r['reason'] for r in result['skipped']))[:3]
             raise DataSourceError('No out-of-sample predictions could be evaluated. '+' '.join(reasons))
         result['attempted']=len(games)
+        if progress:progress(len(games),len(games),'Calculating accuracy metrics')
         result['metrics']=diagnostics(result['records'],tolerance)
         if progress:progress(len(games),len(games),'Saving reports')
         self.ensure_exports(result)
@@ -737,12 +739,13 @@ class BacktestingService:
                 if cutoff!=previous_cutoff:
                     prior=estimation_history(frame,cutoff,result['context']['lookback'],paired=True)
                     previous_cutoff=cutoff
+                    home=prior[prior.is_home.eq(1)]
+                    baseline_margin=float((home.points-home.points_allowed).mean()) if len(home) else None
+                    baseline_total=float((home.points+home.points_allowed).mean()) if len(home) else None
                 inputs=replace(dataset,games=prior) if dataset is not None else prior
+                if progress:progress(number-1,len(games),f'Calculating forecast: {a.team} @ {h.team} ({number:,}/{len(games):,})')
                 forecast=model.predict(inputs,h.team,a.team,cutoff.isoformat(),bool(h.get('neutral',False)))
                 margin=float(h.points-a.points);total=float(h.points+a.points)
-                home=prior[prior.is_home.eq(1)]
-                baseline_margin=float((home.points-home.points_allowed).mean()) if len(home) else None
-                baseline_total=float((home.points+home.points_allowed).mean()) if len(home) else None
                 prob=forecast.spread(forecast.home_team,0).probability
                 common=dict(game_id=str(h.game_id),date=cutoff.isoformat(),label=f'{a.team} @ {h.team}',
                     probability=prob,event_actual=int(margin>0) if margin else None,push=margin==0,
@@ -769,6 +772,7 @@ class BacktestingService:
         whp=WeightedHistoricalPerformance(configured(WHPConfig.for_sport(sport),result['config'])) if key=='whp' else None
         if service:
             service.config=configured(player_config(sport,key),result['config'])
+            service.persist=False
             # Overlapping replays can forecast the same historical matchup.
             # Keep their intermediate files independent, as well as their fits.
             service.repository.root=service.repository.root/result['run_id']
@@ -777,7 +781,7 @@ class BacktestingService:
         subjects={}
         if aggregate:
             for row in games:subjects.setdefault(str(row.game_id),set()).add(row.entity_name)
-        joint_id=None;joint_forecast=None
+        joint_id=None;joint_forecast=None;joint_error=None
         if service:
             load=service.repository.load
             phases=self.phase_map(sport)
@@ -795,12 +799,14 @@ class BacktestingService:
             module=import_module('.nba_markets' if sport=='NBA' else '.nfl_markets',package='sports_analytics')
             codes=getattr(module,sport+'_TEAM_CODES');names={v:k for k,v in codes.items()}
         else:names={}
+        player_histories={str(entity):rows[rows.value.notna()] for entity,rows in selected.groupby('entity_id',sort=False)}
         for number,game in enumerate(games,1):
             try:
                 cutoff=game.event_date
-                own=selected[selected.entity_id.eq(str(game.entity_id))&selected.value.notna()]
+                own=player_histories[str(game.entity_id)]
                 past=estimation_history(own,cutoff,lookback,entity='entity_id')
                 if key=='whp':
+                    if progress:progress(number-1,len(games),f'Calculating WHP: {game.entity_name} ({number:,}/{len(games):,})')
                     fitted=whp.forecast(past,cutoff,nonnegative=spec.nonnegative,count=spec.count)
                 else:
                     pair=pairs.get(str(game.game_id))
@@ -813,7 +819,13 @@ class BacktestingService:
                         away_team=names.get(a.team,a.team),pulled_at=(cutoff-pd.Timedelta(microseconds=1)).isoformat(),
                         commence_time=cutoff.isoformat(),rows=rows)
                     if not aggregate or joint_id!=str(game.game_id):
-                        joint_forecast=service.forecast(snapshot);joint_id=str(game.game_id)
+                        if progress:progress(number-1,len(games),f'Calculating {key.upper()}: {a.team} @ {h.team} ({number:,}/{len(games):,} appearances)')
+                        joint_id=str(game.game_id);joint_error=None
+                        try:
+                            joint_forecast=service.forecast(snapshot)
+                        except (ValueError,RuntimeError,OSError,IndexError,np.linalg.LinAlgError) as exc:
+                            joint_error=exc
+                    if joint_error is not None:raise joint_error
                     forecast=joint_forecast;fitted=forecast.forecasts.get((game.entity_name,market))
                     if fitted is None:raise DataSourceError(forecast.errors.get((game.entity_name,market),'Required opportunity history is unavailable.'))
                 price=fitted.market(line,'Over') if line is not None else None

@@ -171,7 +171,17 @@ def outcomes(history,metric,target):
 
 def annotate(figure,history,metric,target,result):
     colors={'Hit':'#57dbc4','Miss':'#e77c85','Push':'#a6b2c5'}
-    figure.data[0].marker.color=[colors.get(value,'#586577') for value in result]
+    components=(figure.layout.meta or {}).get('stat_components',[])
+    if components:
+        for trace in figure.data[:len(components)]:
+            trace.marker.line=dict(color=[colors.get(value,'#586577') for value in result],width=1.5)
+            trace.marker.pattern.shape=[{'Hit':'','Miss':'/','Push':'x'}.get(value,'') for value in result]
+            trace.customdata=[[*detail,value] for detail,value in zip(trace.customdata,result)]
+            trace.hovertemplate=trace.hovertemplate.replace('<extra>','<br>%{customdata[3]}<extra>')
+    else:
+        figure.data[0].marker.color=[colors.get(value,'#586577') for value in result]
+        figure.data[0].customdata=[[*detail,value] for detail,value in zip(figure.data[0].customdata,result)]
+        figure.data[0].hovertemplate=figure.data[0].hovertemplate.replace('<extra>','<br>%{customdata[2]}<extra>')
     hits=int(result.eq('Hit').sum());count=int(result.notna().sum());pushes=int(result.eq('Push').sum())
     symbols={'gt':'>','ge':'≥','lt':'<','le':'≤','eq':'=','ne':'≠'}
     label=f"Prompt {symbols[target['compare']]} {target['line']:g}"
@@ -179,7 +189,11 @@ def annotate(figure,history,metric,target,result):
     bounds=[0,target['line'],*[value for value in history[metric] if finite(value)]]
     low,high=min(bounds),max(bounds);padding=max(1,(high-low)*.08)
     figure.update_yaxes(range=[low-padding,high+padding])
-    figure.add_annotation(x=0,y=1.15,xref='paper',yref='paper',showarrow=False,xanchor='left',
+    figure.add_annotation(x=0,y=1.36,xref='paper',yref='paper',showarrow=False,xanchor='left',
         text=f"{hits}/{count} historical hits ({100*hits/count:.1f}%) · {int(result.eq('Miss').sum())} misses · {pushes} pushes" if count else 'No recorded prompt outcomes')
-    figure.update_layout(margin={'t':80},title={'text':escape(target.get('prompt','Market prompt')),'font':{'size':13}})
+    if components:
+        figure.add_annotation(x=0,y=1.23,xref='paper',yref='paper',showarrow=False,xanchor='left',
+            text='Colors = statistics · Solid = hit · Striped = miss · Crosshatched = push',font=dict(size=11))
+    figure.update_layout(height=520,margin={'t':155},legend=dict(y=1.01,yanchor='bottom',font=dict(size=10)),
+        title={'text':escape(target.get('prompt','Market prompt')),'font':{'size':13},'y':.99,'yanchor':'top'})
     return hits,count,pushes

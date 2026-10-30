@@ -47,6 +47,8 @@ jobs:
         run: python scripts/check_market_history.py
       - name: Check prompt history thresholds and observed hit counts
         run: python scripts/check_prompt_history.py
+      - name: Check player predictive mass and lazy market charts
+        run: python scripts/check_player_distributions.py
       - name: Check current-season NBA history and single-game market links
         run: python scripts/check_nba_history.py
       - name: Check nullable NBA inputs, returning players and forecast availability
@@ -58,6 +60,8 @@ jobs:
         run: node scripts/check_market_navigation.js
       - name: Check native exchange panel toggles
         run: node scripts/check_exchange_panels.js
+      - name: Check lazy player probability chart rendering
+        run: node scripts/check_player_distributions.js
       - name: Check immediate market transitions
         run: node scripts/check_market_transitions.js
       - name: Check mispricing ranking and market filter controls

@@ -135,8 +135,19 @@ their actual equality outcome. Unsupported targets or ambiguous settlement rules
 quotes visible with unavailable model values. Provider failures do not hide other providers.
 
 Player prop headings show **Player name - Market**, for example **Jerry Jeudy - Alt Receiving Yds**.
+Expanding a FanDuel player market also shows two charts from the **Player Forecast Method**
+selected in Mispricing Filter: a bar for each exact integer outcome and a cumulative curve
+for `P(outcome ≤ value)`. WHP uses its fitted predictive distribution; UO/OAM/PGE use their
+existing simulated probability mass. The charts reuse the same forecast as the probability
+and fair-odds columns, including integer-line push mass, without another model run or API call.
+Only expanded, visible markets instantiate charts. Analytic tails outside the displayed range
+are labeled and are never redistributed across the visible bars.
 Click the player name to open Historical Data with that player, sport, game season and relevant
-statistic selected. NBA combination props show the exact sum of their recorded components.
+statistic selected, opening at the performance chart. A ladder header uses its first displayed
+selection's line and direction; each row's Historical Data button opens that exact row instead.
+NBA combination props use stacked bars with distinct colors for points, rebounds and assists.
+Their total is compared to the line; solid/striped/crosshatched segments indicate hits/misses/pushes,
+and hover details show the component, combined total and outcome. Missing components are excluded.
 Team/player name links stay in player market headings and the game's matchup
 header. Each supported selection in FanDuel, Kalshi and Polymarket also has a
 **Historical Data** button, including selections in mispricing results. It opens
@@ -161,8 +172,10 @@ remain provider-qualified. DNPs, incomplete games and other season phases are ex
 Market links load their requested season/player scope directly, and simultaneous callbacks
 share one download. Current-season NBA caches are checked after 15 minutes; Refresh still bypasses them.
 Historical page navigation reads compatible local data immediately, then refreshes expired
-data in a bounded background worker. The page applies the updated revision when ready;
-the original retrieval timestamp and any refresh failure remain visible. Historical model
+data in a bounded background worker. First-time downloads also run in the background,
+with local loading feedback and a half-second completion poll. The linked chart resolves
+its player/statistic directly without waiting for the dropdown callback chain. The page
+applies updated revisions when ready; original retrieval timestamps and refresh failures remain visible. Historical model
 and backtest callers keep their normal synchronous freshness checks.
 Upcoming schedules and public Kalshi/Polymarket pages also reuse their SQLite caches under
 `data/` while automatic updates run. Slow or unavailable APIs do not hold cached page loads

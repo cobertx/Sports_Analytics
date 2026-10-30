@@ -53,9 +53,10 @@ class UsageMarketForecast:
 
 
 class UsageOpportunityMarketService:
-    def __init__(self, repository=None, config=None):
+    def __init__(self, repository=None, config=None, *, persist=True):
         self.repository = repository or UsageHistoryRepository()
         self.config = config
+        self.persist = persist
 
     def prepare(self, snapshot, refresh=False):
         return self.repository.prepare(snapshot['sport'], snapshot['commence_time'],
@@ -65,7 +66,7 @@ class UsageOpportunityMarketService:
         sport = snapshot['sport']
         if sport == 'NCAAF':
             from .ncaaf_model import CollegePlayerMarketService
-            return CollegePlayerMarketService('UO',self.repository,self.config).forecast(snapshot)
+            return CollegePlayerMarketService('UO',self.repository,self.config,persist=self.persist).forecast(snapshot)
         config = self.config or UsageOpportunityConfig.for_sport(sport)
         if sport not in {'NBA', 'NFL'}:
             raise DataSourceError('Usage & Opportunity is currently available for NBA and NFL only.')
@@ -97,7 +98,7 @@ class UsageOpportunityMarketService:
                                   ['game_id', 'home_team', 'away_team', 'pulled_at', 'commence_time', 'rows']})
         digest = sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         destination = self.repository.root/'forecasts'/sport.lower()/f'{digest}.json'
-        if destination.exists():
+        if self.persist and destination.exists():
             try:
                 cached = json.loads(destination.read_text(encoding='utf-8'))
                 if cached['identity'] == identity:
@@ -156,6 +157,8 @@ class UsageOpportunityMarketService:
                                'as_of': cutoff.isoformat(), 'input_sha256': fingerprint,
                                'implementation': signature, 'config': asdict(config)}
                 result.forecasts[key] = UsageOpportunityForecast.from_samples(values, diagnostics)
+        if not self.persist:
+            return result
         evaluations = []
         indexed_quotes = quote_index(snapshot['rows'])
         for row in snapshot['rows']:

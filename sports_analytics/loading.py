@@ -2,16 +2,17 @@
 from dash import Input,Output,dcc,html
 
 
-def indicator(message):
+def indicator(message,*,overlay=False):
     return html.Span([html.Span(className='action-spinner',**{'aria-hidden':'true'}),message],
-                     className='action-loading-message',role='status',**{'aria-live':'polite'})
+                     className='action-loading-message'+(' action-loading-overlay' if overlay else ''),
+                     role='status',**{'aria-live':'polite'})
 
 
 def loading(children,message='Loading…'):
     identity=getattr(children,'id',None)
     return dcc.Loading(children,show_initially=False,delay_show=150,delay_hide=100,
                        overlay_style={'visibility':'visible'},parent_className='action-loading',
-                       custom_spinner=indicator(message),**({'id':identity+'-loading'} if isinstance(identity,str) else {}))
+                       custom_spinner=indicator(message,overlay=True),**({'id':identity+'-loading'} if isinstance(identity,str) else {}))
 
 
 # These outputs belong to the work itself, including the first stage of
@@ -58,7 +59,7 @@ def configure(layout):
             node.delay_hide=100
             node.overlay_style={'visibility':'visible'}
             node.parent_className='action-loading'
-            node.custom_spinner=indicator('Loading…')
+            node.custom_spinner=indicator('Loading…',overlay=True)
         if hasattr(node,'children'):node.children=visit(node.children,inside or is_loading)
         if message and not inside and not is_loading:
             return loading(node,message)
@@ -71,6 +72,7 @@ def register(app):
     # feedback visible until its pending state clears, without another request.
     for output,store,page,condition in [
         ('load-status','historical-cache-pending','historical','Boolean(state)'),
+        ('trend','historical-cache-pending','historical','Boolean(state)'),
         ('information-status','information-data','information','state&&state.pending'),
         ('game-information-content','game-information-data','market','state&&state.pending'),
         ('kalshi-quote-status','kalshi-quotes','kalshi','state&&state.page_pending&&!(state.rows||[]).length'),

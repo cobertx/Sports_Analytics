@@ -64,6 +64,10 @@ function checkMarketNavigation(source) {
   check(saved.NFL.section === null, 'Do not reuse a section from a different snapshot');
   check(remember('#nfl-games', null, null, saved) === noUpdate, 'Schedule navigation preserves the last game');
   check(remember('#nba-game-999', 'nba-snapshot', 'Points', saved).NBA.route === '#nba-game-999', 'Capture NBA categories independently');
+  const beforeHistory=scrolls.length;
+  nodes['historical-performance-panel']=element('historical-performance-panel');
+  change('#nfl-game-123','#historical-player?sport=NFL&name=Jerry+Jeudy');
+  check(scrolls.length===beforeHistory+1&&scrolls.at(-1)==='historical-performance-panel','Open linked player history at the performance chart');
   return checks;
 }
 

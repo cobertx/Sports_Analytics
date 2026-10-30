@@ -167,7 +167,7 @@ class MispricingChecks(TestCase):
             'market-category':FILTER_CATEGORY,'market-quick-filter':1,'market-url':'#nfl-game-123',
             'market-snapshot':self.saved['pulled_at'],'market-quick-game-methods':['EPA','PPP'],'market-quick-player-methods':['PGE','WHP'],
             'market-quick-probability':75,'market-quick-edge':5,
-            'market-forecast-history':None,'workspace-page':'market'}
+            'mispricing-forecast-history':None,'workspace-page':'market'}
         with self.app.server.test_client() as client:
             for name in ['request_quick_filter','quick_filter_markets']:
                 key,meta=next((k,m) for k,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)

@@ -111,5 +111,19 @@ class MarketTransitionChecks(TestCase):
             for url in ['/assets/market_transition.js','/assets/market_transition.css','/_dash-dependencies']:
                 with client.get(url) as response:self.assertEqual(response.status_code,200)
 
+    def test_late_quick_filter_cannot_replace_the_current_game_forecast_poll_state(self):
+        metadata=next(m for m in self.app.callback_map.values() if m.get('callback')
+                      and m['callback'].__wrapped__.__name__=='quick_filter_markets')
+        outputs={output.component_id for output in metadata['output']}
+        self.assertNotIn('market-forecast-history',outputs)
+        self.assertIn('mispricing-forecast-history',outputs)
+        active=dict(context=['#nfl-game-456','new.csv'],pending=True,view_key=['Game'])
+        old=dict(context=['#nfl-game-123','old.csv'],game={'PPP':{'latest_date':'2026-10-10'}})
+        game,_=self.cb['forecast_history'](active,'#nfl-game-456','new.csv','PPP','WHP',old)
+        self.assertIn('Calculating',game)
+        quick=dict(context=['#nfl-game-456','new.csv'],game={'EPA':{'latest_date':'2026-10-20'}})
+        game,_=self.cb['forecast_history'](None,'#nfl-game-456','new.csv','EPA','WHP',quick)
+        self.assertIn('10/20/2026',game)
+
 
 if __name__=='__main__':main()

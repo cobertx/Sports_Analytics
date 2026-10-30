@@ -92,6 +92,17 @@ historical result rows carry **no invented sportsbook price**. The optional
 reference line is user-specified, fixed across the selected games, and distinct
 from an archived market-line backtest.
 
+NFL player evaluations use recorded positions and workload over the prior three
+completed team games. Passing markets keep up to two QBs averaging at least
+15 attempts/game. Rushing keeps the top QB with at least 3 carries/game and
+top two RBs with at least 5. Receiving markets keep up to two RBs with at least
+2 targets/game and three WRs with at least 3; TE and other positions are excluded.
+Touchdown markets retain their separate scoring-role rules, including TE.
+FB/HB aliases count as RB. Absent games count as zero workload; the target game's
+production never determines eligibility. Eligible zero-yard results stay in the
+evaluation. This is an observed-workload proxy, not a historical depth-chart feed.
+The new cohort policy is saved in each report; older reports remain viewable.
+
 Missing histories, incomplete matchup pairs, unsupported channels or inadequate
 calibration produce explicit skipped-game reasons. Previously prepared college
 transfer performance may support WHP; opportunity strategies retain their
@@ -199,15 +210,23 @@ oversubscribing the CPU. Model settings, simulation counts, random seeds and
 chronological input boundaries are unchanged. Workers use saved local inputs
 and the selected cache database; they never import or start the dashboard.
 Closing the server terminates its active workers.
-Intermediate player-forecast caches are scoped to the run ID, so overlapping
-replays do not compete to replace the same files. The parent server alone
-updates each method's latest-result marker; completed reports remain reusable.
+Player replays retain intermediate fits in run-local memory instead of writing
+live-market forecast/audit JSON for every historical matchup. Final reports and
+CSV exports are still saved. OAM/PGE continue unchanged historical fit prefixes;
+revisions, rolling-window changes and changed settings rebuild the affected fit.
+Small WHP calibration results have a separate bounded cache so a league-wide run
+does not repeatedly evict every player's calibration work. A failed joint fit is
+attempted once per matchup and still records a skip reason for each player.
+All intermediate state is isolated between concurrent runs. The parent server
+alone updates each method's latest-result marker; completed reports remain reusable.
 
 The progress bar to the right of Export
 results updates from completed/attempted games, including skipped targets, and
 reaches 100% after results are saved. Preparing inputs remains at 0%; saving is
 capped at 99%. A single slow model fit can leave the percentage unchanged until
-that game completes. Polling does not rerun the model. Change the controls and
+that game completes. The status identifies the current matchup/player, and a
+worker heartbeat reports time spent in that step every five seconds without
+advancing the completed count. Polling does not rerun the model. Change the controls and
 use **Run another backtest** to submit another job, including on the same player
 method page. Identical concurrent requests share a job. Progress
 is local to the server process; finished reports persist across app restarts.

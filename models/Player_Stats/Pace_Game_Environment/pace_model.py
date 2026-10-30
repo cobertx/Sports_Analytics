@@ -12,6 +12,7 @@ class PaceModel:
         self.history = pd.DataFrame()
         self.training = []
         self.residuals = []
+        self._fit_config = None
 
     def _feature_lookup(self, history):
         """Share the same eligible league and team summaries within a date batch."""
@@ -64,12 +65,26 @@ class PaceModel:
         return additions, residuals
 
     def fit(self, rows):
+        try:
+            return self._extend_fit(rows)
+        except Exception:
+            self._fit_config = None
+            raise
+
+    def _extend_fit(self, rows):
         rows = rows.assign(season=season_ids(rows, self.config.baseline.sport))
+        previous = self.history
+        extend = (self._fit_config == self.config and not previous.empty and
+                  len(rows) >= len(previous) and rows.iloc[:len(previous)].equals(previous) and
+                  (len(rows) == len(previous) or rows.iloc[len(previous):].event_date.min() > previous.event_date.max()))
+        offset = len(previous) if extend else 0
         self.history = rows.copy()
-        self.training,self.residuals = [],[]
+        self._fit_config = self.config
+        if not extend:
+            self.training,self.residuals = [],[]
         # Every target-date batch is predicted from strictly earlier available
         # results, before that batch's targets enter any coefficient fit.
-        for when,batch in rows.groupby('event_date',sort=True):
+        for when,batch in rows.iloc[offset:].groupby('event_date',sort=True):
             prefix = rows[rows.available_at.lt(when) & rows.event_date.lt(when)]
             if prefix.game_id.nunique() < self.config.minimum_league_games:
                 continue

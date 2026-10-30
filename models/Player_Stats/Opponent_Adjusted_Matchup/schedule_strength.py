@@ -64,17 +64,40 @@ class ScheduleAdjustedDefense:
         self.config=config
         self.records=[]
         self.historical={}
+        self._components={}
+        self._fit_config=None
+        self._profile_records=None
 
     def fit(self, features):
+        try:
+            return self._extend_fit(features)
+        except Exception:
+            # A partly processed batch must never become a reusable prefix.
+            self._fit_config=None
+            raise
+
+    def _extend_fit(self, features):
         cfg=self.config
-        self.records,self.historical=[],{}
         features = features.assign(season=season_ids(features, cfg.baseline.sport))
-        for component, frame in features.groupby('component',sort=True):
-            league=deque(maxlen=cfg.league_window)
-            offense=defaultdict(lambda:deque(maxlen=cfg.baseline.efficiency_window))
-            defense=defaultdict(lambda:deque(maxlen=cfg.defense_window))
-            pending=[]
-            for seq,row in enumerate(frame.itertuples(index=False)):
+        frames={name:frame.reset_index(drop=True) for name,frame in features.groupby('component',sort=True)}
+        # Continue only an unchanged, ordered prefix. Revisions, rolling windows,
+        # removed components and configuration changes always rebuild the fit.
+        extend=(self._fit_config==cfg and self._components.keys()<=frames.keys() and all(
+            len(frames[name])>=len(state['frame']) and frames[name].iloc[:len(state['frame'])].equals(state['frame'])
+            for name,state in self._components.items()))
+        if not extend:
+            self._components={};self.historical={}
+        self._fit_config=cfg
+        for component, frame in frames.items():
+            state=self._components.get(component)
+            if state is None:
+                state=dict(frame=frame.iloc[:0],records=[],league=deque(maxlen=cfg.league_window),
+                    offense=defaultdict(lambda:deque(maxlen=cfg.baseline.efficiency_window)),
+                    defense=defaultdict(lambda:deque(maxlen=cfg.defense_window)),pending=[])
+                self._components[component]=state
+            league,offense,defense,pending=(state[key] for key in ['league','offense','defense','pending'])
+            offset=len(state['frame'])
+            for seq,row in enumerate(frame.iloc[offset:].itertuples(index=False),offset):
                 # Availability, not merely start order, controls admission. Equal
                 # timestamps are excluded, including concurrent slate results.
                 while pending and pending[0][0] < row.event_date.value:
@@ -100,13 +123,21 @@ class ScheduleAdjustedDefense:
                             event_date=row.event_date.isoformat(),available_at=row.available_at.isoformat(),season=int(row.season),
                             actual=float(row.actual),exposure=float(row.exposure),expected=float(expected),
                             neutral_actual=float(row.actual)/factor,historical_factor=factor)
-                self.records.append(record)
+                state['records'].append(record)
                 heapq.heappush(pending,(row.available_at.value,seq,record))
+            state['frame']=frame.copy(deep=True)
+        self.records=[record for name in sorted(self._components) for record in self._components[name]['records']]
+        self._profile_records=None
         return self
 
     def profile(self, defense, component):
         cfg=self.config
-        records=[r for r in self.records if r['defense']==defense and r['component']==component and r['expected']>0]
+        if self._profile_records is None:
+            self._profile_records=defaultdict(list)
+            for record in self.records:
+                if record['expected']>0:
+                    self._profile_records[record['defense'],record['component']].append(record)
+        records=self._profile_records.get((defense,component),[])
         records=sorted(records,key=lambda r:(r['event_date'],r['game_id']))[-cfg.defense_window:]
         if len(records)<cfg.minimum_defense_games:
             return None

@@ -87,6 +87,11 @@ class DataService:
         return 0<=age.total_seconds()<ttl and self.compatible(query,cached)
 
     def load(self, query, refresh=False, local_first=False):
+        """With local_first, return saved data or queue a first download.
+
+        A loading-cache result has an empty frame; navigation polls for the
+        completed dataset. Normal model loads and explicit refreshes still wait.
+        """
         if local_first and not refresh:
             cached=self.cached(self.key(query))
             if cached and self.compatible(query,cached):
@@ -97,6 +102,12 @@ class DataService:
                 state=self._refresh.request(self.key(query),update)
                 return replace(cached,status='stale cache' if state['error'] else 'updating cache',
                                notice=state['error'] or 'Checking the source in the background; saved data is available now.')
+            if cached is None:
+                # First-time history navigation should render immediately too.
+                # The normal keyed load lock still deduplicates the download.
+                state=self._refresh.request(self.key(query),lambda:self.load(query))
+                if state['error']:raise DataSourceError(state['error'])
+                return Dataset(self.key(query),pd.DataFrame(),SOURCES[query.sport][0],'','loading cache')
         with self._load_guard:lock=self._load_locks.setdefault(self.key(query),Lock())
         # Navigation can update several controls at once. Share its first download
         # instead of issuing duplicate requests for the same season and scope.

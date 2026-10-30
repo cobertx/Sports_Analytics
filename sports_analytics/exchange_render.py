@@ -65,6 +65,7 @@ def render(snapshot, previous=None, *, table_open=False, rules_open=False, provi
                 if snapshot.get('fetched_at')!=previous.get('fetched_at'):
                     patch[index]['quote_fetched_at']=snapshot.get('fetched_at')
             if patch.to_plotly_json()['operations']: table=patch
-    state=dict(structure=structure,values=values,fetched_at=snapshot.get('fetched_at'),
+    state=dict(context=[snapshot['sport'],snapshot['game_id'],snapshot['category']],
+               structure=structure,values=values,fetched_at=snapshot.get('fetched_at'),
                table_open=bool(table_open),rules_open=bool(rules_open))
     return table,tips,rules,sections,state

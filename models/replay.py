@@ -43,16 +43,24 @@ class ReplayCache:
     def __init__(self):
         self.calculations = OrderedDict()
         self.sources = OrderedDict()
+        self.instances = OrderedDict()
+        self.scalars = OrderedDict()
         self.hits = self.misses = 0
 
     def compute(self, key, calculate, *, source=False):
-        cache, maximum = (self.sources, 4) if source else (self.calculations, 512)
-        if key in cache:
-            self.hits += 1
-            cache.move_to_end(key)
-            return deepcopy(cache[key])
+        for cache in ([self.sources] if source else [self.scalars,self.calculations]):
+            if key in cache:
+                self.hits += 1
+                cache.move_to_end(key)
+                return deepcopy(cache[key])
         self.misses += 1
         result = calculate()
+        # A league replay can visit hundreds of players * 40 WHP folds before
+        # revisiting one player. Small scalar errors need their own working set;
+        # they must not evict (or be evicted by) the larger fitted model objects.
+        if source:cache,maximum=self.sources,4
+        elif isinstance(result,(float,int,bool,np.number)):cache,maximum=self.scalars,32768
+        else:cache,maximum=self.calculations,512
         # Callers may modify fitted arrays, frames or diagnostics. Keep an
         # independent copy so a later cache hit always sees the original result.
         cache[key] = deepcopy(result)
@@ -81,6 +89,20 @@ def replay_scope(function):
         with replay_cache():
             return function(*args, **kwargs)
     return wrapped
+
+
+def replay_instance(model_type, config):
+    """Keep incremental fit state inside one replay, never across live jobs."""
+    cache = _active.get()
+    if cache is None:
+        return model_type(config)
+    key = (model_type, fingerprint(config))
+    if key not in cache.instances:
+        cache.instances[key] = model_type(config)
+        if len(cache.instances) > 8:
+            cache.instances.popitem(last=False)
+    cache.instances.move_to_end(key)
+    return cache.instances[key]
 
 
 def cached_calculation(model, operation, inputs, calculate):

@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 import numpy as np
 import pandas as pd
+from models.replay import replay_instance
 
 from sports_analytics.data import DataSourceError
 from sports_analytics.nba_markets import NBA_TEAM_CODES
@@ -51,10 +52,11 @@ def implementation_hash():
 
 
 class OpponentAdjustedMarketService:
-    def __init__(self,repository=None,config=None,scenarios=()):
+    def __init__(self,repository=None,config=None,scenarios=(),*,persist=True):
         self.repository=repository or MatchupHistoryRepository()
         self.config=config
         self.scenarios=list(scenarios)
+        self.persist=persist
 
     def prepare(self,snapshot,refresh=False):
         return self.repository.prepare(snapshot['sport'],snapshot['commence_time'],
@@ -66,7 +68,7 @@ class OpponentAdjustedMarketService:
             if self.scenarios:
                 raise DataSourceError('College lineup scenarios are not connected; omit the scenario file.')
             from models.Player_Stats.Usage_Opportunity.ncaaf_model import CollegePlayerMarketService
-            return CollegePlayerMarketService('OAM',self.repository,self.config).forecast(snapshot)
+            return CollegePlayerMarketService('OAM',self.repository,self.config,persist=self.persist).forecast(snapshot)
         if sport not in {'NBA','NFL'}:
             raise DataSourceError('Opponent-adjusted matchup is currently available for NBA and NFL only.')
         config=self.config or MatchupConfig.for_sport(sport)
@@ -92,7 +94,7 @@ class OpponentAdjustedMarketService:
                       snapshot={k:snapshot.get(k) for k in ['sport','game_id','home_team','away_team','pulled_at','commence_time','rows']})
         digest=sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
         path=self.repository.root/'forecasts'/sport.lower()/f'{digest}.json'
-        if path.exists():
+        if self.persist and path.exists():
             try:
                 saved=json.loads(path.read_text(encoding='utf-8'))
                 if saved['identity']==identity:
@@ -103,21 +105,25 @@ class OpponentAdjustedMarketService:
                 pass
         fit_identity={k:v for k,v in identity.items() if k not in {'snapshot','scenarios'}}
         fit_path=self.repository.root/'defense'/sport.lower()/(sha256(json.dumps(fit_identity,sort_keys=True).encode()).hexdigest()+'.json')
-        model=ScheduleAdjustedDefense(config)
+        model=replay_instance(ScheduleAdjustedDefense,config)
         restored=False
-        if fit_path.exists():
+        if self.persist and fit_path.exists():
             try:
                 saved=json.loads(fit_path.read_text(encoding='utf-8'))
                 if saved['identity']==fit_identity:
                     model.records=saved['records']
                     model.historical={tuple(r[:3]):r[3] for r in saved['historical']}
+                    # A disk-restored fit has no continuation queues.
+                    model._components={};model._fit_config=None
+                    model._profile_records=None
                     restored=True
             except (ValueError,KeyError,TypeError):
                 pass
         if not restored:
             model.fit(feature_rows(sport,players,teams))
-            atomic_json(fit_path,dict(identity=fit_identity,records=model.records,
-                                     historical=[[*key,value] for key,value in model.historical.items()]))
+            if self.persist:
+                atomic_json(fit_path,dict(identity=fit_identity,records=model.records,
+                                         historical=[[*key,value] for key,value in model.historical.items()]))
         result,matched,failed_players=MatchupMarketForecast(),{},{}
         players['_whp_name']=players.entity_name.map(identity_name)
         for row in snapshot['rows']:
@@ -182,6 +188,8 @@ class OpponentAdjustedMarketService:
                     'neutral_fallbacks':[component for offense,component in sorted(context.fallbacks) if offense==club],
                     'limitations':'Box-score schedule adjustment. No inferred tactical, injury, route or tracking data. Sparse components remain neutral; NFL TD/order props are unsupported.'}
                 result.forecasts[key]=MatchupForecast.from_samples(values,diagnostics)
+        if not self.persist:
+            return result
         evaluations=[]
         indexed_quotes=quote_index(snapshot['rows'])
         for row in snapshot['rows']:

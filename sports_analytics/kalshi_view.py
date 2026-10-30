@@ -18,6 +18,7 @@ from .market_view import probability_text
 from models.Game_Outcome.PPP.PPP import fair_american_odds
 from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
+from .loading import indicator
 
 MULTIWORD_MASCOTS = {'Crimson Tide', 'Sun Devils', 'Red Wolves', 'Black Knights', 'Golden Bears',
     'Blue Devils', 'Yellow Jackets', 'Fighting Illini', "Ragin' Cajuns", 'Golden Gophers',
@@ -179,6 +180,7 @@ def layout(provider='Kalshi'):
             html.P('Market implied = ask price / contract payout. Edge = calculated probability minus market implied, before fees. '
                    'Yes and No have their own buying costs. Estimates describe full-game outcomes; live game state is not modeled.',
                    className='ppp-comparison-note') if not polymarket else None,
+            html.Div(indicator('Loading the selected markets…'),className='exchange-sections-transition'),
             html.Div(id=f'{prefix}-market-sections'),
             html.Details([html.Summary('Detailed quote table & CSV export'),
               dash_table.DataTable(id=f'{prefix}-table', columns=columns, data=[], page_size=20, sort_action='native',

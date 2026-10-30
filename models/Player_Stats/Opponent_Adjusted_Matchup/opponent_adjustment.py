@@ -63,7 +63,7 @@ class MatchupContext:
         else:
             components=[component]*len(frame)
         return np.array([self.model.historical.get((feature,str(game),str(team)),1.)
-                         for feature,game,team in zip(components,frame.game_id,frame.team)])
+                         for feature,game,team in zip(components,frame.game_id.to_numpy(),frame.team.to_numpy())])
 
     def current(self, offense, component):
         if (offense,component) not in self.draws:

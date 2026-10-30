@@ -139,6 +139,7 @@ class PromptLandingChecks(TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.service=DataService(Path(self.tmp.name)/'sports.sqlite3')
+        self.addCleanup(self.service._refresh.shutdown,wait=True)
         self.source=load(Query('NBA',SEASON,'player'),client_for(boxes()))
         self.app=create_app(service=self.service,career_service=Mock())
         self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in self.app.callback_map.values() if m.get('callback')}
@@ -151,6 +152,9 @@ class PromptLandingChecks(TestCase):
     def test_link_loads_its_season_and_player_scope_before_old_controls_settle(self):
         with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='workspace-page')), \
              patch('sports_analytics.service.fetch',return_value=self.source) as request:
+            initial=self.cb['load_data'](0,0,'NBA',SEASON-1,'team','postseason',None,5,'historical',None,self.href)
+            self.assertIsNone(initial[0]);self.assertTrue(initial[4])
+            self.service._refresh.tasks.join()
             dataset=self.cb['load_data'](0,0,'NBA',SEASON-1,'team','postseason',None,5,'historical',None,self.href)[0]
         request.assert_called_once_with(Query('NBA',SEASON,'player'))
         entity=self.cb['select_options'](dataset,ALL_TEAMS,None,self.href)[1]
@@ -168,6 +172,7 @@ class PromptLandingChecks(TestCase):
         with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='season')), \
              patch('sports_analytics.service.fetch',return_value=self.source) as request:
             self.cb['load_data'](0,0,'NBA',SEASON-1,'player','regular',None,None,'historical',None,self.href)
+            self.service._refresh.tasks.join()
         request.assert_called_once_with(Query('NBA',SEASON-1,'player'))
 
     def test_source_failure_reports_an_error_instead_of_remaining_loading_forever(self):
@@ -179,10 +184,14 @@ class PromptLandingChecks(TestCase):
                 'college-team':None,'week':5,'workspace-page':'historical','dataset':None,'market-url':self.href}
         key,meta=next((key,m) for key,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__=='load_data')
         with patch('sports_analytics.service.fetch',return_value=self.source) as request,self.app.server.test_client() as client:
-            response=client.post('/_dash-update-component',json=dict(output=key,
+            payload=dict(output=key,
                 outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
                 inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['market-url.hash']))
+                state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['market-url.hash'])
+            initial=client.post('/_dash-update-component',json=payload)
+            self.assertTrue(initial.get_json()['response']['historical-cache-pending']['data'])
+            self.service._refresh.tasks.join()
+            response=client.post('/_dash-update-component',json=payload)
         self.assertEqual(response.status_code,200,response.get_data(as_text=True))
         dataset=response.get_json()['response']['dataset']['data']
         self.assertEqual((dataset['season'],dataset['kind']),(SEASON,'player'))

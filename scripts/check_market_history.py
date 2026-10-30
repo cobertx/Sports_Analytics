@@ -102,6 +102,19 @@ class MarketHistoryChecks(TestCase):
         self.assertEqual(self.callbacks['sport_page_navigation']('historical','NBA','player',saved)[-1],'#nba-games')
         self.assertEqual(self.callbacks['snapshot_categories']('newer-snapshot',entry['route'],None,saved)[1],'Game')
 
+    def test_player_header_carries_first_visible_selection_line_and_return_context(self):
+        snapshot=dict(sport='NBA',game_id='123',commence_time='2026-10-25T23:00:00Z',
+            rows=[dict(market_key='player_points_rebounds_assists_alternate',group='Combos',market='Alt PRA',
+                subject='Player One',selection=side,line=line,odds=-110)
+                for side,line in [('Under',35.5),('Over',40.5),('Over',30.5)]])
+        sections=market_sections(snapshot,'Combos')
+        link=next(node for node in components(sections) if getattr(node,'className',None)=='market-history-link')
+        target=history_target(link.href)
+        self.assertEqual((target['line'],target['compare'],target['push']),(30.5,'gt',True))
+        self.assertEqual(target['origin'],'#nba-game-123')
+        self.assertEqual(target['as_of'],snapshot['commence_time'])
+        self.assertIn('another line',link.title)
+
     def test_dash_http_restores_origin_on_first_market_navigation(self):
         snapshot=dict(sport='NFL',game_id='123',pulled_at='2026-10-20T12:00:00Z',csv_file='saved-snapshot',cost=17,
             commence_time='2026-10-25T17:00:00Z',home_team='Cleveland Browns',away_team='Baltimore Ravens',
