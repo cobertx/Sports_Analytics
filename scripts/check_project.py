@@ -172,8 +172,7 @@ def main():
                 label,_=default_lookback(sport,model.group,model.key)
                 require(label.endswith('(Model Default)') and parse_lookback(label,sport,model.group,model.key) is None,
                         f'Backtesting model-default lookback failed: {sport} {model.key}')
-        college_methods=next(m['callback'].__wrapped__ for m in app.callback_map.values()
-                             if m.get('callback') and m['callback'].__wrapped__.__name__=='forecast_methods')
+        from sports_analytics.navigation import forecast_methods as college_methods
         options,method=college_methods('#ncaaf-game-123','EPA')
         require(method=='EPA' and {r['value'] for r in options}=={'PPP','EPA','ELO'} and
                 not any(r.get('disabled') for r in options),'College game-outcome methods must be enabled.')

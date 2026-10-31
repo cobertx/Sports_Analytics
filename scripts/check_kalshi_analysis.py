@@ -14,6 +14,7 @@ from dash import no_update
 from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 from models.Game_Outcome.PPP.PPP import MarketProbability,PPPForecast
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.kalshi import contract
@@ -24,6 +25,7 @@ from sports_analytics.exchange_render import render
 from check_exchange_updates import apply_patch,normalized
 import check_kalshi as fixtures
 from check_kalshi import raw_market,components,NOW,GAME
+from check_mispricing import finish_filter
 
 
 def row(family='TOTAL',index=0,**changes):
@@ -178,7 +180,8 @@ class KalshiFilterCallbacks(TestCase):
             nba_ppp_service=self.engines['PPP'],nba_epa_service=self.engines['EPA'],nba_elo_service=self.engines['ELO'],
             whp_service=self.players['WHP'],usage_opportunity_service=self.players['UO'],
             opponent_adjusted_service=self.players['OAM'],pace_game_environment_service=self.players['PGE'])
-        self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in self.app.callback_map.values() if m.get('callback')}
+        self.addCleanup(self.app._filter_jobs.tasks.queue.shutdown)
+        self.cb=callback_functions(self.app)
 
     def scan(self,selected='live'):
         with patch('sports_analytics.kalshi_analysis_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-apply-criteria')):
@@ -258,8 +261,8 @@ class KalshiFilterCallbacks(TestCase):
                     else dict(id=outputs.component_id,property=outputs.component_property))
             with self.app.server.test_client() as client:
                 response=client.post('/_dash-update-component',json=dict(output=key,outputs=output,
-                    inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                    state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['kalshi-quotes.data']))
+                    inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['kalshi-quotes.data']))
             self.assertEqual(response.status_code,200,response.get_data(as_text=True))
             data=response.get_json()['response']
             if name=='kalshi_models':values['kalshi-models']=data['kalshi-models']['data']
@@ -270,8 +273,10 @@ class KalshiFilterCallbacks(TestCase):
 
 
     def quick(self,methods=None,players=None,probability=0,edge=-100,selected='live'):
-        return self.cb['kalshi_quick_scan'](1,probability,edge,methods or ['PPP','EPA','ELO'],players or ['WHP','UO','OAM','PGE'],
+        scan,status=self.cb['kalshi_quick_scan'](1,probability,edge,methods or ['PPP','EPA','ELO'],players or ['WHP','UO','OAM','PGE'],
             self.game,FILTER,selected,'kalshi',view.href('NFL',GAME))
+        result=finish_filter(self.app,scan)
+        return result,result.get('status',status)
 
     def test_quick_consensus_fits_each_method_once_and_keeps_apply_state_independent(self):
         player=dict(self.snapshot['rows'][0],ticker='KXNFLPASSYDS-PLAYER',event_ticker='KXNFLPASSYDS-26OCT25PITNO',
@@ -299,6 +304,7 @@ class KalshiFilterCallbacks(TestCase):
         self.engines['EPA'].forecast.side_effect=None
         lower=PPPForecast('NO','PIT',20,10,12,10,diagnostics={})
         self.engines['EPA'].forecast.return_value=lower
+        self.app._filter_jobs.forecasts.clear()
         scan,_=self.quick(probability=50)
         # Opposite forecasts disagree on every side of these totals.
         self.assertFalse(scan['ranked']['matches'])
@@ -310,6 +316,7 @@ class KalshiFilterCallbacks(TestCase):
     def test_quick_archive_is_immutable_and_invalid_inputs_do_not_fetch(self):
         for methods,players in [([],['WHP']),(['PPP'],[]),(['INVALID'],['WHP'])]:
             scan,status=self.cb['kalshi_quick_scan'](1,75,5,methods,players,self.game,FILTER,'live','kalshi',view.href('NFL',GAME))
+            scan=finish_filter(self.app,scan)
             self.assertIs(scan,no_update);self.assertIn('Select at least one supported',status)
         self.exchange.all_quotes.assert_not_called()
         self.exchange.history.side_effect=lambda g,c:['archive.json'] if c=='Game Lines' else []
@@ -333,13 +340,15 @@ class KalshiFilterCallbacks(TestCase):
                 outputs=([dict(id=o.component_id,property=o.component_property) for o in outputs] if isinstance(outputs,list)
                          else dict(id=outputs.component_id,property=outputs.component_property))
                 response=client.post('/_dash-update-component',json=dict(output=key,outputs=outputs,
-                    inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                    state=[dict(**item,value=values[item['id']]) for item in meta['state']],
+                    inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],
                     changedPropIds=['kalshi-quick-filter.n_clicks'] if name=='kalshi_quick_scan' else ['kalshi-quick-scan.data']))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 data=response.get_json()['response']
                 self.assertNotIn('kalshi-applied-criteria',data);self.assertNotIn('kalshi-models',data)
-                if name=='kalshi_quick_scan':values['kalshi-quick-scan']=data['kalshi-quick-scan']['data']
+                if name=='kalshi_quick_scan':
+                    values['kalshi-quick-scan']=data['kalshi-quick-scan']['data']
+                    finish_filter(self.app,values['kalshi-quick-scan'])
                 else:self.assertIn('Lowest edge (pp)',str(data));self.assertIn('Top 3 by edge',str(data))
 
     def test_all_category_fetch_retains_exact_links_cache_and_snapshot_saving(self):

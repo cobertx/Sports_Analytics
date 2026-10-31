@@ -1,5 +1,7 @@
 """Additional Information tabs and independently updated NFL header conditions."""
 import re
+from .navigation import scoped_callback
+
 from dash import Input,Output,State,ctx,dcc,html,no_update
 from dash.exceptions import PreventUpdate
 from .game_information import ADDITIONAL_INFORMATION,scope,roof,kickoff_weather
@@ -96,7 +98,7 @@ def contents(packet,game,now):
 
 
 def register(app,service):
-    @app.callback(Output('game-additional-information','style'),Input('market-category','value'),
+    @scoped_callback(app,'market',Output('game-additional-information','style'),Input('market-category','value'),
                   Input('market-detail-context','data'),Input('workspace-page','value'),Input('market-url','hash'))
     def additional_information_visibility(category,game,page,location):
         return {'display':'block' if category==ADDITIONAL_INFORMATION and active(game,page,location) else 'none'}
@@ -110,7 +112,7 @@ def register(app,service):
         Input('market-detail-context','data'),Input('workspace-page','value'),Input('market-url','hash'),
         Input('market-category','value'),Input('game-information-data','data'))
 
-    @app.callback(Output('game-information-data','data'),Input('market-detail-context','data'),Input('workspace-page','value'),
+    @scoped_callback(app,'market',Output('game-information-data','data'),Input('market-detail-context','data'),Input('workspace-page','value'),
                   Input('market-url','hash'),Input('market-category','value'),Input('game-information-refresh','n_clicks'),
                   Input('game-information-poll','n_intervals'),State('game-information-data','data'))
     def load_game_information(game,page,location,category,clicks,tick,previous):
@@ -119,13 +121,13 @@ def register(app,service):
                             refresh=ctx.triggered_id=='game-information-refresh' and bool(clicks))
         return no_update if packet==previous else packet
 
-    @app.callback(Output('market-game-conditions','children'),Input('game-information-data','data'),
+    @scoped_callback(app,'market',Output('market-game-conditions','children'),Input('game-information-data','data'),
                   Input('market-detail-context','data'),Input('workspace-page','value'),Input('market-url','hash'))
     def game_header_conditions(packet,game,page,location):
         if not active(game,page,location) or game['sport']!='NFL':return []
         return conditions(packet,game)
 
-    @app.callback(Output('game-information-content','children'),Input('game-information-data','data'),
+    @scoped_callback(app,'market',Output('game-information-content','children'),Input('game-information-data','data'),
                   Input('market-detail-context','data'),Input('market-category','value'),Input('workspace-page','value'),Input('market-url','hash'))
     def game_additional_information(packet,game,category,page,location):
         if not active(game,page,location) or category!=ADDITIONAL_INFORMATION:raise PreventUpdate

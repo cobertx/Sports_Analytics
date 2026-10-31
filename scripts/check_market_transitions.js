@@ -88,10 +88,33 @@ function checkMarketTransitions(source) {
     check(screen(...args).includes('exchange-quotes-pending'),'Hide exchange rows from the previous category');
   }
   window.location.hash='#historical-player?sport=NFL&name=Jerry+Jeudy';events.hashchange();
-  check(writes.some(value=>value.id==='sport'&&value.props.value==='NFL'),'Update sport immediately on a cross-sport history link');
-  check(writes.some(value=>value.id==='workspace-page'&&value.props.value==='historical'),'Start Historical Data work locally');
+  check(JSON.stringify(api.select(window.location.hash,'NBA','market'))===JSON.stringify(['NFL','historical']),'The hash-only client router selects sport and page locally');
+  check(!writes.some(value=>['sport','workspace-page'].includes(value.id)),'The native paint bridge never duplicates router writes');
   const noUpdate={};window.dash_clientside.no_update=noUpdate;
   check(api.reconcile(...detailArgs)===noUpdate,'An outdated URL callback cannot restore the previous market page');
+  const projection=api.readiness(context,null,null,catalog,null,null,
+    {...info,game:{large:Array(1000).fill('forecast')}},{context:['NBA','123','Points'],values:Array(1000).fill(100)},null,null);
+  check(JSON.stringify(projection).length<500,'Readiness contains identities rather than fitted forecasts or row arrays');
+  check(api.readiness(context,null,null,catalog,null,null,{...info,game:{changed:'unrelated'}},
+    {context:['NBA','123','Points'],values:[999]},null,projection)===noUpdate,'Unchanged readiness does not repaint the screen');
+  const changedMethod=detailArgs.slice();changedMethod[17]='ELO';
+  check(screen(...changedMethod).includes('market-quotes-pending'),'Hide probabilities belonging to the prior selected method');
+  const historyArgs=['#historical-player?sport=NBA&name=Player+A','NBA',null,null,null,null,null,null,'historical'];
+  check(screen(...historyArgs).includes('history-view-pending'),'Hide the last player while linked history loads');
+  historyArgs[16]={route:historyArgs[0],sport:'NBA'};
+  check(!screen(...historyArgs).includes('history-view-pending'),'Reveal only matching history');
+  historyArgs[16]={route:'#historical-player?sport=NBA&name=Player+B',sport:'NBA'};
+  check(screen(...historyArgs).includes('history-view-pending'),'Reject an out-of-order history result');
+  historyArgs[16]={route:historyArgs[0],sport:'NFL'};
+  check(screen(...historyArgs).includes('history-view-pending'),'Changing sport cannot display the prior sport history');
+  historyArgs[16]={route:historyArgs[0],sport:'NBA',kind:'team'};
+  check(screen(...historyArgs).includes('history-view-pending'),'Team data cannot flash on a player page while its dataset is changing');
+  historyArgs[16]={route:historyArgs[0],sport:null};
+  check(!screen(...historyArgs).includes('history-view-pending'),'A completed empty/error view remains visible with its source status');
+  screen(...historyArgs);window.location.hash=historyArgs[0];events.hashchange();
+  check(!writes.at(-1).props.className.includes('history-view-pending'),'Returning to matching retained history does not flash a placeholder');
+  window.location.hash=historyArgs[0].replace('Player+A','Player+C');events.hashchange();
+  check(writes.at(-1).props.className.includes('history-view-pending'),'Native history navigation hides the old scope before any server callback');
   const count=writes.length;delete window.dash_clientside.set_props;events.hashchange();
   check(writes.length===count,'Startup before Dash initializes the event bridge is safe');
   return checks;

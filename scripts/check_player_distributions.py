@@ -101,7 +101,7 @@ class PlayerDistributionChecks(TestCase):
                 forecasts=fitted_rows,selection=lambda row:fitted.market(row['line'],row['selection']))
             shown,_=fixture.cb['show_saved_markets']('Passing',fixture.saved['pulled_at'],'#nfl-game-123',None,'PPP',method,None)
             payloads=[node.data for node in components(shown) if isinstance(node,dcc.Store)]
-            self.assertEqual(len(payloads),4)
+            self.assertEqual(len(payloads),2)
             self.assertTrue(all(payload['method']==method for payload in payloads))
             self.assertTrue(all(payload['mass']==distribution(fitted)['mass'] for payload in payloads))
             fixture.player_services[method].forecast.assert_called_once()

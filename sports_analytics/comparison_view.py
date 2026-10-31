@@ -1,4 +1,5 @@
 """Controls and comparable metrics/plots for research methodology comparisons."""
+from .presentation import table_cell, table_header
 import numpy as np
 from dash import dcc,html,dash_table
 import plotly.graph_objects as go
@@ -76,8 +77,8 @@ def render(context,reports,target,basis,tolerance):
         table.append(formatted)
     comparison_table=dash_table.DataTable(data=table,columns=[dict(id=k,name=label) for k,label in columns],
         sort_action='native',style_table={'overflowX':'auto'},
-        style_cell={'backgroundColor':'#111d2e','color':'#c7d3e4','border':'1px solid #243249','padding':'10px','textAlign':'left','fontFamily':'Segoe UI','fontSize':'12px'},
-        style_header={'backgroundColor':'#17253a','fontWeight':'600'})
+        style_cell=table_cell(),
+        style_header=table_header())
     errors=figure('Forecast errors by method','Method','Error in statistic units')
     for metric,label in [('mae','MAE'),('rmse','RMSE')]:
         errors.add_trace(go.Bar(x=[r['method'] for r in summary],y=[r.get(metric) for r in summary],name=label))

@@ -3,6 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 from time import time
 from uuid import uuid4
 
+from .navigation import scoped_callback,register_visibility,summary_visibility
+
 from dash import ALL,Input,Output,State,ctx,html,no_update
 from dash.exceptions import PreventUpdate
 
@@ -27,19 +29,11 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         return page!=='market-summary'||!((catalog&&catalog.updating)||(selected&&quotes&&quotes.updating));
     }''',Output('summary-cache-poll','disabled'),Input('workspace-page','value'),Input('summary-game','value'),
         Input('summary-catalog','data'),Input('summary-quotes','data'))
-    @app.callback(Output('market-summary-page','style'),Output('market-data-navigation','style'),
+    register_visibility(app,summary_visibility,Output('market-summary-page','style'),Output('market-data-navigation','style'),
                   Output('market-data-navigation','className'),Output('market-summary-page-link','href'),
-                  Output('market-summary-page-link','className'),Output('summary-credit-note','children'),
-                  Input('workspace-page','value'),Input('sport','value'))
-    def summary_visibility(page,sport):
-        active=page=='market-summary' and sport in SOURCES
-        credits=len({'NBA':NBA_MARKETS,'NFL':NFL_MARKETS,'NCAAF':NCAAF_MARKETS}.get(sport,{}))
-        return ({'display':'grid' if active else 'none'},{} if sport in SOURCES else {'display':'none'},
-                'market-data-navigation'+(' active' if page in {'market','kalshi','polymarket','market-summary','filtered-results'} else ''),
-                f'#{sport.lower()}-market-summary','sport-page-link'+(' active' if active else ''),
-                f'FanDuel: up to {credits} API credits per pull. Kalshi / Polymarket: public data.')
+                  Output('market-summary-page-link','className'),Output('summary-credit-note','children'))
 
-    @app.callback(Output('summary-catalog','data'),Output('summary-catalog-status','children'),
+    @scoped_callback(app,'market-summary',Output('summary-catalog','data'),Output('summary-catalog-status','children'),
                   Input('workspace-page','value'),Input('sport','value'),Input('summary-days','value'),Input('summary-refresh','n_clicks'),
                   State('summary-catalog','data'),Input('summary-cache-poll','n_intervals'),prevent_initial_call=True,
                   running=[(Output('summary-refresh','disabled'),True,False)])
@@ -73,7 +67,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                 None if clicked=='summary-back' else previous if previous in identities else None)
         return options,chosen
 
-    @app.callback(Output('summary-game-cards','children'),Output('summary-game-cards','style'),
+    @scoped_callback(app,'market-summary',Output('summary-game-cards','children'),Output('summary-game-cards','style'),
                   Output('summary-detail','style'),Output('summary-game-header','children'),
                   Input('summary-catalog','data'),Input('summary-game','value'),Input('workspace-page','value'),Input('sport','value'))
     def summary_selection(catalog,selected,page,sport):
@@ -83,7 +77,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         if game:return no_update,{'display':'none'},{'display':'block'},game_header(game,sport=sport)
         return view.cards(games,sport),{}, {'display':'none'},''
 
-    @app.callback(Output('summary-quotes','data'),Output('summary-quote-status','children'),
+    @scoped_callback(app,'market-summary',Output('summary-quotes','data'),Output('summary-quote-status','children'),
                   Input('summary-game','value'),Input('summary-catalog','data'),Input('summary-pull','n_clicks'),
                   Input('workspace-page','value'),Input('sport','value'),State('summary-quotes','data'),
                   Input('summary-cache-poll','n_intervals'),prevent_initial_call=True,
@@ -132,7 +126,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         return dict(id=uuid4().hex,sport=sport,game=game,scope=scope,providers=providers,
                     updating=any((item['snapshot'] or {}).get('updating') for item in providers.values())),status
 
-    @app.callback(Output('summary-models','data'),Output('summary-model-status','children'),
+    @scoped_callback(app,'market-summary',Output('summary-models','data'),Output('summary-model-status','children'),
                   Input('summary-quotes','data'),Input('summary-game-method','value'),Input('summary-player-method','value'),
                   Input('summary-recalculate','n_clicks'),Input('workspace-page','value'),Input('sport','value'),
                   State('summary-game','value'),State('summary-models','data'),prevent_initial_call=True,
@@ -150,7 +144,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                 'All providers use the earliest quote timestamp, capped at game start, to avoid using later history for older saved prices.' if models['cutoff'] else '')
         return models,[html.Span(status),*[html.P(error,className='ppp-comparison-note' if error.startswith('Game injuries:') else 'mispricing-error') for error in models['errors']]]
 
-    @app.callback(Output('summary-market-sections','children'),Output('summary-rendered','data'),
+    @scoped_callback(app,'market-summary',Output('summary-market-sections','children'),Output('summary-rendered','data'),
                   Input('summary-quotes','data'),State('summary-models','data'),Input('summary-category','value'),
                   Input('summary-game-method','value'),Input('summary-player-method','value'),Input('summary-game','value'),
                   Input('workspace-page','value'),Input('sport','value'),State('summary-rendered','data'),prevent_initial_call=True)
@@ -167,7 +161,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                        className='ppp-comparison-note'),*view.sections(bundle,rows,category)],signature
 
     cells=dict(type='summary-model-cell',bundle=ALL,provider=ALL,index=ALL,side=ALL,metric=ALL)
-    @app.callback(Output(cells,'children'),Output(cells,'title'),Input('summary-models','data'),
+    @scoped_callback(app,'market-summary',Output(cells,'children'),Output(cells,'title'),Input('summary-models','data'),
                   Input('summary-game-method','value'),Input('summary-player-method','value'),Input(cells,'id'),
                   Input('workspace-page','value'),Input('sport','value'),State('summary-quotes','data'),State('summary-game','value'),
                   prevent_initial_call=False)

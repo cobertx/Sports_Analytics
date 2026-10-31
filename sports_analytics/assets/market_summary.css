@@ -1,5 +1,5 @@
 .market-data-navigation > summary { cursor: pointer; padding: 10px 12px; margin-bottom: 4px; color: var(--muted); border-radius: 6px; }
-.market-data-navigation.active > summary,.market-screen .market-data-navigation > summary { background: #102e32; color: var(--accent); }
+.market-data-navigation.active > summary,.market-screen .market-data-navigation > summary { background: var(--selected); color: var(--accent); }
 .market-provider-pages { margin: 2px 0 7px 12px; padding-left: 8px; border-left: 1px solid var(--line); }
 .market-provider-pages .sport-page-link { font-size: 12px; padding: 9px 6px; }
 .market-summary-page { gap: 20px; min-width: 0; }
@@ -21,7 +21,7 @@
 .summary-source-fanduel { color: #75baff; border-color: #3295ed; }
 .summary-source-kalshi { color: #8debab; border-color: #43c775; }
 .summary-source-polymarket { color: #b7b6ff; border-color: #8582ff; }
-.summary-table tbody > tr > th,.summary-table tbody > tr > td { padding: 12px; border-bottom: 1px solid #243249; vertical-align: middle; }
+.summary-table tbody > tr > th,.summary-table tbody > tr > td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .summary-table tbody > tr:last-child > th,.summary-table tbody > tr:last-child > td { border-bottom: 0; }
 .summary-selection { background: #111e2b; text-align: left; font-weight: 600; font-size: 13px; }
 .summary-selection small { display: block; color: var(--muted); font-weight: 400; margin-top: 7px; }

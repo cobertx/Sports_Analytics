@@ -4,6 +4,7 @@ from dash import dcc,html,dash_table
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from .presentation import chart_style, table_cell, table_header
 from .backtesting_service import diagnostics,PREDICTIVE_INTERVAL,evaluated_records
 from .display_time import format_eastern,EASTERN
 
@@ -73,8 +74,7 @@ def layout():
 
 def figure(title,x=None,y=None):
     fig=go.Figure()
-    fig.update_layout(title=dict(text=title,font=dict(size=15)),template='plotly_dark',paper_bgcolor='#111d2e',
-        plot_bgcolor='#111d2e',font=dict(color='#b8c8dc',family='Segoe UI'),height=365,
+    fig.update_layout(**chart_style(),title=dict(text=title,font=dict(size=15)),height=365,
         margin=dict(l=55,r=20,t=60,b=60),legend=dict(orientation='h',y=-.22),
         xaxis_title=x,yaxis_title=y,hovermode='closest')
     fig.update_xaxes(gridcolor='#243249');fig.update_yaxes(gridcolor='#243249')
@@ -334,9 +334,10 @@ def render(result,target='margin'):
             html.Div([dcc.Graph(figure=timeline,config={'displaylogo':False}),
                 html.Aside([html.Strong(percent('interval_coverage')),html.Span('Inside '+interval_label+' interval'),
                     html.Small(coverage['range_samples'].replace(' / ',' of ')+' actuals with valid ranges')],className='backtest-coverage')],
-                className='panel backtest-chart backtest-timeline'),
+                className='panel backtest-chart backtest-timeline',role='group',**{'aria-label':'Predicted versus actual over time and interval coverage'}),
             *[html.Div([dcc.Graph(figure=fig,config={'displaylogo':False}),
-                *([html.P(chart_notes[id(fig)],className='chart-note backtest-chart-note')] if id(fig) in chart_notes else [])],className='panel backtest-chart')
+                *([html.P(chart_notes[id(fig)],className='chart-note backtest-chart-note')] if id(fig) in chart_notes else [])],
+                className='panel backtest-chart',role='group',**{'aria-label':fig.layout.title.text})
                 for fig in [parity,residual,rolling,calibration,accuracy]],
         ],className='backtest-chart-grid'),
         html.Section([html.Div(html.H3('Evaluated predictions'),className='panel-heading'),
@@ -344,9 +345,8 @@ def render(result,target='margin'):
                 ('date','Game time (EDT)'),('game','Matchup / player'),('actual','Actual'),('predicted','Predicted'),
                 ('error','Error'),('lower',interval_label+' interval low'),('upper',interval_label+' interval high'),('probability','Event probability (%)'),
                 ('training_through','Latest training game')]],page_size=12,sort_action='native',filter_action='native',
-                style_table={'overflowX':'auto'},style_cell={'backgroundColor':'#111d2e','color':'#c7d3e4','border':'1px solid #243249',
-                    'textAlign':'left','padding':'10px','fontFamily':'Segoe UI','fontSize':'12px'},
-                style_header={'backgroundColor':'#17253a','fontWeight':'600'})],className='panel backtest-table'),
+                style_table={'overflowX':'auto'},style_cell=table_cell(),
+                style_header=table_header())],className='panel backtest-table'),
         html.Details([html.Summary(f'Skipped games and reasons ({len(result["skipped"])})'),
             html.Ul([html.Li(f'{r["date"][:10]} · {r["game_id"]}: {r["reason"]}') for r in result['skipped']])],
             className='panel backtest-skipped'),

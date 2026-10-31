@@ -1,5 +1,8 @@
 """Sport-scoped saved Quick Filtering selections, sorted by probability then edge."""
+from .presentation import table_cell, table_header
 import sqlite3
+from .navigation import scoped_callback,register_visibility,filtered_visibility
+
 from dash import Input,Output,dash_table,dcc,html,no_update
 from dash.exceptions import PreventUpdate
 
@@ -35,9 +38,7 @@ def layout():
                 markdown_options={'link_target':'_self'},cell_selectable=False,page_size=25,filter_action='native',
                 sort_action='native',sort_mode='multi',sort_by=[dict(column_id='probability',direction='desc'),dict(column_id='edge',direction='desc')],
                 tooltip_duration=None,style_table={'overflowX':'auto'},
-                style_cell={'backgroundColor':'#111d2e','color':'#c7d3e4','border':'1px solid #243249','padding':'10px',
-                            'textAlign':'left','fontFamily':'Segoe UI','fontSize':'12px','minWidth':'110px','maxWidth':'290px',
-                            'whiteSpace':'normal','height':'auto'},style_header={'backgroundColor':'#17253a','fontWeight':'600'}),
+                style_cell=table_cell(minWidth='110px', maxWidth='290px', whiteSpace='normal', height='auto'),style_header=table_header()),
         ],className='panel'),
         dcc.Interval(id='filtered-results-clock',interval=30000,disabled=True),
     ],id='filtered-results-page',style={'display':'none'})
@@ -59,15 +60,10 @@ def rows(records):
 
 
 def register(app,service):
-    @app.callback(Output('filtered-results-page','style'),Output('filtered-results-page-link','href'),
-        Output('filtered-results-page-link','className'),Output('filtered-results-clock','disabled'),
-        Input('workspace-page','value'),Input('sport','value'))
-    def filtered_visibility(page,sport):
-        active=page=='filtered-results' and sport in SPORTS
-        return ({'display':'grid' if active else 'none'},f'#{sport.lower()}-filtered-results',
-            'sport-page-link'+(' active' if active else ''),not active)
+    register_visibility(app,filtered_visibility,Output('filtered-results-page','style'),Output('filtered-results-page-link','href'),
+        Output('filtered-results-page-link','className'),Output('filtered-results-clock','disabled'))
 
-    @app.callback(Output('filtered-results-table','data'),Output('filtered-results-table','tooltip_data'),
+    @scoped_callback(app,'filtered-results',Output('filtered-results-table','data'),Output('filtered-results-table','tooltip_data'),
         Output('filtered-results-status','children'),Input('workspace-page','value'),Input('sport','value'),
         Input('filtered-results-scope','value'),Input('filtered-results-refresh','n_clicks'),Input('filtered-results-clock','n_intervals'))
     def show_filtered_results(page,sport,scope,refresh,tick):

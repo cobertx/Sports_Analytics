@@ -25,9 +25,9 @@ function checkMarketNavigation(source) {
   const remember = window.dash_clientside.market_navigation.remember;
   const sectionId = 'market-section-abc';
   const element = id => ({id, tagName: 'DETAILS', open: false, isConnected: true,
-    closest: () => null, scrollIntoView: () => scrolls.push(id)});
+    closest: () => null, getClientRects() { return this.hidden ? [] : [{}]; }, scrollIntoView: () => scrolls.push(id)});
   const anchor = {closest: () => ({id: sectionId})};
-  const click = overrides => documentEvents.click({target: {closest: () => anchor}, button: 0, ...overrides});
+  const click = overrides => documentEvents.click({target: {closest: selector => selector === 'a.market-history-link' ? anchor : null}, button: 0, ...overrides});
   const change = (oldHash, newHash) => {
     location.hash = newHash;
     windowEvents.hashchange({oldURL: 'https://local.invalid/' + oldHash});
@@ -71,9 +71,76 @@ function checkMarketNavigation(source) {
   return checks;
 }
 
+function checkDeferredNavigation(source,transitionSource) {
+  let checks=0;
+  const check=(ok,message)=>{if(!ok)throw new Error(message);checks++;};
+  const windowEvents={},documentEvents={},frames=[],scrolls=[],focuses=[],writes=[];
+  const location={hash:'#nfl-game-123'};
+  let observer,observerOptions;
+  const element=id=>({id,isConnected:true,tagName:'DIV',hidden:false,loading:false,
+    getClientRects(){return this.hidden?[]:[{}];},closest(){return this.loading?{}:null;},
+    scrollIntoView(){scrolls.push(id);},focus(options){focuses.push({id,options});}});
+  const nodes=Object.fromEntries(['dashboard-main','market-game-detail','market-game-header',
+    'historical-performance-panel','market-section-test'].map(id=>[id,element(id)]));
+  nodes['market-section-test'].tagName='DETAILS';
+  const links=['historical-page-link','market-page-link','kalshi-page-link','backtesting-page-link'].map(id=>({
+    id,attrs:{href:'#unused'},getAttribute(key){return this.attrs[key];},setAttribute(key,value){this.attrs[key]=value;}}));
+  const document={documentElement:{},getElementById:id=>nodes[id],querySelectorAll:()=>links,
+    addEventListener:(name,handler)=>{documentEvents[name]=handler;}};
+  const window={location,dash_clientside:{no_update:{},set_props:(id,props)=>writes.push({id,props})},
+    addEventListener:(name,handler)=>{(windowEvents[name]||=[]).push(handler);}};
+  function MutationObserver(callback){observer=callback;this.observe=(_node,options)=>{observerOptions=options;};}
+  const raf=callback=>frames.push(callback);
+  const flush=()=>{for(let i=0;frames.length&&i<20;i++)frames.shift()();check(!frames.length,'Animation frames settle');};
+  const emit=(name,event={})=>(windowEvents[name]||[]).forEach(fn=>fn(event));
+  const change=hash=>{const oldURL='http://local.invalid/'+location.hash;location.hash=hash;emit('hashchange',{oldURL});};
+  new Function('window',transitionSource)(window);
+  new Function('window','document','location','MutationObserver','getComputedStyle','requestAnimationFrame',source)(
+    window,document,location,MutationObserver,node=>({display:node.hidden?'none':'block',visibility:node.loading?'hidden':'visible'}),raf);
+  const remember=window.dash_clientside.market_navigation.remember;
+  remember(location.hash,'snapshot','Passing',{});flush();
+  check(observerOptions.attributeFilter.includes('class'),'Visibility-class changes wake delayed restoration');
+  nodes['historical-performance-panel'].hidden=true;
+  change('#historical-player?sport=NFL&name=Player+A');
+  change('#historical-player?sport=NFL&name=Player+B');
+  for(let i=0;i<100;i++)observer([{target:{id:'app-shell'}}]);
+  check(frames.length===1,'One frame handles a burst of mutations and rapid route changes');flush();
+  check(scrolls.length===0,'Do not scroll to a chart hidden by the route guard');
+  check(focuses.length===1&&focuses[0].options.preventScroll,'Focus the content region once without disrupting scroll restoration');
+  check(links[0].attrs['aria-current']==='page'&&links[1].attrs['aria-current']==='false','Active-route accessibility updates without a server response');
+  nodes['historical-performance-panel'].hidden=false;
+  observer([{target:{id:'app-shell'}}]);flush();
+  check(scrolls.at(-1)==='historical-performance-panel','Scroll once when delayed historical content becomes visible');
+  const scrollCount=scrolls.length;
+  observer([{target:{id:'unrelated'}}]);
+  check(frames.length===0&&scrolls.length===scrollCount,'Unrelated updates do not rescan or move settled history');
+  change('#historical-player?sport=NFL&name=Player+C');emit('keydown',{key:'Tab'});flush();
+  check(scrolls.length===scrollCount&&focuses.length===1,'A user keyboard action cancels pending focus and automatic scroll');
+  const originalHash=location.hash;
+  documentEvents.click({target:{closest:selector=>selector==='#skip-navigation'?{}:null}});
+  check(location.hash===originalHash&&focuses.at(-1).id==='dashboard-main','Skip navigation focuses content without changing the routed URL');
+  change('#nfl-game-123');flush();
+  const anchor={closest:()=>nodes['market-section-test']};
+  documentEvents.click({button:0,target:{closest:selector=>selector==='a.market-history-link'?anchor:null}});
+  check(writes.some(item=>item.id==='market-return'&&item.props.data.NFL.section==='market-section-test'),'Store the exact market before leaving');
+  change('#historical-player?sport=NFL&name=Player+B');flush();
+  nodes['market-game-detail'].hidden=true;
+  change('#nfl-game-123');flush();
+  check(!nodes['market-section-test'].open,'Back navigation waits until the market is visible');
+  nodes['market-game-detail'].hidden=false;observer([{target:{id:'app-shell'}}]);flush();
+  check(nodes['market-section-test'].open&&scrolls.at(-1)==='market-section-test','Back navigation restores the original expanded prompt');
+  emit('wheel');observer([{target:{id:'unrelated'}}]);
+  check(frames.length===0,'User scrolling ends restoration work');
+  change('#historical-player?sport=NFL&name=Player+D');
+  change('#nfl-kalshi-market');flush();
+  check(links[2].attrs['aria-current']==='page'&&links[0].attrs['aria-current']==='false','Rapid forward navigation leaves only the latest page selected');
+  return checks;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   const fs = require('node:fs');
   const path = require('node:path');
   const source = fs.readFileSync(path.join(__dirname, '../sports_analytics/assets/market_navigation.js'), 'utf8');
-  console.log(`Passed ${checkMarketNavigation(source)} market navigation checks.`);
+  const transitionSource=fs.readFileSync(path.join(__dirname,'../sports_analytics/assets/market_transition.js'),'utf8');
+  console.log(`Passed ${checkMarketNavigation(source)+checkDeferredNavigation(source,transitionSource)} market navigation checks.`);
 }

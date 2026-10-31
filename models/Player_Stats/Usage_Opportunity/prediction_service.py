@@ -15,6 +15,7 @@ from sports_analytics.result_cache import load_json, save_json
 from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
 from .config import MODEL_VERSION, UsageOpportunityConfig
+from models.replay import input_digest
 from .distributions import UsageOpportunityForecast
 from .errors import UsageOpportunityError
 from .historical_data import UsageHistoryRepository, eligible, match_player, identity_name
@@ -91,8 +92,7 @@ class UsageOpportunityMarketService:
         common = Path(__file__).parent.parent/'Weighted_Historical_Performance'
         signature = sha256((signature + ''.join(sha256((common/name).read_bytes()).hexdigest() for name in
             ['historical_data.py', 'prediction_service.py', 'markets.py', 'market_comparison.py', '../../season_weights.py'])).encode()).hexdigest()
-        fingerprint = sha256((players.to_json(orient='table', date_format='iso', index=False) +
-                              teams.to_json(orient='table', date_format='iso', index=False)).encode()).hexdigest()
+        fingerprint = input_digest(players, teams)
         identity = dict(version=MODEL_VERSION, implementation=signature, input_sha256=fingerprint,
                         config=asdict(config), sport=sport, cutoff=cutoff.isoformat(),
                         snapshot={key: snapshot.get(key) for key in

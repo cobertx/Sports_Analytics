@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.polymarket import GAMMA,CLOB,PolymarketService,book_prices,category
@@ -69,8 +70,7 @@ class PolymarketChecks(TestCase):
     def app(self):
         with patch('requests.sessions.Session.request',side_effect=AssertionError('No external requests')):
             app=create_app(polymarket_service=self.service)
-        return app,{m['callback'].__wrapped__.__name__:m['callback'].__wrapped__
-                    for m in app.callback_map.values() if m.get('callback')}
+        return app,callback_functions(app)
 
     def test_discovery_uses_dynamic_series_and_groups_only_exact_provider_game_ids(self):
         game=self.game()
@@ -256,8 +256,8 @@ class PolymarketChecks(TestCase):
                 key,meta=next((k,m) for k,m in app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
                 response=client.post('/_dash-update-component',json=dict(output=key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                    inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                    state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=[changed]))
+                    inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=[changed]))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 data=response.get_json()['response']
                 if name=='polymarket_quotes':values['polymarket-quotes']=data['polymarket-quotes']['data']

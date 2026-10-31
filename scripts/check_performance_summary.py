@@ -15,6 +15,7 @@ from dash import no_update
 from dash.exceptions import PreventUpdate
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.backtesting_service import BacktestingService,NFL_PLAYER_COHORT
 from sports_analytics.backtesting_view import GROUPS,available_models,model_config,navigation,page,PERFORMANCE_ROUTE,summary_route
 from sports_analytics.dashboard import create_app
@@ -62,7 +63,7 @@ class PerformanceSummaryChecks(TestCase):
 
     def app(self):
         app=create_app(backtesting_service=self.backend)
-        callbacks={meta['callback'].__wrapped__.__name__:meta['callback'].__wrapped__ for meta in app.callback_map.values() if meta.get('callback')}
+        callbacks=callback_functions(app)
         return app,callbacks
 
     def post_callback(self,app,name,values,changed):
@@ -70,8 +71,8 @@ class PerformanceSummaryChecks(TestCase):
         with app.server.test_client() as client:
             response=client.post('/_dash-update-component',json=dict(output=key,
                 outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                inputs=[dict(**i,value=values[i['id']]) for i in meta['inputs']],
-                state=[dict(**i,value=values[i['id']]) for i in meta['state']],changedPropIds=[changed]))
+                inputs=[dict(**i,value=wire_value(i,values)) for i in meta['inputs']],
+                state=[dict(**i,value=wire_value(i,values)) for i in meta['state']],changedPropIds=[changed]))
         self.assertEqual(response.status_code,200,response.get_data(as_text=True))
         payload=response.get_json()['response']
         for identity,props in payload.items():
@@ -465,7 +466,7 @@ class PerformanceSummaryChecks(TestCase):
                 key,meta=next((key,meta) for key,meta in app.callback_map.items() if meta.get('callback') and meta['callback'].__wrapped__.__name__==name)
                 response=client.post('/_dash-update-component',json=dict(output=key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                    inputs=[dict(**i,value=values[i['id']]) for i in meta['inputs']],state=[dict(**i,value=values[i['id']]) for i in meta['state']],changedPropIds=[changed]))
+                    inputs=[dict(**i,value=wire_value(i,values)) for i in meta['inputs']],state=[dict(**i,value=wire_value(i,values)) for i in meta['state']],changedPropIds=[changed]))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 payload=response.get_json()['response']
                 if name=='performance_load':values['performance-state']=payload['performance-state']['data']

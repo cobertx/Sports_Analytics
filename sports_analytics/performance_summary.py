@@ -5,6 +5,8 @@ import threading
 from hashlib import sha256
 from pathlib import Path
 
+from .navigation import scoped_callback
+
 from dash import Input,Output,State,ctx,dcc,html,no_update
 from dash.exceptions import PreventUpdate
 import plotly.graph_objects as go
@@ -280,7 +282,7 @@ def render(manager,manifest,market,tolerance,basis='all'):
 def register(app,backtesting):
     manager=PerformanceSummaries(backtesting)
 
-    @app.callback(Output('performance-summary-page','style'),Output('performance-context','data'),Output('performance-line-field','style'),
+    @scoped_callback(app,'backtesting',Output('performance-summary-page','style'),Output('performance-context','data'),Output('performance-line-field','style'),
                   Input('workspace-page','value'),Input('sport','value'),Input('market-url','hash'),Input('performance-group','value'))
     def performance_context(page,sport,location_hash,group):
         active=page=='backtesting' and sport in SPORTS and location_hash==PERFORMANCE_ROUTE and group in GROUPS
@@ -358,7 +360,7 @@ def register(app,backtesting):
         state.context.group!==context.group||!Object.values(state.entries).some(e=>e.state==='running'||e.state==='queued');}''',
         Output('performance-poll','disabled'),Input('performance-context','data'),Input('performance-state','data'))
 
-    @app.callback(Output('performance-results','children'),Output('performance-rendered','data'),Input('performance-state','data'),
+    @scoped_callback(app,'backtesting',Output('performance-results','children'),Output('performance-rendered','data'),Input('performance-state','data'),
                   Input('performance-context','data'),Input('performance-market','value'),Input('performance-team','value'),Input('performance-limit','value'),
                   Input('performance-start','date'),Input('performance-end','date'),Input('performance-playoffs','value'),Input('performance-line','value'),
                   Input('performance-tolerance','value'),State('performance-rendered','data'),Input('performance-basis','value'))

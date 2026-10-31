@@ -27,6 +27,8 @@ jobs:
         run: python -m compileall -q app.py index.py sports_analytics models scripts
       - name: Check project layout, imports and dashboard
         run: python scripts/check_project.py
+      - name: Check presentation contrast, theme parity and statistical invariants
+        run: python scripts/check_presentation.py
       - name: Check Windows file-lock recovery and saved forecast reuse
         run: python scripts/check_result_cache.py
       - name: Check Odds API credit failover, combined usage and paying-account history
@@ -72,6 +74,10 @@ jobs:
         run: node scripts/check_player_distributions.js
       - name: Check immediate market transitions
         run: node scripts/check_market_transitions.js
+      - name: Check scoped navigation and client presentation equivalence
+        run: python scripts/check_navigation_pipeline.py
+      - name: Check offline navigation dispatch budget
+        run: python scripts/benchmark_navigation.py --repeats 2
       - name: Check mispricing ranking and market filter controls
         run: python scripts/check_mispricing.py
       - name: Check per-prompt Quick Filtering methods and consensus
@@ -84,6 +90,8 @@ jobs:
         run: python scripts/check_in_game.py
       - name: Check cache refresh isolation and equivalent filtering
         run: python scripts/check_performance.py
+      - name: Check bounded decoding, lazy market rows and background quick filtering
+        run: python scripts/check_dashboard_efficiency.py
       - name: Check immediate local reads and nonblocking background refreshes
         run: python scripts/check_loading_speed.py
       - name: Check nonblocking game entry, local quote views and forecast equivalence

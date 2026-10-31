@@ -10,6 +10,7 @@ import pandas as pd
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts.check_backtesting import team_history
+from scripts.callback_fixtures import callback_functions
 from sports_analytics.backtesting_service import BacktestingService,estimation_history,game_model
 from sports_analytics.backtesting_view import CATALOG
 from sports_analytics.research_config import default_config,configured,parameter_fields,form_parameters
@@ -34,7 +35,7 @@ def player_inputs():
 
 def callbacks_for(service):
     app=create_app(backtesting_service=service)
-    callbacks={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in app.callback_map.values() if m.get('callback')}
+    callbacks=callback_functions(app)
     return app,callbacks
 
 

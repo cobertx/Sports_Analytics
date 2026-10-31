@@ -238,6 +238,17 @@ class ResponsivenessChecks(TestCase):
         self.assertNotIn('.action-loading > div:last-child { pointer-events: none;',css)
         self.assertIn('.action-loading > div:has(> .action-loading-overlay) { pointer-events: none;',css)
         self.assertNotIn('action-loading-overlay',indicator('Inline market progress').className)
+        indexed={node.id:node for node in nodes if isinstance(getattr(node,'id',None),str)}
+        self.assertEqual(indexed['trend-loading'].target_components,{'trend':'figure'})
+        self.assertEqual(indexed['game-log-loading'].target_components,{'game-log':'data'})
+        self.assertEqual(indexed['dataset-summary-loading'].target_components,{'dataset-summary':'children'})
+        self.assertIn('historical performance',str(indexed['trend-loading'].custom_spinner))
+        for loader in loaders:
+            children=list(components(loader.children))
+            ids={getattr(child,'id',None) for child in children if isinstance(getattr(child,'id',None),str)}
+            self.assertFalse({'dataset-summary','trend','game-log'}<=ids,'Dataset loading must not cover the entire historical results area')
+        self.assertEqual(indexed['dashboard-main'].tabIndex,-1)
+        self.assertIn('skip-navigation',indexed)
 
 
 if __name__=='__main__':main()

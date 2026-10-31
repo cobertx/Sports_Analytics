@@ -1,5 +1,5 @@
 """Local, nonblocking feedback for the callback output being updated."""
-from dash import Input,Output,dcc,html
+from dash import Input,Output,dash_table,dcc,html
 
 
 def indicator(message,*,overlay=False):
@@ -10,9 +10,11 @@ def indicator(message,*,overlay=False):
 
 def loading(children,message='Loading…'):
     identity=getattr(children,'id',None)
+    target='figure' if isinstance(children,dcc.Graph) else 'data' if isinstance(children,dash_table.DataTable) else 'children'
     return dcc.Loading(children,show_initially=False,delay_show=150,delay_hide=100,
                        overlay_style={'visibility':'visible'},parent_className='action-loading',
-                       custom_spinner=indicator(message,overlay=True),**({'id':identity+'-loading'} if isinstance(identity,str) else {}))
+                       custom_spinner=indicator(message,overlay=True),
+                       **({'id':identity+'-loading','target_components':{identity:target}} if isinstance(identity,str) else {}))
 
 
 # These outputs belong to the work itself, including the first stage of
@@ -42,6 +44,10 @@ MESSAGES={
     'filtered-results-status':'Loading saved filter results…',
     'pnl-status':'Saving ledger changes…',
     'pnl-import-message':'Preparing statement preview…',
+    'game-log':'Loading game log…',
+    'information-headlines':'Loading headlines…',
+    'information-weather-results':'Loading weather…',
+    'in-game-chart':'Loading shots and plays…',
 }
 
 
@@ -59,7 +65,7 @@ def configure(layout):
             node.delay_hide=100
             node.overlay_style={'visibility':'visible'}
             node.parent_className='action-loading'
-            node.custom_spinner=indicator('Loading…',overlay=True)
+            if not getattr(node,'custom_spinner',None):node.custom_spinner=indicator('Loading…',overlay=True)
         if hasattr(node,'children'):node.children=visit(node.children,inside or is_loading)
         if message and not inside and not is_loading:
             return loading(node,message)

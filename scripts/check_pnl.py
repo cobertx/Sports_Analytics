@@ -14,6 +14,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
 from sports_analytics import pnl
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from check_kalshi import components
 
@@ -41,7 +42,7 @@ class PnlChecks(TestCase):
 
     def app(self):
         app=create_app(ledger=self.ledger)
-        cb={meta['callback'].__wrapped__.__name__:meta['callback'].__wrapped__ for meta in app.callback_map.values() if meta.get('callback')}
+        cb=callback_functions(app)
         return app,cb
 
     def test_balance_equity_realized_profit_and_transfers_reconcile_in_integer_cents(self):
@@ -179,7 +180,7 @@ class PnlChecks(TestCase):
                     values.update({'pnl-cash-save':0,'pnl-import-confirm':1,'pnl-import-preview':[imported]})
                 key,meta=next((key,m) for key,m in app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
                 response=client.post('/_dash-update-component',json=dict(output=key,outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                    inputs=[dict(**i,value=values[i['id']]) for i in meta['inputs']],state=[dict(**i,value=values[i['id']]) for i in meta['state']],changedPropIds=[changed]))
+                    inputs=[dict(**i,value=wire_value(i,values)) for i in meta['inputs']],state=[dict(**i,value=wire_value(i,values)) for i in meta['state']],changedPropIds=[changed]))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 result=response.get_json()['response']
                 if name=='pnl_save':

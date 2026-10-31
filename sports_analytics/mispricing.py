@@ -2,24 +2,30 @@
 
 import math
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 
 from dash import dcc, html
+from .presentation import signed_state
 from models.season_weights import POLICY_VERSION
 
 from .market_view import MARKET_NAMES, _line_values, criteria_match, probability_text, selection_text
 from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
 from .quick_methods import GAME_METHODS,PLAYER_METHODS
+from .lazy_markets import markets as lazy_markets
 
 
 FILTER_CATEGORY = 'Mispricing'
 ALL_PROBABILITIES = dict(probability=-1, edge=-2)
+_method_workers=ThreadPoolExecutor(max_workers=2,thread_name_prefix='market-filter')
+_college_preparation=Lock()
 
 
 def quick_controls(prefix, result_id):
     def field(label, control):
         return html.Div([html.Label(label, htmlFor=control.id), control], className='field')
     return html.Section([
+        dcc.Interval(id=prefix+'-quick-poll',interval=500,disabled=True),
         html.H3('Quick Filtering'),
         html.P('Choose default methods below or assign methods to individual prompts under Methods by prompt. '
                'Each market must pass both thresholds under every method assigned to its prompt. '
@@ -62,10 +68,9 @@ def selected_methods(game_methods, player_methods):
 def run_forecasts(tasks, sport):
     # College preparation writes shared historical files. Keep those fits serial.
     if sport == 'NCAAF':
-        return {key: task() for key, task in tasks.items()}
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix='market-filter') as executor:
-        pending = {key: executor.submit(task) for key, task in tasks.items()}
-        return {key: task.result() for key, task in pending.items()}
+        with _college_preparation:return {key: task() for key, task in tasks.items()}
+    pending = {key: _method_workers.submit(task) for key, task in tasks.items()}
+    return {key: task.result() for key, task in pending.items()}
 
 
 def consensus_rankings(groups, criteria, selection_key):
@@ -151,9 +156,10 @@ def results(snapshot, ranked, criteria, errors=()):
                 html.Td(MARKET_NAMES.get(item['row']['market_key'],(item['row']['market'],))[0]),
                 html.Td(method_details(item)),html.Td(f"{item['row']['odds']:+g}"),
                 html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),
-                html.Td(f"{item['edge']*100:+.2f}",className='mispricing-edge'),
+                html.Td(f"{item['edge']*100:+.2f}",className='mispricing-edge',**{'data-sign':signed_state(item['edge'])}),
             ]) for i,item in enumerate(items)] or [html.Tr(html.Td('No qualifying markets.',colSpan=8))]),
-        ],className='mispricing-table'),className='mispricing-table-scroll')
+        ],className='mispricing-table'),className='mispricing-table-scroll',tabIndex=0,role='region',
+            **{'aria-label':f'Filtered selections starting at rank {start}'})
 
     matches=ranked['matches']
     return html.Div([
@@ -165,7 +171,9 @@ def results(snapshot, ranked, criteria, errors=()):
         ],className='criteria-evaluation'+(' criteria-evaluation-no-match' if not matches else ''),role='status'),
         *[html.P(error,className='ppp-comparison-note' if error.startswith('Game injuries:') else 'mispricing-error',role='status') for error in errors if error],
         html.Section([html.H3('Top 3 by edge'),table(matches[:3],1)],className='mispricing-top'),
-        html.Section([html.H3('Remaining qualifying markets'),table(matches[3:],4)],className='mispricing-remaining'),
+        html.Section([html.H3('Remaining qualifying markets'),
+            lazy_markets.panel(lazy_markets.view(),0,lambda count:table(matches[3:3+count],4),
+                               max(0,len(matches)-3),size=50)],className='mispricing-remaining'),
         html.P('Ranked by estimated probability minus market implied probability, highest first. '
                'Estimates use the selected game/player methods and exclude pushes, matching the market tabs. '
                'Alternate lines are separate selections. '+

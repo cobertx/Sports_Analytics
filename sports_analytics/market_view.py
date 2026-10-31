@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 from dash import dcc, html
 import plotly.graph_objects as go
+from .presentation import chart_style, signed_state
 
 from models.Game_Outcome.PPP.PPP import PPPError, implied_probability
 from .display_time import eastern_datetime, format_eastern
@@ -21,6 +22,7 @@ from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
 from .player_distribution import panel as distribution_panel
 from .availability_view import panel as availability_panel
+from .lazy_markets import markets as lazy_markets
 
 NFL_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NFL" / "Team Logos"
 NFL_LOGO_FILES = {path.stem.casefold(): path.name for path in NFL_LOGO_DIRECTORY.glob("*.png")}
@@ -217,8 +219,7 @@ def _comparison_figure(snapshot, forecast, market_key, group, method="PPP", crit
                         for label, (implied, _, edge) in zip(labels, values)],
             hovertemplate=(f"%{{customdata[0]}}<br>{method} %{{y:.2%}}<br>Market %{{customdata[1]}}"
                            "<br>Edge %{customdata[2]}<extra>Meets criteria</extra>")))
-    figure.update_layout(template="plotly_dark", paper_bgcolor="#111d2e", plot_bgcolor="#111d2e", height=420,
-                         font={"family": "Segoe UI, sans-serif", "color": "#b8c8dc"},
+    figure.update_layout(**chart_style(), height=420,
                          margin={"l": 55, "r": 20, "t": 65, "b": 115},
                          legend={"orientation": "h", "y": 1.18, "font": {"size": 11}}, hovermode="x unified")
     ticks = list(range(0, len(lines), max(1, math.ceil(len(lines) / 6))))
@@ -276,7 +277,8 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=N
         figure = _comparison_figure(snapshot, forecast, key, group, method, criteria)
         if figure:
             charts.append(html.Section([html.Div(html.H2(f"{title} · {group}"), className="panel-heading"),
-                                        dcc.Graph(figure=figure, config={"displaylogo": False})], className="panel ppp-chart"))
+                                        dcc.Graph(figure=figure, config={"displaylogo": False})], className="panel ppp-chart",
+                                       role='group', **{'aria-label':f'{title} · {group} probability comparison'}))
     children.append(html.Div(charts, className="ppp-comparison-grid"))
     children.append(html.P("Curves show probabilities for each line, rather than probabilities that sum across alternate lines. "
                            "Market lines connect quotes from the selected saved snapshot; estimates never trigger an odds pull.", className="ppp-comparison-note"))
@@ -286,7 +288,7 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=N
     return html.Div(children, className="ppp-comparison")
 
 
-def market_sections(snapshot, category, forecast=None, model_error=None, criteria=None, method="PPP", *, loading=False):
+def market_sections(snapshot, category, forecast=None, model_error=None, criteria=None, method="PPP", *, loading=False,lazy=True):
     player_method = method in {"WHP", "UO", "OAM", "PGE"}
     groups = OrderedDict()
     row_indices = {id(row):index for index,row in enumerate(snapshot['rows'])}
@@ -296,6 +298,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         player = row["subject"] if row["market_key"].startswith("player_") else ""
         groups.setdefault((row["market_key"], player), []).append(row)
     sections = []
+    view=lazy_markets.view() if lazy else None
     evaluated = 0
     matched_counts = {"alternate_spreads": 0, "alternate_totals": 0}
     for index, ((key, player), rows) in enumerate(groups.items()):
@@ -331,7 +334,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         if comparison:
             evaluated += group_evaluated
             matched_counts[key] = matched_counts.get(key, 0) + match_count
-        def outcome(row):
+        def outcome(row,comparison=comparison,values=values,matches=matches):
             initials = "".join(part[0] for part in row["subject"].split()[:2])
             price = f"{row['odds']:+g}" if row["odds"] is not None else "—"
             try:
@@ -358,6 +361,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                     html.Span(probability_text(estimate.probability) if estimate else "—", className="ppp-probability", title=detail),
                     html.Span(fair, className="ppp-fair-odds", title=detail),
                     html.Span(f"{100 * edge:+.2f} pp" if edge is not None else "—", className="market-edge",
+                              **{'data-sign': signed_state(edge)},
                               title=f"{method} probability minus market implied probability, in percentage points"),
                 ], className="market-outcome market-line-comparison" + (" market-criteria-match" if matches[id(row)] else ""))
             return html.Div([
@@ -365,6 +369,11 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 html.Div([html.Span(selection),history_button(snapshot,row),structure_button(snapshot,row)],className="market-selection market-prompt"),
                 price_button,
             ], className="market-outcome")
+        def body(count,rows=rows,outcome=outcome,key=key,player=player):
+            return [html.Div([outcome(row) for row in rows[:count]],className='market-outcomes'),
+                    distribution_panel(rows,forecast,method,market_section_id(snapshot,key,player),
+                        MARKET_NAMES.get(key,(rows[0]['market'],rows[0]['market']))[1])
+                    if player and player_method and not loading else None]
         sections.append(html.Details([
             html.Summary([html.Strong(title),
                           html.Span(f"{match_count} matches", className="criteria-match-count") if match_count else
@@ -374,16 +383,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                      className="market-comparison-heading market-line-comparison") if comparison else None,
             html.P('Calculated probability unavailable: '+unavailable_reason, className='mispricing-error', role='status')
                 if unavailable_reason else None,
-            html.Div([outcome(row) for row in rows[:6]], className="market-outcomes"),
-            html.Details([html.Summary([
-                              html.Span(f"Show more · {len(rows) - 6} selections", className="market-show-more"),
-                              html.Span("Show less", className="market-show-less"),
-                          ]),
-                          html.Div([outcome(row) for row in rows[6:]])], className="more-market-lines",
-                         open=False) if len(rows) > 6 else None,
-            distribution_panel(rows,forecast,method,market_section_id(snapshot,key,player),
-                               MARKET_NAMES.get(key,(rows[0]['market'],rows[0]['market']))[1])
-                if player and player_method and not loading else None,
+            lazy_markets.panel(view,index,body,len(rows),initial=index<2) if lazy else body(len(rows)),
         ], id=market_section_id(snapshot,key,player),key=f"{snapshot.get('game_id', snapshot.get('event_id', ''))}:{snapshot.get('pulled_at', '')}:{key}:{player}",
            open=index < 2, className="sportsbook-market" + (
             " market-criteria-group" if match_count else " market-criteria-no-match" if no_match else "")))

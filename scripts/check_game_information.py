@@ -12,6 +12,7 @@ from unittest.mock import Mock,patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from scripts.callback_fixtures import callback_functions
 from sports_analytics.dashboard import create_app
 from sports_analytics.information import InformationService,news_items
 from sports_analytics.game_information import (ADDITIONAL_INFORMATION,GameInformationService,
@@ -70,7 +71,7 @@ class GameInformationChecks(TestCase):
         source=Mock(path=Path(self.tmp.name)/'app.sqlite3');market=Mock();market.history.return_value=[]
         app=create_app(service=source,information_service=self.info,game_information_service=self.service,
                        nfl_market_service=market,nba_market_service=market,ncaaf_market_service=market)
-        callbacks={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in app.callback_map.values() if m.get('callback')}
+        callbacks=callback_functions(app)
         return app,callbacks,market
 
     def test_both_team_feeds_and_league_feed_are_deduplicated_and_game_scoped(self):

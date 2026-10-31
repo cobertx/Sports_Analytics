@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.check_market_summary import bundle, binary, exchange, game
+from scripts.callback_fixtures import callback_functions
 from sports_analytics.data import DataSourceError
 from sports_analytics.dashboard import create_app
 from sports_analytics.market_structure import MarketStructure, trade_summary, validate, BASE, DATA, CLOB
@@ -275,7 +276,7 @@ class StructureChecks(TestCase):
         self.assertNotEqual(regular.id,summary.id)
         self.assertEqual(regular.children,'Market Structure')
         app = create_app(structure_service=self.service)
-        callbacks = {m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in app.callback_map.values() if m.get('callback')}
+        callbacks = callback_functions(app)
         with patch('sports_analytics.market_structure_view.ctx',SimpleNamespace(triggered_id=regular.id)):
             request,style,label = callbacks['structure_open']([1],0,0,'#nfl-game-123','NFL','market',[regular.id])
         self.assertEqual(style,{})

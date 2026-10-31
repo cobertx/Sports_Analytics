@@ -1,5 +1,5 @@
 .backtest-monitor { position: fixed; z-index: 1101; bottom: calc(12px + var(--parlay-space,0px)); left: 0; width: 190px; background: var(--panel); border: 1px solid #326b67; border-radius: 0 9px 9px 0; box-shadow: 0 4px 22px #0006; overflow: hidden; }
-.backtest-monitor-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 42px; padding: 10px 12px; background: #102e32; color: var(--text); border: 0; text-align: left; }
+.backtest-monitor-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 42px; padding: 10px 12px; background: var(--selected); color: var(--text); border: 0; text-align: left; }
 .backtest-monitor-toggle:hover { background: #183d40; }
 .backtest-monitor-heading { font-size: 12px; font-weight: 700; }
 .backtest-monitor-count { display: inline-grid; place-items: center; min-width: 21px; padding: 2px 5px; border: 1px solid #326b67; border-radius: 5px; color: var(--accent); font-size: 11px; }
@@ -16,8 +16,8 @@
 .backtest-job-scope { font-size: 12px; margin: 8px 0 4px; overflow-wrap: anywhere; }
 .backtest-job-detail,.backtest-job-message { display: block; color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .backtest-job progress { display: block; width: 100%; height: 7px; margin: 9px 0 6px; border: 0; border-radius: 6px; overflow: hidden; accent-color: var(--accent); }
-.backtest-job progress::-webkit-progress-bar { background: #243249; border-radius: 6px; }
-.backtest-job progress::-webkit-progress-value { background: #57dbc4; border-radius: 6px; transition: width .3s; }
+.backtest-job progress::-webkit-progress-bar { background: var(--line); border-radius: 6px; }
+.backtest-job progress::-webkit-progress-value { background: var(--accent); border-radius: 6px; transition: width .3s; }
 @media (max-width: 700px) {
   .backtest-monitor { width: min(300px,calc(100vw - 12px)); }
   .backtest-monitor.is-collapsed { width: 190px; }

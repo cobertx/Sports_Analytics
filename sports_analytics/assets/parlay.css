@@ -1,5 +1,5 @@
 .app-shell > main { padding-bottom: calc(20px + var(--parlay-space, 0px)); }
-.parlay-drawer { position: fixed; z-index: 1100; bottom: 0; left: 50%; transform: translateX(-50%); width: min(1140px, calc(100% - 32px)); background: #171b20; color: #e8eef5; border: 1px solid #318bd0; border-bottom: 0; border-radius: 11px 11px 0 0; box-shadow: 0 -10px 50px #0009; overflow: hidden; }
+.parlay-drawer { position: fixed; z-index: 1100; bottom: 0; left: 50%; transform: translateX(-50%); width: min(1140px, calc(100% - 32px)); background: var(--panel); color: #e8eef5; border: 1px solid #318bd0; border-bottom: 0; border-radius: 11px 11px 0 0; box-shadow: 0 -10px 50px #0009; overflow: hidden; }
 .parlay-topbar { display: flex; align-items: center; background: #075fae; min-height: 54px; padding-right: 18px; }
 .parlay-toggle { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; align-self: stretch; text-align: left; border: 0; padding: 14px 20px; background: transparent; color: #fff; }
 .parlay-heading { font-size: 16px; font-weight: 800; letter-spacing: .04em; }

@@ -9,6 +9,7 @@ import tempfile
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app, ALL_TEAMS
 from sports_analytics.historical_links import history_href, history_target, target_entity, target_metric, market_metrics
 from sports_analytics.historical_view import historical_route
@@ -53,8 +54,7 @@ class MarketHistoryChecks(TestCase):
         self.network.start();self.addCleanup(self.network.stop)
         self.app=create_app(service=self.service,backtesting_service=self.backtesting,ncaaf_model_data=self.college,
                             nfl_market_service=self.markets,nba_market_service=self.markets,ncaaf_market_service=self.markets)
-        self.callbacks={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__
-                        for m in self.app.callback_map.values() if m.get('callback')}
+        self.callbacks=callback_functions(self.app)
 
     def test_only_market_headers_link_to_history_and_game_lines_have_no_links(self):
         for sport,markets in [('NBA',NBA_MARKETS),('NFL',NFL_MARKETS),('NCAAF',NFL_MARKETS)]:
@@ -124,18 +124,18 @@ class MarketHistoryChecks(TestCase):
         values={'workspace-page':'historical','sport':'NFL','entity-type':'player','market-return':dict(NFL=entry),
             'market-url':entry['route'],'market-schedule':[],'market-refresh-signal':None,'market-snapshot':None,'market-detail-context':None,
             'market-category':None}
+        self.assertEqual(self.callbacks['sport_page_navigation']('historical','NFL','player',dict(NFL=entry))[-1],entry['route'])
+        values['workspace-page']='market'
         with self.app.server.test_client() as client:
-            for name in ['sport_page_navigation','open_game','snapshot_categories']:
+            for name in ['open_game','snapshot_categories']:
                 key,meta=next((k,m) for k,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
                 response=client.post('/_dash-update-component',json=dict(output=key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                    inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                    state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['market-url.hash']))
+                    inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['market-url.hash']))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 data=response.get_json()['response']
-                if name=='sport_page_navigation':
-                    self.assertEqual(data['market-page-link']['href'],entry['route']);values['workspace-page']='market'
-                elif name=='open_game':
+                if name=='open_game':
                     values['market-snapshot']=data['market-snapshot']['value'];self.assertEqual(values['market-snapshot'],'saved-snapshot')
                 else:self.assertEqual(data['market-category']['value'],'Receiving')
 
@@ -221,8 +221,8 @@ class MarketHistoryChecks(TestCase):
                 output=meta['output']
                 response=client.post('/_dash-update-component',json=dict(output=key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in output],
-                    inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                    state=[dict(**item,value=values[item['id']]) for item in meta['state']],
+                    inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],
                     changedPropIds=['market-url.hash']))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 data=response.get_json()['response']

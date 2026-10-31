@@ -1,4 +1,6 @@
 """Isolated callbacks for recorded NBA/NFL in-game exploration."""
+from .navigation import scoped_callback,register_visibility,in_game_visibility
+
 from dash import ALL, Input, Output, State, ctx, no_update
 from dash.exceptions import PreventUpdate
 
@@ -17,21 +19,13 @@ def register(app, service):
             return 'historical'
         raise PreventUpdate
 
-    @app.callback(Output('in-game-page', 'style'), Output('in-game-page-link', 'style'),
+    register_visibility(app,in_game_visibility,Output('in-game-page', 'style'), Output('in-game-page-link', 'style'),
                   Output('in-game-page-link', 'href'), Output('in-game-page-link', 'className'),
                   Output('in-game-shot-filters', 'style'), Output('in-game-court-filter', 'style'),
                   Output('in-game-play-filters', 'style'), Output('in-game-drive-filter', 'style'),
-                  Output('in-game-nfl-panel', 'style'),
-                  Input('workspace-page', 'value'), Input('sport', 'value'))
-    def in_game_visibility(page, sport):
-        supported = sport in {'NBA', 'NFL'}
-        nba, nfl = ({}, {'display': 'none'}) if sport == 'NBA' else ({'display': 'none'}, {})
-        return ({'display': 'grid' if supported and page == 'in-game' else 'none'},
-                {} if supported else {'display': 'none'}, f'#{sport.lower()}-in-game-data',
-                'sport-page-link' + (' active' if page == 'in-game' else ''), nba, nba, nfl, nfl,
-                {} if sport == 'NFL' else {'display': 'none'})
+                  Output('in-game-nfl-panel', 'style'))
 
-    @app.callback(Output('in-game-catalog', 'data'), Output('in-game-list-status', 'children'),
+    @scoped_callback(app,'in-game',Output('in-game-catalog', 'data'), Output('in-game-list-status', 'children'),
                   Input('workspace-page', 'value'), Input('sport', 'value'), Input('in-game-season', 'value'),
                   Input('in-game-phase', 'value'), Input('in-game-reload-list', 'n_clicks'),
                   State('in-game-catalog', 'data'))
@@ -64,7 +58,7 @@ def register(app, service):
         identities = {g['id'] for g in games}
         return options, previous if previous in identities else games[0]['id'] if games else None
 
-    @app.callback(Output('in-game-events', 'data'), Output('in-game-source', 'children'),
+    @scoped_callback(app,'in-game',Output('in-game-events', 'data'), Output('in-game-source', 'children'),
                   Output('in-game-matchup', 'children'),
                   Input('in-game-game', 'value'), Input('in-game-catalog', 'data'), Input('in-game-refresh', 'n_clicks'),
                   Input('workspace-page', 'value'), Input('sport', 'value'),
@@ -133,7 +127,7 @@ def register(app, service):
             return clicked['drive']
         raise PreventUpdate
 
-    @app.callback(Output('in-game-drive-navigation', 'children'),
+    @scoped_callback(app,'in-game',Output('in-game-drive-navigation', 'children'),
                   Input('in-game-events', 'data'), Input('in-game-offense', 'value'),
                   Input('in-game-drive', 'value'), Input('sport', 'value'))
     def in_game_drive_navigation(data, offense, drive, sport):
@@ -142,7 +136,7 @@ def register(app, service):
         events = [r for r in data['events'] if offense == view.ALL or r['team'] == offense]
         return nfl_in_game.drive_navigation(events, drive)
 
-    @app.callback(Output('in-game-nfl-insights', 'children'),
+    @scoped_callback(app,'in-game',Output('in-game-nfl-insights', 'children'),
                   Input('in-game-events', 'data'), Input('in-game-offense', 'value'), Input('in-game-player', 'value'),
                   Input('in-game-period', 'value'), Input('in-game-kind', 'value'), Input('in-game-drive', 'value'),
                   Input('in-game-event-select', 'value'), Input('sport', 'value'), Input('in-game-game', 'value'))
@@ -167,7 +161,7 @@ def register(app, service):
                               f"{view.clock_label(r['clock'])} · {r['description'][:150]}", value=r['id']) for r in rows]
         return options, previous if ctx.triggered_id != 'in-game-events' and previous in {r['id'] for r in rows} else view.ALL
 
-    @app.callback(Output('in-game-chart', 'figure'), Output('in-game-summary', 'children'),
+    @scoped_callback(app,'in-game',Output('in-game-chart', 'figure'), Output('in-game-summary', 'children'),
                   Output('in-game-chart-note', 'children'), Output('in-game-table', 'columns'), Output('in-game-table', 'data'),
                   Input('in-game-events', 'data'), Input('in-game-offense', 'value'), Input('in-game-player', 'value'),
                   Input('in-game-period', 'value'), Input('in-game-result', 'value'), Input('in-game-kind', 'value'),

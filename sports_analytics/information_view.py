@@ -1,4 +1,6 @@
 """Information Variable source directory, attributed reporting and NFL weather."""
+from .navigation import scoped_callback
+
 from dash import Input,Output,State,ctx,dcc,html,no_update
 from dash.exceptions import PreventUpdate
 
@@ -108,17 +110,24 @@ def weather(packet,latitude,longitude,now):
 
 
 def register(app,service):
-    @app.callback(Output('information-menu','style'),Output('information-menu','className'),Output('information-navigation','children'),
-                  Output('information-page','style'),Output('information-context','data'),Output('information-title','children'),
+    import json
+    app.clientside_callback('''function(sport,page,hash){
+        const pages='''+json.dumps(data.PAGES)+''', supported=!!pages[sport],active=supported&&page==='information',
+            found=/^#(nba|nfl)-information-([a-z]+)$/.exec(hash||''),
+            kind=found?.[1]?.toUpperCase()===sport&&pages[sport]?.some(([key])=>key===found[2])?found[2]:pages[sport]?.[0]?.[0];
+        return [supported?{}:{display:'none'},'information-menu'+(active?' active':''),(pages[sport]||[]).map(([key,title])=>({
+            namespace:'dash_html_components',type:'A',props:{children:title,href:'#'+sport.toLowerCase()+'-information-'+key,
+                className:'sport-page-link'+(active&&kind===key?' active':''),'aria-current':active&&kind===key?'page':'false'}}))];
+    }''',Output('information-menu','style'),Output('information-menu','className'),Output('information-navigation','children'),
+        Input('sport','value'),Input('workspace-page','value'),Input('market-url','hash'))
+    @scoped_callback(app,'information',Output('information-page','style'),Output('information-context','data'),Output('information-title','children'),
                   Output('information-sources','children'),Output('information-news','style'),Output('information-weather','style'),
                   Input('sport','value'),Input('workspace-page','value'),Input('market-url','hash'))
     def information_visibility(sport,page,location_hash):
         supported=sport in data.SPORTS;active=supported and page=='information';hidden={'display':'none'}
         found=data.route(location_hash);kind=found['kind'] if found and found['sport']==sport else data.PAGES[sport][0][0] if supported else None
         context=dict(sport=sport,kind=kind) if active else None
-        links=[html.A(title,href=f'#{sport.lower()}-information-{key}',className='sport-page-link'+(' active' if active and kind==key else ''),
-                      **{'aria-current':'page' if active and kind==key else 'false'}) for key,title in data.PAGES.get(sport,[])]
-        return ({} if supported else hidden,'information-menu'+(' active' if active else ''),links,{} if active else hidden,context,
+        return ({} if active else hidden,context,
                 sport+' · '+dict(data.PAGES[sport])[kind] if active else '',sources(context,service) if active else [],
                 hidden if kind=='weather' else {},{} if kind=='weather' else hidden)
 
@@ -141,8 +150,8 @@ def register(app,service):
             return packet,status
         except (ValueError,DataSourceError) as exc:return None,str(exc)
 
-    app.clientside_callback('''function(context,packet){return [!context,packet&&packet.pending?1500:300000];}''',
-        Output('information-timer','disabled'),Output('information-timer','interval'),Input('information-context','data'),Input('information-data','data'))
+    app.clientside_callback('''function(context,packet,page){return [page!=='information'||!context,packet&&packet.pending?1500:300000];}''',
+        Output('information-timer','disabled'),Output('information-timer','interval'),Input('information-context','data'),Input('information-data','data'),Input('workspace-page','value'))
 
     @app.callback(Output('information-team','options'),Output('information-team','value'),Input('information-data','data'),State('information-team','value'))
     def information_teams(packet,previous):

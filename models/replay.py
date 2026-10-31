@@ -15,6 +15,7 @@ from hashlib import sha256
 
 import numpy as np
 import pandas as pd
+import json
 
 _active = ContextVar('model_replay_cache', default=None)
 
@@ -37,6 +38,20 @@ def fingerprint(value):
     if isinstance(value, (tuple, list)):
         return tuple(fingerprint(item) for item in value)
     return value
+
+
+def input_digest(*frames):
+    """Versioned content identity, without materializing whole tables as JSON.
+
+    The normal path retains schema, index, ordering and nanosecond timestamps.
+    Unhashable object cells retain the original table-JSON representation.
+    """
+    try:
+        content=repr(fingerprint(frames)).encode()
+    except (TypeError,ValueError):
+        content=json.dumps([frame.to_json(orient='table',date_format='iso',date_unit='ns')
+                            for frame in frames],ensure_ascii=True).encode()
+    return sha256(b'frame-v2\0'+content).hexdigest()
 
 
 class ReplayCache:

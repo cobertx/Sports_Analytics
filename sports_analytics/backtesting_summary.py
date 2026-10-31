@@ -1,8 +1,11 @@
 """Browse and reopen completed sport simulations directly from their saved reports."""
+from .presentation import table_cell, table_header
 import json
 from hashlib import sha256
 
 import pandas as pd
+from .navigation import scoped_callback
+
 from dash import Input,Output,State,ctx,dash_table,dcc,html,no_update
 from dash.exceptions import PreventUpdate
 
@@ -33,10 +36,8 @@ def layout():
                     {'type':'numeric'} if key in {'evaluated','limit'} else {})) for key,label in columns],
                 markdown_options={'link_target':'_self'},cell_selectable=False,page_size=15,sort_action='native',filter_action='native',
                 style_table={'overflowX':'auto'},
-                style_cell={'backgroundColor':'#111d2e','color':'#c7d3e4','border':'1px solid #243249',
-                            'padding':'10px','textAlign':'left','fontFamily':'Segoe UI','fontSize':'12px',
-                            'minWidth':'115px','maxWidth':'300px','whiteSpace':'normal','height':'auto'},
-                style_header={'backgroundColor':'#17253a','fontWeight':'600'}),color='#57dbc4',delay_show=500),
+                style_cell=table_cell(minWidth='115px', maxWidth='300px', whiteSpace='normal', height='auto'),
+                style_header=table_header()),color='#57dbc4',delay_show=500),
         ],id='backtest-summary-list',className='panel backtest-summary-list'),
         html.Section([
             html.A('← All saved simulations',href='#backtesting-summary',className='back-to-games'),
@@ -92,12 +93,12 @@ def register(app,service):
             result={**result,'original_context':result['context'],'context':{**result['context'],'tolerance':route['tolerance']}}
         return result
 
-    @app.callback(Output('backtest-summary-target','value'),Input('market-url','hash'))
+    @scoped_callback(app,'backtesting',Output('backtest-summary-target','value'),Input('market-url','hash'))
     def backtest_summary_target(location_hash):
         route=summary_route(location_hash)
         return route.get('target','margin') if route and route.get('run_id') else no_update
 
-    @app.callback(Output('backtest-summary-page','style'),Output('backtest-summary-list','style'),
+    @scoped_callback(app,'backtesting',Output('backtest-summary-page','style'),Output('backtest-summary-list','style'),
                   Output('backtest-summary-detail','style'),Output('backtest-summary-table','data'),
                   Output('backtest-summary-count','children'),Input('workspace-page','value'),Input('sport','value'),
                   Input('market-url','hash'),Input('backtest-summary-refresh','n_clicks'),
@@ -111,7 +112,7 @@ def register(app,service):
                  f'No completed {sport} simulations saved yet. Run a backtest from a method page to add one here.')
         return {},hidden if detail else {},{} if detail else hidden,rows,message
 
-    @app.callback(Output('backtest-summary-results','children'),Output('backtest-summary-settings','children'),
+    @scoped_callback(app,'backtesting',Output('backtest-summary-results','children'),Output('backtest-summary-settings','children'),
                   Output('backtest-summary-status','children'),Output('backtest-summary-export','disabled'),
                   Output('backtest-summary-target-field','style'),Output('backtest-summary-rendered','data'),
                   Input('workspace-page','value'),Input('sport','value'),

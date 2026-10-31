@@ -187,7 +187,8 @@ class ProbabilityPolicyChecks(TestCase):
         fixture.engines['EPA'].forecast.reset_mock()
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
             fresh,_=fixture.cb['summary_models'](bundle,'EPA','OAM',0,'market-summary','NFL','123',old)
-        fixture.engines['EPA'].forecast.assert_called_once();self.assertTrue(current_models(fresh,bundle,'EPA','OAM'))
+        fixture.engines['EPA'].forecast.assert_not_called()  # The current-policy forecast is already cached.
+        self.assertTrue(current_models(fresh,bundle,'EPA','OAM'))
 
     def test_saved_filtering_labels_older_archive_and_only_shows_current_defaults(self):
         from check_filtered_results import source,ranking,CRITERIA,NOW

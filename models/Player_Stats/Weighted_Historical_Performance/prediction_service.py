@@ -17,7 +17,7 @@ from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
 from sports_analytics.display_time import format_eastern
 from sports_analytics.result_cache import load_json, save_json
-from models.replay import fingerprint as history_fingerprint
+from models.replay import fingerprint as history_fingerprint, input_digest
 from .core import MODEL_VERSION, WHPConfig, WHPForecast, WeightedHistoricalPerformance, eligible_history
 from .errors import WHPError
 from .historical_data import PlayerHistoryRepository, identity_name
@@ -184,7 +184,7 @@ class WHPMarketService:
                     player["opportunity"] = player[spec.opportunity]
                 sample = eligible_history(player, cutoff)
                 columns = [c for c in ["game_id", "entity_id", "event_date", "available_at", "season", "value", "opportunity", "team"] if c in sample]
-                fingerprint = sha256(sample[columns].to_json(orient="table", date_format="iso", index=False).encode()).hexdigest()
+                fingerprint = input_digest(sample[columns])
                 identity = {"model_version": MODEL_VERSION, "code_sha256": implementation,
                             "sport": sport, "player": row["subject"], "market": key[1],
                             "cutoff": cutoff.isoformat(), "input_sha256": fingerprint, "config": asdict(config)}

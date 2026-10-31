@@ -17,6 +17,7 @@ import pandas as pd
 
 from .data import DataSourceError, Query, SOURCES, fetch
 from .cache_refresh import RefreshQueue
+from .frame_cache import FrameCache
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE_VERSION = 1
@@ -60,7 +61,7 @@ class DataService:
         return hashlib.sha256(serialized.encode()).hexdigest()
 
     @staticmethod
-    @lru_cache(maxsize=4)
+    @FrameCache
     def _decode(payload):
         # Key by the actual saved bytes so revised data cannot reuse an old frame.
         return pd.read_json(StringIO(zlib.decompress(payload).decode()), orient="table")
@@ -153,4 +154,4 @@ class DataService:
         dataset = self._read(key, tuple(revision))
         if dataset is None:
             raise DataSourceError("This cached dataset is no longer available. Load the data again.")
-        return dataset
+        return replace(dataset,frame=dataset.frame.copy(deep=True))

@@ -25,7 +25,7 @@
 .market-screen .sport-page-link.active { background: transparent; color: var(--muted); font-weight: 400; }
 .market-screen-market #market-page-link,.market-screen-kalshi #kalshi-page-link,.market-screen-polymarket #polymarket-page-link,.market-screen-summary #market-summary-page-link,
 .market-screen-filtered #filtered-results-page-link {
-  background: #102e32; color: var(--accent); font-weight: 650;
+  background: var(--selected); color: var(--accent); font-weight: 650;
 }
 .market-screen-kalshi #parlay-drawer,.market-screen-polymarket #parlay-drawer,.market-screen-summary #parlay-drawer,
 .market-screen-filtered #parlay-drawer { display: none !important; }
@@ -48,3 +48,19 @@
 .workspace-screen-pnl #pnl-page { display: block !important; }
 .workspace-screen-odds #odds-api-page { display: block !important; }
 .workspace-screen-pnl #sport-pages,.workspace-screen-odds #sport-pages { display: none !important; }
+/* Keep the scope controls and status usable while replacing another player's
+   results. A late response can never display that player's charts or table. */
+.historical-transition-status { display: none; padding: 16px 0; min-height: 440px; }
+.historical-results { min-width: 0; }
+.history-view-pending .historical-results { display: none; }
+.history-view-pending #historical-transition-status { display: block; }
+.history-skeleton-cards { height: 90px; margin: 18px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.history-skeleton-chart { height: 300px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.page-toolbar .sport-page-link { transition: color 180ms, background-color 180ms; }
+.app-shell:is(.market-screen,.workspace-screen) .page-toolbar .sport-page-link.active:not([aria-current="page"]) { background: transparent; color: var(--muted); font-weight: 400; }
+.app-shell:is(.market-screen,.workspace-screen) .page-toolbar .sport-page-link[aria-current="page"] { background: var(--selected); color: var(--accent); font-weight: 650; }
+.skip-navigation { position: fixed; left: 12px; top: -100px; z-index: 100; padding: 12px; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--text); }
+.skip-navigation:focus { top: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .page-toolbar .sport-page-link { transition: none; }
+}

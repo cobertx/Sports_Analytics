@@ -7,10 +7,12 @@ from unittest.mock import Mock, patch
 import sys
 import tempfile
 from threading import Barrier
+from time import monotonic,sleep
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from models.Game_Outcome.PPP.PPP import MarketProbability
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.mispricing import FILTER_CATEGORY,criteria_values,filter_context,rank_markets,results
@@ -51,6 +53,15 @@ def components(component):
         yield from components(getattr(component,'children',None))
 
 
+def finish_filter(app,reference):
+    if not isinstance(reference,dict) or not reference.get('job'):return reference
+    deadline=monotonic()+10
+    while app._filter_jobs.tasks.queue.state(reference['job'])['pending'] and monotonic()<deadline:sleep(.005)
+    record=app._filter_jobs.tasks.wait(reference['job'],10)
+    if record is None:raise AssertionError(app._filter_jobs.tasks.queue.state(reference['job']))
+    return {**{key:value for key,value in reference.items() if key!='job'},**record} if isinstance(record,dict) else record
+
+
 class MispricingChecks(TestCase):
     def setUp(self):
         self.directory=tempfile.TemporaryDirectory();self.addCleanup(self.directory.cleanup)
@@ -70,8 +81,8 @@ class MispricingChecks(TestCase):
             nba_ppp_service=self.game_services['PPP'],nba_epa_service=self.game_services['EPA'],nba_elo_service=self.game_services['ELO'],
             whp_service=self.player_services['WHP'],usage_opportunity_service=self.player_services['UO'],
             opponent_adjusted_service=self.player_services['OAM'],pace_game_environment_service=self.player_services['PGE'])
-        self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__
-                 for m in self.app.callback_map.values() if m.get('callback')}
+        self.addCleanup(self.app._filter_jobs.tasks.queue.shutdown)
+        self.cb=callback_functions(self.app)
 
     def test_controls_are_only_in_filter_panel_and_category_is_parallel_for_every_sport(self):
         panel=next(c for c in components(self.app.layout) if getattr(c,'id',None)=='mispricing-filter-panel')
@@ -125,6 +136,7 @@ class MispricingChecks(TestCase):
     def test_quick_filter_runs_each_selected_engine_once_for_all_categories(self):
         for sport in ['NBA','NFL','NCAAF']:
             for player_method in ['WHP','UO','OAM','PGE']:
+                self.app._filter_jobs.forecasts.clear()
                 for service in [*self.game_services.values(),*self.player_services.values()]:service.reset_mock()
                 location=f'#{sport.lower()}-game-123';selection=self.saved['pulled_at']
                 with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-quick-filter')):
@@ -167,7 +179,7 @@ class MispricingChecks(TestCase):
             'market-category':FILTER_CATEGORY,'market-quick-filter':1,'market-url':'#nfl-game-123',
             'market-snapshot':self.saved['pulled_at'],'market-quick-game-methods':['EPA','PPP'],'market-quick-player-methods':['PGE','WHP'],
             'market-quick-probability':75,'market-quick-edge':5,
-            'mispricing-forecast-history':None,'workspace-page':'market'}
+            'mispricing-forecast-history':None,'workspace-page':None}
         with self.app.server.test_client() as client:
             for name in ['request_quick_filter','quick_filter_markets']:
                 key,meta=next((k,m) for k,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
@@ -175,8 +187,8 @@ class MispricingChecks(TestCase):
                     if item['id'].startswith('{'):values.setdefault(item['id'],[])
                 response=client.post('/_dash-update-component',json=dict(output=key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                    inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                    state=[dict(**item,value=values[item['id']]) for item in meta['state']],
+                    inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],
                     changedPropIds=['market-quick-filter.n_clicks'] if name=='request_quick_filter' else ['mispricing-request.data']))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 data=response.get_json()['response']
@@ -184,6 +196,16 @@ class MispricingChecks(TestCase):
                     self.assertNotIn('market-applied-criteria',data)
                     values['mispricing-request']=data['mispricing-request']['data']
                 else:
+                    reference=data.get('mispricing-forecast-history',{}).get('data',{})
+                    if reference.get('pending'):
+                        finish_filter(self.app,reference)
+                        values['mispricing-forecast-history']=reference
+                        response=client.post('/_dash-update-component',json=dict(output=key,
+                            outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
+                            inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                            state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['market-quick-poll.n_intervals']))
+                        self.assertEqual(response.status_code,200)
+                        data=response.get_json()['response']
                     self.assertIn('Top 3 by edge',str(data));self.assertIn('Remaining qualifying markets',str(data))
                     self.assertIn('EPA',str(data));self.assertIn('PGE',str(data))
 

@@ -1,11 +1,11 @@
 .market-structure-button { display:inline-block; margin:4px 0 4px 6px; padding:4px 8px; border:1px solid #385569; border-radius:5px; color:#8fe4d8; background:#112d36; font-size:11px; cursor:pointer; white-space:nowrap; }
 .market-structure-button:disabled { opacity:.5; cursor:default; }
-.market-structure-button:focus-visible,.structure-dialog button:focus-visible { outline:2px solid #57dbc4; outline-offset:3px; }
+.market-structure-button:focus-visible,.structure-dialog button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 .structure-modal { position:fixed; inset:0; z-index:1500; display:flex; justify-content:center; align-items:center; padding:24px; }
 .structure-backdrop { position:absolute; inset:0; width:100%; height:100%; background:rgba(3,9,17,.85); border:0; border-radius:0; cursor:default; }
 .structure-dialog { position:relative; width:min(1500px,100%); max-height:92vh; overflow:auto; overscroll-behavior:contain; padding:25px; background:#0c1727; border:1px solid #365065; border-radius:14px; box-shadow:0 20px 70px #0008; color:#d6e3ef; }
 .structure-heading,.structure-controls { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; }
-.structure-heading h2 { margin:4px 0; }.structure-heading small { color:#57dbc4; letter-spacing:.12em; }
+.structure-heading h2 { margin:4px 0; }.structure-heading small { color:var(--accent); letter-spacing:.12em; }
 .structure-heading button,.structure-controls button { background:#193346; border:1px solid #3b6477; border-radius:6px; padding:8px 12px; color:#e2edf6; cursor:pointer; }
 .structure-controls { justify-content:flex-start; margin:16px 0; font-size:12px; }
 .structure-controls input { margin-right:7px; }
@@ -13,8 +13,8 @@
 .structure-note,.structure-time { color:#a2b4c8; font-size:12px; line-height:1.55; }
 .structure-error { color:#ffb7b7; font-size:12px; }
 .structure-sources { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:start; gap:16px; }
-.structure-source { min-width:0; padding:17px; background:#122034; border:1px solid #2d4259; border-radius:9px; font-size:13px; }
-.structure-source h3 { color:#57dbc4; margin:0 0 8px; }.structure-source a { color:#8cdbed; font-size:12px; }
+.structure-source { min-width:0; padding:17px; background:var(--raised); border:1px solid #2d4259; border-radius:9px; font-size:13px; }
+.structure-source h3 { color:var(--accent); margin:0 0 8px; }.structure-source a { color:#8cdbed; font-size:12px; }
 .structure-contract-detail { border-top:1px solid #31455d; padding-top:12px; margin-top:14px; }
 .structure-contract-detail h4 { margin:0 0 7px; line-height:1.5; }.structure-contract { overflow-wrap:anywhere; color:#9aadbf; }
 .structure-contract-detail h5 { margin:20px 0 7px; font-size:13px; }

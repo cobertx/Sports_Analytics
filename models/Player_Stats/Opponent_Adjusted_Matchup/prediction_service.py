@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from models.replay import replay_instance
+from models.replay import replay_instance, input_digest
 
 from sports_analytics.data import DataSourceError
 from sports_analytics.result_cache import load_json, save_json
@@ -88,8 +88,7 @@ class OpponentAdjustedMarketService:
             raise DataSourceError('Both matchup teams require uniquely mapped saved team histories.')
         opponents=dict(zip(clubs,clubs[::-1]))
         signature=implementation_hash()
-        data_hash=sha256((players.to_json(orient='table',date_format='iso',index=False)+
-                          teams.to_json(orient='table',date_format='iso',index=False)).encode()).hexdigest()
+        data_hash=input_digest(players,teams)
         identity=dict(version=MODEL_VERSION,implementation=signature,input_sha256=data_hash,
                       config=asdict(config),cutoff=cutoff.isoformat(),scenarios=self.scenarios,
                       snapshot={k:snapshot.get(k) for k in ['sport','game_id','home_team','away_team','pulled_at','commence_time','rows']})

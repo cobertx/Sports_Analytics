@@ -1,4 +1,5 @@
 """Kalshi game cards and exchange quotes, kept separate from sportsbook prices."""
+from .presentation import table_cell, table_header, signed_state
 import re
 from collections import OrderedDict
 from functools import lru_cache
@@ -17,6 +18,7 @@ from .kalshi_analysis import FILTER, implied
 from .market_view import probability_text
 from models.Game_Outcome.PPP.PPP import fair_american_odds
 from .prompt_history import button as history_button
+from .lazy_markets import markets as lazy_markets
 from .market_structure_link import button as structure_button
 from .loading import indicator
 
@@ -169,7 +171,7 @@ def layout(provider='Kalshi'):
                     dict(label='Every 5 seconds', value=5), dict(label='Every 10 seconds', value=10),
                     dict(label='Every 30 seconds', value=30), dict(label='Paused', value=0)], value=5, clearable=False)),
             ], className='kalshi-detail-controls'),
-            dcc.Tabs(id=f'{prefix}-category', value='Game Lines', children=[], className='market-category-tabs'),
+            dcc.Tabs(id=f'{prefix}-category', value='Game Lines', children=[], mobile_breakpoint=0, className='market-category-tabs'),
             filter_panel() if not polymarket else None,
             html.Div(id=f'{prefix}-quote-status', className='load-status', role='status'),
             html.Div(id='kalshi-model-status',className='forecast-history',role='status') if not polymarket else None,
@@ -186,10 +188,8 @@ def layout(provider='Kalshi'):
               dash_table.DataTable(id=f'{prefix}-table', columns=columns, data=[], page_size=20, sort_action='native',
                 filter_action='native', export_format='csv', tooltip_duration=None,
                 style_table={'overflowX': 'auto'},
-                style_cell={'backgroundColor': '#111d2e', 'color': '#b8c8dc', 'border': '1px solid #243249',
-                            'padding': '11px', 'fontFamily': 'Segoe UI', 'fontSize': '12px', 'textAlign': 'left',
-                            'minWidth': '95px', 'maxWidth': '290px', 'whiteSpace': 'normal', 'height': 'auto'},
-                style_header={'backgroundColor': '#17253a', 'fontWeight': '600'})],
+                style_cell=table_cell(minWidth='95px', maxWidth='290px', whiteSpace='normal', height='auto'),
+                style_header=table_header())],
                 id=f'{prefix}-detail-table',open=False,className='panel kalshi-detail-table'),
             html.Details([html.Summary('Contract rules, payout & settlement'), html.Div(id=f'{prefix}-rules')],
                          id=f'{prefix}-rules-panel',open=False,className='panel kalshi-rules'),
@@ -326,7 +326,7 @@ def comparison_rows(row,snapshot=None,provider='Kalshi'):
             *([] if polymarket else [
                 html.Span(probability_text(probability),className='market-probability',title=row.get('model_method','')+': '+row.get('model_detail','Estimate unavailable')),
                 html.Span(odds_text(probability),className='market-probability'),
-                html.Span(f'{100*edge:+.2f} pp' if edge is not None else '—',className='market-edge'),
+                html.Span(f'{100*edge:+.2f} pp' if edge is not None else '—',className='market-edge',**{'data-sign':signed_state(edge)}),
             ]),
         ],**({'id':dict(type='kalshi-comparison-row',sport=snapshot['sport'],game=snapshot['game_id'],ticker=row['ticker'],side=side)}
              if not polymarket and snapshot else {}),
@@ -336,7 +336,12 @@ def comparison_rows(row,snapshot=None,provider='Kalshi'):
     return result
 
 
-def market_sections(snapshot, provider='Kalshi'):
+def market_body(rows,snapshot,provider,count):
+    return html.Div([html.Div(comparison_rows(row,snapshot,provider),className='kalshi-contract',key=row['ticker'])
+                     for row in rows[:count]],className='market-outcomes')
+
+
+def market_sections(snapshot, provider='Kalshi', *,lazy=True,view_id=None):
     """Sportsbook-style market ladders, retaining the exchange's binary quotes."""
     groups = market_groups(snapshot)
     polymarket = provider=='Polymarket'
@@ -347,6 +352,7 @@ def market_sections(snapshot, provider='Kalshi'):
         return html.Div(comparison_rows(row,snapshot,provider),className='kalshi-contract',key=row['ticker'])
 
     sections = []
+    view=(view_id or lazy_markets.view()) if lazy else None
     names = {'GAME':'Game winner', 'SPREAD':'Alternate spreads', 'TOTAL':'Total points', 'TEAMTOTAL':'Team totals'}
     for index,(event,rows) in enumerate(groups.items()):
         family = event.split('-',1)[0].removeprefix('KX'+snapshot['sport'])
@@ -361,12 +367,10 @@ def market_sections(snapshot, provider='Kalshi'):
                     (['Selection','Market odds','Market implied probability','Calculated probability','Model fair odds','Edge'] if not polymarket else
                      ['Selection','Market odds','Market implied probability'])],
                     className='market-comparison-heading market-line-comparison'+(' polymarket-line-comparison' if polymarket else '')),
-                html.Div([outcome(row) for row in rows[:6]],className='market-outcomes'),
-                html.Details([html.Summary([
-                    html.Span(f'Show more · {len(rows)-6} selections',className='market-show-more'),
-                    html.Span('Show less',className='market-show-less')]),
-                    html.Div([outcome(row) for row in rows[6:]])],className='more-market-lines',
-                    open=False,key=event+'-more') if len(rows)>6 else None,
+                lazy_markets.panel(view,index,lambda count,rows=rows:market_body(rows,snapshot,provider,count),
+                    len(rows),initial=index<2) if lazy and (len(rows)>6 or index>=2) else html.Div([outcome(row) for row in rows[:6]],className='market-outcomes'),
+                html.Details([html.Summary('Show more'),html.Div([outcome(row) for row in rows[6:]])],
+                    className='more-market-lines',open=False) if not lazy and len(rows)>6 else None,
             ],className='kalshi-market-lines'),
         ],id='kalshi-section-'+event,key=event,open=index<2,className='sportsbook-market kalshi-market'))
     return sections

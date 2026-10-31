@@ -11,6 +11,7 @@ from unittest.mock import Mock,patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from dash.exceptions import PreventUpdate
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.filtered_results import FilteredResults,route
 from sports_analytics.filtered_results_view import rows
@@ -102,8 +103,7 @@ class SavedFilteringChecks(TestCase):
     def test_page_routes_table_order_empty_state_and_off_page_guard(self):
         self.store.save(source(),ranking(),CRITERIA)
         app=create_app(filtered_results_service=self.store)
-        callbacks={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__
-                   for m in app.callback_map.values() if m.get('callback')}
+        callbacks=callback_functions(app)
         table=next(c for c in components(app.layout) if getattr(c,'id',None)=='filtered-results-table')
         self.assertEqual(table.sort_by,[dict(column_id='probability',direction='desc'),dict(column_id='edge',direction='desc')])
         for sport in ('NBA','NFL','NCAAF'):
@@ -139,10 +139,12 @@ class SavedFilteringChecks(TestCase):
         app=create_app(filtered_results_service=self.store)
         key,meta=next((key,meta) for key,meta in app.callback_map.items() if meta.get('callback')
                       and meta['callback'].__wrapped__.__name__=='show_filtered_results')
-        values=['filtered-results','NBA','latest',0,0]
+        values={'workspace-page':'filtered-results','sport':'NBA','filtered-results-scope':'latest',
+                'filtered-results-refresh':0,'filtered-results-clock':0}
         response=app.server.test_client().post('/_dash-update-component',json=dict(output=key,
             outputs=[dict(id=out.component_id,property=out.component_property) for out in meta['output']],
-            inputs=[dict(item,value=value) for item,value in zip(meta['inputs'],values)],state=[],
+            inputs=[dict(item,value=wire_value(item,values)) for item in meta['inputs']],
+            state=[dict(item,value=wire_value(item,values)) for item in meta['state']],
             changedPropIds=['workspace-page.value']))
         self.assertEqual(response.status_code,200,response.get_data(as_text=True))
         data=response.get_json()['response']['filtered-results-table']['data']

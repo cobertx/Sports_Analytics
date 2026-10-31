@@ -83,7 +83,7 @@ class PageTasks:
             with self.lock:current=self.generations.get(key)==generation
             if current:publish(value)
 
-    def read(self,key,work,*,refresh=False,publish=None):
+    def read(self,key,work,*,refresh=False,publish=None,force=False):
         with self.lock:
             state=self.queue.state(key)
             if not state['pending'] and (refresh or key not in self.values):
@@ -95,7 +95,7 @@ class PageTasks:
                         if self.generations.get(key)==generation:
                             self._put(key,value)
                     self._publish(key,value,generation,publish)
-                state=self.queue.request(key,update)
+                state=self.queue.request(key,update,force=force)
             value=self.values.get(key)
             return value,state['pending'],state['error']
 

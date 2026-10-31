@@ -2,24 +2,24 @@
 .kalshi-connection-note { padding: 0 22px 20px; font-size: 12px; line-height: 1.75; }
 .kalshi-game-card h3 { margin: 16px 0 10px; font-size: 20px; }
 .kalshi-game-card .game-card-footer { margin-top: 22px; }
-.kalshi-game-card .game-card-footer small { color: #93a5bd; font-size: 11px; }
+.kalshi-game-card .game-card-footer small { color: var(--muted); font-size: 11px; }
 .kalshi-matchup-header > .market-link { display: block; width: fit-content; margin: 0 auto 18px; }
 .kalshi-market-lines { overflow-x: auto; }
 .kalshi-market .polymarket-line-comparison { grid-template-columns: minmax(230px,1fr) 82px minmax(145px,.5fr); min-width: 500px; }
 .kalshi-market .kalshi-price { width: 82px; }
 .kalshi-contract .market-selection { display: block; }
 .kalshi-contract > .market-outcome { padding: 10px 12px; }
-.kalshi-contract + .kalshi-contract { border-top: 1px solid #303335; }
-.kalshi-outcome-labels { display: block; font-size: 10px; color: #8fa7bd; line-height: 1.6; margin-top: 3px; }
+.kalshi-contract + .kalshi-contract { border-top: 1px solid var(--line); }
+.kalshi-outcome-labels { display: block; font-size: 10px; color: var(--muted); line-height: 1.6; margin-top: 3px; }
 .kalshi-detail-table { padding: 20px 22px; margin-top: 22px; }
 .kalshi-detail-table > summary { cursor: pointer; color: #d7e5f0; font-size: 13px; }
 .kalshi-detail-table[open] > summary { margin-bottom: 18px; }
 .kalshi-detail-controls { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr); gap: 18px; margin-top: 22px; }
 .kalshi-rules,.kalshi-api-info { padding: 20px 22px; margin-top: 22px; }
 .kalshi-rules summary,.kalshi-api-info summary { cursor: pointer; color: #d7e5f0; font-size: 13px; }
-.kalshi-rules details { padding: 14px 0; border-bottom: 1px solid #243249; }
+.kalshi-rules details { padding: 14px 0; border-bottom: 1px solid var(--line); }
 .kalshi-rules p { white-space: pre-wrap; font-size: 12px; }
 .kalshi-api-info p { font-size: 12px; }
-.kalshi-api-info a { color: #57dbc4; }
+.kalshi-api-info a { color: var(--accent); }
 @media (max-width:700px) { #kalshi-page-link { grid-row:2; grid-column:1/-1; } #polymarket-page-link { grid-row:3; grid-column:1/-1; } #in-game-page-link { grid-row:4; } }
 @media (max-width:600px) { .kalshi-detail-controls { grid-template-columns:1fr; gap:0; } }

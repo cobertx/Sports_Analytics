@@ -2,6 +2,8 @@
 import json
 
 import pandas as pd
+from .navigation import scoped_callback
+
 from dash import ALL,Input,Output,State,ctx,dcc,html,no_update
 from dash.exceptions import PreventUpdate
 
@@ -15,7 +17,7 @@ from .display_time import format_eastern
 def register(app,backtesting):
     comparisons=Comparisons(backtesting)
 
-    @app.callback(Output('research-comparison','style'),Output('research-model-settings','style'),
+    @scoped_callback(app,'backtesting',Output('research-comparison','style'),Output('research-model-settings','style'),
                   Output('comparison-context','data'),Output('comparison-methods','options'),Output('comparison-methods','value'),
                   Output('comparison-team-field','style'),Output('comparison-statistic-field','style'),
                   Output('comparison-line-field','style'),Output('comparison-target-field','style'),Output('comparison-entity-label','children'),
@@ -150,7 +152,7 @@ def register(app,backtesting):
             html.Span(entry['state'].capitalize()+' · '+entry.get('message',''))],className='comparison-progress-row')
                 for key,entry in manifest['entries'].items()]
 
-    @app.callback(Output('comparison-results','children'),Output('comparison-export','disabled'),
+    @scoped_callback(app,'backtesting',Output('comparison-results','children'),Output('comparison-export','disabled'),
                   Output('comparison-detail-method','options'),Output('comparison-detail-method','value'),
                   Output('comparison-rendered','data'),
                   Input('comparison-state','data'),Input('comparison-context','data'),Input('comparison-target','value'),
@@ -174,7 +176,7 @@ def register(app,backtesting):
             +', '.join(key.upper() for key in manifest['entries'])+' · '+scope+'. Run again to apply changed run filters.',className='backtest-applied'),content])
         return content,False,options,previous if previous in reports else options[0]['value'],signature
 
-    @app.callback(Output('comparison-detail','children'),Output('comparison-detail-rendered','data'),
+    @scoped_callback(app,'backtesting',Output('comparison-detail','children'),Output('comparison-detail-rendered','data'),
                   Input('comparison-state','data'),Input('comparison-context','data'),
                   Input('comparison-detail-method','value'),Input('comparison-target','value'),State('comparison-detail-rendered','data'))
     def comparison_details(manifest,context,key,target,rendered=None):

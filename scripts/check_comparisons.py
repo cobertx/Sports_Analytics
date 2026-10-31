@@ -18,6 +18,7 @@ from dash.exceptions import PreventUpdate
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts.check_backtesting import team_history,saved_game_report
 from scripts.check_research import player_inputs
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.backtesting_service import BacktestingService,game_model
 from sports_analytics.comparison import Comparisons,compare_reports,methods,page_route
 from sports_analytics.dashboard import create_app
@@ -68,8 +69,7 @@ class ComparisonChecks(TestCase):
         # fixture so a daemon cannot hold its temporary manifest at cleanup.
         with patch('sports_analytics.comparison_callbacks.Comparisons',return_value=self.manager):
             self.application=create_app(backtesting_service=self.backend)
-        self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__
-                 for m in self.application.callback_map.values() if m.get('callback')}
+        self.cb=callback_functions(self.application)
         return self.application
 
     def test_readers_wait_for_manifest_replacement_and_receive_the_completed_update(self):
@@ -268,7 +268,7 @@ class ComparisonChecks(TestCase):
             if meta.get('callback') and meta['callback'].__wrapped__.__name__=='run_comparison')
         with self.application.server.test_client() as client:
             payload=dict(output=key,outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
+                inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
                 state=[dict(**item,value=values.get(item['id'],[])) for item in meta['state']],changedPropIds=['comparison-run.n_clicks'])
             response=client.post('/_dash-update-component',json=payload)
             self.assertEqual(response.status_code,200,response.get_data(as_text=True))

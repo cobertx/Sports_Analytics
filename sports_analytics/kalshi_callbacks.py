@@ -4,6 +4,8 @@ from threading import Lock
 from time import time
 import json
 
+from .navigation import scoped_callback
+
 from dash import Input, Output, State, ctx, dcc, no_update
 from dash.exceptions import PreventUpdate
 
@@ -32,26 +34,25 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
     def callback(*args, **kwargs):
         def decorate(function):
             function.__name__ = function.__name__.replace('kalshi_', prefix+'_', 1)
-            return app.callback(*args, **kwargs)(function)
+            return scoped_callback(app,prefix,*args, **kwargs)(function)
         return decorate
-    @callback(Output(f'{prefix}-page', 'style'), Output(f'{prefix}-page-link', 'style'),
+    app.clientside_callback("""function(page,sport,hash,frequency,selected,game,category){
+        const prefix='"""+prefix+"""',supported=['NBA','NFL','NCAAF'].includes(sport),active=page===prefix&&supported,
+            route=window.dash_clientside.market_transition.route(hash),detail=active&&route&&route.provider===prefix&&route.sport===sport&&!!route.game;
+        frequency=[0,2,5,10,30].includes(frequency)?frequency:5;
+        const live=active&&detail&&game&&game.sport===sport&&selected==='live'&&frequency>0&&category!=='Mispricing Filter',
+            href='#'+sport.toLowerCase()+'-'+prefix+'-market';
+        return [{display:active?'grid':'none'},supported?{}:{display:'none'},'sport-page-link'+(active?' active':''),href,
+            {display:detail?'none':'block'},{display:detail?'block':'none'},href,!active,!live,1000*(frequency||5)];
+    }""",
+        Output(f'{prefix}-page', 'style'), Output(f'{prefix}-page-link', 'style'),
                   Output(f'{prefix}-page-link', 'className'), Output(f'{prefix}-page-link', 'href'),
                   Output(f'{prefix}-list', 'style'), Output(f'{prefix}-detail', 'style'), Output(f'{prefix}-back', 'href'),
                   Output(f'{prefix}-list-timer', 'disabled'), Output(f'{prefix}-quote-timer', 'disabled'),
                   Output(f'{prefix}-quote-timer', 'interval'),
-                  Input('workspace-page', 'value'), Input('sport', 'value'), Input('market-url', 'hash'),
-                  Input(f'{prefix}-frequency', 'value'), Input(f'{prefix}-snapshot', 'value'), Input(f'{prefix}-context', 'data'),
-                  *([Input('kalshi-category','value')] if provider=='Kalshi' else []))
-    def kalshi_visibility(page, sport, location_hash, frequency, selected, game, category=None):
-        active = page == prefix and sport in SPORTS
-        route = view.route(location_hash)
-        detail = active and route and route[0] == sport and bool(route[1])
-        frequency = frequency if frequency in {0, 2, 5, 10, 30} else 5
-        live = active and detail and game and game.get('sport') == sport and selected == 'live' and frequency > 0 and category!=FILTER
-        return ({'display': 'grid' if active else 'none'}, {} if sport in SPORTS else {'display': 'none'},
-                'sport-page-link' + (' active' if active else ''), view.href(sport),
-                {'display': 'none' if detail else 'block'}, {'display': 'block' if detail else 'none'}, view.href(sport),
-                not active, not bool(live), 1000 * (frequency or 5))
+        Input('workspace-page','value'),Input('sport','value'),Input('market-url','hash'),
+        Input(f'{prefix}-frequency','value'),Input(f'{prefix}-snapshot','value'),Input(f'{prefix}-context','data'),
+        *([Input('kalshi-category','value')] if provider=='Kalshi' else []))
 
     @callback(Output(f'{prefix}-games', 'data'), Output(f'{prefix}-list-status', 'children'),
                   Output(f'{prefix}-game-cards', 'children'),
@@ -61,7 +62,7 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
     def kalshi_games(page, sport, days, _refresh, _tick, previous=None,_cache_tick=None):
         if page != prefix or sport not in SPORTS: raise PreventUpdate
         if ctx.triggered_id==f'{prefix}-cache-poll' and not (previous or {}).get('updating'):raise PreventUpdate
-        if (ctx.triggered_id=='workspace-page' and previous and [previous.get('sport'),previous.get('window_days')]==[sport,days]
+        if (ctx.triggered_id in {'workspace-page',f'nav-{prefix}-active'} and previous and [previous.get('sport'),previous.get('window_days')]==[sport,days]
                 and 0<=time()-previous.get('checked_at',0)<60):raise PreventUpdate
         try:
             catalog = service.games(sport, days, refresh=ctx.triggered_id == f'{prefix}-list-refresh')
@@ -109,8 +110,9 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
                   Input(f'{prefix}-category', 'value'), Input(f'{prefix}-snapshot', 'value'),
                   Input(f'{prefix}-quote-timer', 'n_intervals'), Input(f'{prefix}-pull', 'n_clicks'),
                   State(f'{prefix}-frequency', 'value'),State('market-url','hash'),
-                  Input(f'{prefix}-cache-poll','n_intervals'),State(f'{prefix}-cache-state','data'))
-    def kalshi_quotes(page, sport, game, category, selected, _tick, pulls, frequency,location_hash=None,_cache_tick=None,cache_state=None):
+                  Input(f'{prefix}-cache-poll','n_intervals'),State(f'{prefix}-cache-state','data'),
+                  State(f'{prefix}-quotes','data'),State(f'{prefix}-quote-status','children'))
+    def kalshi_quotes(page, sport, game, category, selected, _tick, pulls, frequency,location_hash=None,_cache_tick=None,cache_state=None,previous_snapshot=None,previous_status=None):
         if page != prefix or sport not in SPORTS: raise PreventUpdate
         if location_hash is not None:
             route=view.route(location_hash)
@@ -155,7 +157,8 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
             if pull: options = history_options(game, category)
             chosen = 'live' if pull else selected
             # Re-emitting the dropdown's own input needlessly retriggers refreshes.
-            return snapshot, status, options, chosen if chosen != selection_before else no_update
+            return (no_update if snapshot==previous_snapshot else snapshot,
+                    no_update if status==previous_status else status,options,chosen if chosen != selection_before else no_update)
         except (DataSourceError, OSError, ValueError, TypeError) as exc:
             return None, f'{provider} quotes unavailable: ' + str(exc), no_update, no_update
         finally:
@@ -169,12 +172,13 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
                   Input(f'{prefix}-quotes', 'data'), Input(f'{prefix}-context', 'data'), Input(f'{prefix}-category', 'value'),
                   Input(f'{prefix}-detail-table','open'), Input(f'{prefix}-rules-panel','open'),
                   State(f'{prefix}-rules-signature', 'data'),State('workspace-page','value'),State('market-url','hash'),
+                  Input(f'{prefix}-snapshot','value'),
                   # Quote rendering must not wait for the forecast callback.
                   *([State('kalshi-models','data'),State('kalshi-applied-criteria','data'),
-                     State('kalshi-game-method','value'),State('kalshi-player-method','value'),State('kalshi-snapshot','value')]
+                     Input('kalshi-game-method','value'),Input('kalshi-player-method','value')]
                     if provider=='Kalshi' else []))
     def kalshi_table(snapshot, game, category, table_open=False, rules_open=False, previous_signature=None,
-                     page=None,location_hash=None,models=None,criteria=None,method='PPP',player_method='WHP',selected='live'):
+                     page=None,location_hash=None,selected='live',models=None,criteria=None,method='PPP',player_method='WHP'):
         if page is not None and page!=prefix:raise PreventUpdate
         if location_hash is not None:
             route=view.route(location_hash)
@@ -183,5 +187,5 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
         if not snapshot or not game or (snapshot.get('sport'), snapshot.get('game_id'), snapshot.get('category')) != (game['sport'], game['id'], category):
             return [], [], [], [], None
         if provider=='Kalshi':snapshot=decorate(snapshot,game,selected,method,player_method,models,criteria)
-        snapshot={**snapshot,'game':game}
+        snapshot={**snapshot,'game':game,'view_scope':[selected,method,player_method] if provider=='Kalshi' else [selected]}
         return render(snapshot,previous_signature,table_open=table_open,rules_open=rules_open,provider=provider)

@@ -17,11 +17,23 @@ from dash.exceptions import PreventUpdate
 import check_kalshi as fixtures
 from check_kalshi import raw_market, GAME, NOW, contract
 from sports_analytics import kalshi_view as view
+from scripts.callback_fixtures import wire_value
 from sports_analytics.exchange_render import render
 from sports_analytics.kalshi_analysis import definition,identity
+from sports_analytics.lazy_markets import markets as lazy_markets
+from check_kalshi import components
 
 
-def normalized(value):return json.loads(to_json(value))
+def normalized(value):
+    result=json.loads(to_json(value))
+    def clean(item):
+        if isinstance(item,dict):
+            if str(item.get('type','')).startswith('lazy-market-') and 'view' in item:item['view']='scoped-view'
+            for child in item.values():clean(child)
+        elif isinstance(item,list):
+            for child in item:clean(child)
+    clean(result)
+    return result
 
 
 def apply_patch(value, patch):
@@ -32,6 +44,18 @@ def apply_patch(value, patch):
         for key in location[:-1]:parent=parent[key]
         parent[location[-1]]=operation['params']['value']
     return result
+
+
+def expand_sections(sections):
+    nodes=list(components(sections))
+    for node in nodes:
+        identity=getattr(node,'id',None)
+        if not isinstance(identity,dict) or identity.get('type')!='lazy-market-body':continue
+        children,ready,style,label=lazy_markets.read(identity,1)
+        node.children=children;setattr(node,'data-ready',ready)
+        button=next(c for c in nodes if getattr(c,'id',None)==dict(identity,type='lazy-market-more'))
+        button.style=style;button.children=label
+    return sections
 
 
 class ExchangeUpdateChecks(TestCase):
@@ -77,6 +101,20 @@ class ExchangeUpdateChecks(TestCase):
             self.assertTrue(all(value is no_update for value in second[:4]))
             table.assert_not_called()
 
+    def test_unchanged_quote_revisits_do_not_republish_rows_but_new_timestamps_do(self):
+        app,callbacks=self.fixture.app()
+        callback=callbacks['kalshi_quotes']
+        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='nav-kalshi-active')):
+            first=callback('kalshi','NFL',self.game,'Game Lines','live',0,0,5,view.href('NFL',GAME))
+            same=callback('kalshi','NFL',self.game,'Game Lines','live',0,0,5,view.href('NFL',GAME),
+                None,None,first[0],first[1])
+            self.assertIs(same[0],no_update);self.assertIs(same[1],no_update)
+            updated={**first[0],'fetched_at':(NOW+timedelta(seconds=5)).isoformat()}
+            with patch.object(self.service,'quotes',return_value=updated):
+                current=callback('kalshi','NFL',self.game,'Game Lines','live',0,0,5,view.href('NFL',GAME),
+                    None,None,first[0],first[1])
+            self.assertEqual(current[0],updated);self.assertIsNot(current[1],no_update)
+
     def test_quotes_render_over_http_while_forecasts_are_blocked_for_each_sport(self):
         app,callbacks=self.fixture.app()
         key,meta=next((k,m) for k,m in app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__=='kalshi_table')
@@ -90,8 +128,8 @@ class ExchangeUpdateChecks(TestCase):
             with app.server.test_client() as client:
                 return client.post('/_dash-update-component',json=dict(output=key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                    inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                    state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['kalshi-quotes.data']))
+                    inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['kalshi-quotes.data']))
         with patch('sports_analytics.kalshi_analysis_callbacks.calculate',side_effect=slow),ThreadPoolExecutor(max_workers=2) as pool:
             forecast=pool.submit(callbacks['kalshi_models'],self.snapshot,None,self.game,'PPP','WHP','live','kalshi','Game Lines',None)
             try:
@@ -109,7 +147,7 @@ class ExchangeUpdateChecks(TestCase):
                     self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                     shown=response.get_json()['response']['kalshi-market-sections']['children']
                     self.assertIn('Market odds',str(shown));self.assertIn('Market implied probability',str(shown))
-                    self.assertEqual(str(shown).count("'type': 'kalshi-comparison-row'"),204)
+                    self.assertEqual(str(shown).count("'type': 'kalshi-comparison-row'"),12)
                     self.assertFalse(forecast.done())
             finally:release.set()
             forecast.result(timeout=3)
@@ -132,8 +170,8 @@ class ExchangeUpdateChecks(TestCase):
         with app.server.test_client() as client:
             response=client.post('/_dash-update-component',json=dict(output=key,
                 outputs=[[dict(id=identity,property=o.component_property) for identity in identities] for o in meta['output']],
-                inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['kalshi-models.data']))
+                inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['kalshi-models.data']))
         self.assertEqual(response.status_code,200,response.get_data(as_text=True))
         data=response.get_json()
         self.assertEqual(len(data['response']),len(identities));self.assertIn('80.00%',str(data['response']))
@@ -146,11 +184,12 @@ class ExchangeUpdateChecks(TestCase):
         for provider in ['Kalshi','Polymarket']:
             with self.subTest(provider=provider):
                 before=render(self.snapshot,table_open=True,rules_open=True,provider=provider)
+                expand_sections(before[3])
                 revised=deepcopy(self.snapshot);revised['fetched_at']=(NOW+timedelta(seconds=5)).isoformat()
                 revised['rows'][0].update(yes_ask=0,no_bid=None,volume=456.7)
                 revised['rows'][-1].update(yes_bid=.5555,last_price=None,volume_24h=100)
                 after=render(revised,before[-1],table_open=True,rules_open=True,provider=provider)
-                self.assertEqual(apply_patch(before[3],after[3]),normalized(view.market_sections(revised,provider)))
+                self.assertEqual(apply_patch(before[3],after[3]),normalized(expand_sections(view.market_sections(revised,provider))))
                 self.assertEqual(apply_patch(before[0],after[0]),normalized(view.table(revised,provider=provider)[0]))
                 self.assertIs(after[1],no_update);self.assertIs(after[2],no_update)
                 for operation in normalized(after[3])['operations']:

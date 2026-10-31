@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dash.exceptions import PreventUpdate
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.in_game_data import InGameService, nba_shot, nfl_play, valid_game, charting_fields
 from sports_analytics import in_game_view as view
@@ -278,8 +279,8 @@ class InGameChecks(TestCase):
             key, meta = next((key, meta) for key, meta in app.callback_map.items()
                 if meta.get('callback') and meta['callback'].__wrapped__.__name__ == name)
             payload = dict(output=key, outputs=[dict(id=o.component_id, property=o.component_property) for o in meta['output']],
-                inputs=[dict(**item, value=values[item['id']]) for item in meta['inputs']],
-                state=[dict(**item, value=values.get(item['id'])) for item in meta['state']], changedPropIds=[changed])
+                inputs=[dict(**item, value=wire_value(item,values)) for item in meta['inputs']],
+                state=[dict(**item, value=wire_value(item,values)) for item in meta['state']], changedPropIds=[changed])
             return client.post('/_dash-update-component', json=payload)
 
         values = {'workspace-page': 'in-game', 'sport': 'NBA', 'in-game-season': 2025,
@@ -314,8 +315,7 @@ class InGameChecks(TestCase):
             for route in ['/', '/_dash-layout', '/_dash-dependencies', '/assets/in_game.css']:
                 with client.get(route) as response:
                     self.assertEqual(response.status_code, 200)
-        callbacks = {item['callback'].__wrapped__.__name__: item['callback'].__wrapped__
-                     for item in app.callback_map.values() if item.get('callback')}
+        callbacks = callback_functions(app)
         self.assertEqual(callbacks['restore_game_route']('#nba-in-game-data'), ('NBA', 'in-game'))
         self.assertEqual(callbacks['restore_game_route']('#nfl-in-game-data'), ('NFL', 'in-game'))
         self.assertEqual(callbacks['navigate']('in-game', 'NBA')[0], {'display': 'none'})
@@ -361,8 +361,8 @@ class InGameChecks(TestCase):
         with patch.object(self.service, 'game', return_value=loaded) as load:
             response = app.server.test_client().post('/_dash-update-component', json=dict(output=key,
                 outputs=[dict(id=o.component_id, property=o.component_property) for o in meta['output']],
-                inputs=[dict(**item, value=values[item['id']]) for item in meta['inputs']],
-                state=[dict(**item, value=values[item['id']]) for item in meta['state']],
+                inputs=[dict(**item, value=wire_value(item,values)) for item in meta['inputs']],
+                state=[dict(**item, value=wire_value(item,values)) for item in meta['state']],
                 changedPropIds=['in-game-charting-load.n_clicks']))
             self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
             load.assert_called_once_with('NFL', 2025, NFL_ID, refresh=False, charting=True)

@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from models.replay import replay_instance
+from models.replay import replay_instance, input_digest
 
 from sports_analytics.data import DataSourceError
 from sports_analytics.result_cache import load_json, save_json
@@ -91,8 +91,7 @@ class PaceGameEnvironmentMarketService:
         common = Path(__file__).parent.parent/'Weighted_Historical_Performance'
         signature = sha256((signature + ''.join(sha256((common/name).read_bytes()).hexdigest() for name in
             ['historical_data.py', 'prediction_service.py', 'markets.py', 'market_comparison.py', '../../season_weights.py'])).encode()).hexdigest()
-        fingerprint = sha256((players.to_json(orient='table', date_format='iso', index=False) +
-                              all_teams.to_json(orient='table', date_format='iso', index=False)).encode()).hexdigest()
+        fingerprint = input_digest(players, all_teams)
         identity = dict(version=MODEL_VERSION, implementation=signature, input_sha256=fingerprint,
                         config=asdict(config), sport=sport, cutoff=cutoff.isoformat(),
                         snapshot={key: snapshot.get(key) for key in

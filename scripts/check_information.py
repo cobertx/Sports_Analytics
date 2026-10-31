@@ -13,6 +13,7 @@ from unittest.mock import Mock,patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.information import InformationService,PAGES,news_items,official_sources,route,time_text
@@ -133,7 +134,7 @@ class InformationChecks(TestCase):
 
     def test_source_pages_filters_and_navigation_remain_isolated_for_each_sport(self):
         packet=self.news_packet();app=create_app(information_service=self.service)
-        cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in app.callback_map.values() if m.get('callback')}
+        cb=callback_functions(app)
         self.assertEqual(len(PAGES['NBA']),2);self.assertEqual(len(PAGES['NFL']),2)
         for sport in ['NBA','NFL']:
             for kind,title in PAGES[sport]:
@@ -141,7 +142,7 @@ class InformationChecks(TestCase):
                 self.assertEqual(route(href),dict(sport=sport,kind=kind))
                 self.assertEqual(cb['restore_game_route'](href),(sport,'information'))
                 output=cb['information_visibility'](sport,'information',href)
-                self.assertEqual(output[4],dict(sport=sport,kind=kind));self.assertIn(title,output[5])
+                self.assertEqual(output[1],dict(sport=sport,kind=kind));self.assertIn(title,output[2])
                 self.assertEqual(cb['navigate']('information',sport)[0],{'display':'none'})
         self.assertIsNone(route('#nba-information-weather'));self.assertIsNone(route('#ncaaf-information-news'))
         self.assertEqual(cb['information_visibility']('NCAAF','historical','')[0],{'display':'none'})
@@ -169,7 +170,7 @@ class InformationChecks(TestCase):
                 key,meta=next((key,m) for key,m in app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
                 response=client.post('/_dash-update-component',json=dict(output=key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                    inputs=[dict(**i,value=values[i['id']]) for i in meta['inputs']],state=[dict(**i,value=values[i['id']]) for i in meta['state']],
+                    inputs=[dict(**i,value=wire_value(i,values)) for i in meta['inputs']],state=[dict(**i,value=wire_value(i,values)) for i in meta['state']],
                     changedPropIds=['information-context.data']))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 result=response.get_json()['response']

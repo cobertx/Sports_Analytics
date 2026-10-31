@@ -6,6 +6,7 @@ import re
 
 from dash import dash_table, dcc, html
 import plotly.graph_objects as go
+from .presentation import chart_style, table_cell, table_header
 from . import nfl_in_game
 
 ALL = '__all__'
@@ -87,10 +88,8 @@ def layout():
         html.Details([html.Summary('Event details & CSV export'),
             dash_table.DataTable(id='in-game-table', data=[], columns=[], page_size=12, sort_action='native',
                 filter_action='native', export_format='csv', style_table={'overflowX': 'auto'},
-                style_cell={'backgroundColor': '#111d2e', 'color': '#b8c8dc', 'border': '1px solid #243249',
-                            'padding': '10px', 'textAlign': 'left', 'fontFamily': 'Segoe UI', 'fontSize': '12px',
-                            'minWidth': '80px', 'maxWidth': '420px', 'whiteSpace': 'normal', 'height': 'auto'},
-                style_header={'backgroundColor': '#17253a', 'fontWeight': '600'})], className='panel in-game-details'),
+                style_cell=table_cell(minWidth='80px', maxWidth='420px', whiteSpace='normal', height='auto'),
+                style_header=table_header())], className='panel in-game-details'),
     ], id='in-game-page', style={'display': 'none'}, className='in-game-page')
 
 
@@ -105,8 +104,7 @@ def period_label(value):
 
 def base_figure(height):
     figure = go.Figure()
-    figure.update_layout(template='plotly_dark', paper_bgcolor='#111d2e', plot_bgcolor='#111d2e', height=height,
-        font={'family': 'Segoe UI, sans-serif', 'color': '#b8c8dc'}, hovermode='closest',
+    figure.update_layout(**chart_style(), height=height, hovermode='closest',
         margin={'l': 20, 'r': 20, 't': 55, 'b': 35}, legend={'orientation': 'h', 'y': 1.06, 'x': .5, 'xanchor': 'center'})
     figure.update_xaxes(visible=False, fixedrange=False)
     figure.update_yaxes(visible=False, scaleanchor='x', scaleratio=1, fixedrange=False)

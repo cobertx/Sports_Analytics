@@ -11,6 +11,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from models.Game_Outcome.PPP.PPP import MarketProbability
 from sports_analytics import quick_methods as qm
+from scripts.callback_fixtures import wire_value
 from sports_analytics.data import DataSourceError
 from sports_analytics.kalshi_analysis import FILTER,prompt_targets
 from sports_analytics.mispricing import FILTER_CATEGORY
@@ -28,7 +29,7 @@ def invoke(app,name,values,prompt_values,prompt_ids,trigger=None):
                   if meta.get('callback') and meta['callback'].__wrapped__.__name__==name)
     def value(item):
         if item['id'].startswith('{'):return prompt_values if item['property']=='value' else prompt_ids
-        return values[item['id']]
+        return wire_value(item,values)
     outputs=meta['output']
     result=app.server.test_client().post('/_dash-update-component',json=dict(output=key,
         outputs=([dict(id=o.component_id,property=o.component_property) for o in outputs] if isinstance(outputs,list)
@@ -37,7 +38,18 @@ def invoke(app,name,values,prompt_values,prompt_ids,trigger=None):
         state=[dict(**item,value=value(item)) for item in meta['state']],
         changedPropIds=[trigger or meta['inputs'][0]['id']+'.'+meta['inputs'][0]['property']]))
     if result.status_code!=200:raise AssertionError(result.get_data(as_text=True))
-    return result.get_json()['response']
+    output=result.get_json()['response']
+    history=output.get('mispricing-forecast-history',{}).get('data',{})
+    if name=='quick_filter_markets' and history.get('pending'):
+        app._filter_jobs.tasks.wait(history['job'],10)
+        values['mispricing-forecast-history']=history
+        return invoke(app,name,values,prompt_values,prompt_ids,'market-quick-poll.n_intervals')
+    return output
+
+
+def quick_scan(f,*args):
+    scan,status=f.cb['kalshi_quick_scan'](*args)
+    return fanduel.finish_filter(f.app,scan),status
 
 
 class PromptMethodChecks(TestCase):
@@ -170,7 +182,7 @@ class PromptMethodChecks(TestCase):
         assignments[qm.prompt_key(targets[f.snapshot['rows'][-1]['ticker']])]=['UO','OAM']
         for engine in f.players.values():engine.forecast.return_value=SimpleNamespace(forecasts={},selection=lambda row:MarketProbability(.9,.1,0))
         pv,pi=fields('kalshi','NFL',f.game['id'],assignments)
-        scan,_=f.cb['kalshi_quick_scan'](1,0,-100,['PPP'],['WHP'],f.game,FILTER,'live','kalshi',
+        scan,_=quick_scan(f,1,0,-100,['PPP'],['WHP'],f.game,FILTER,'live','kalshi',
             kalshi.view.href('NFL',f.game['id']),pv,pi)
         self.assertEqual(len(scan['ranked']['matches']),20)
         for m in ('UO','OAM','PGE'):f.players[m].forecast.assert_called_once()
@@ -183,7 +195,8 @@ class PromptMethodChecks(TestCase):
         self.assertIn('Click Quick Filtering',str(f.cb['kalshi_quick_results'](
             scan,f.game,['PPP'],['WHP'],0,-100,'live',FILTER,'kalshi',changed,pi)))
         f.players['OAM'].forecast.side_effect=DataSourceError('Unavailable OAM')
-        failed,_=f.cb['kalshi_quick_scan'](2,0,-100,['PPP'],['WHP'],f.game,FILTER,'live','kalshi',
+        f.app._filter_jobs.forecasts.clear()
+        failed,_=quick_scan(f,2,0,-100,['PPP'],['WHP'],f.game,FILTER,'live','kalshi',
             kalshi.view.href('NFL',f.game['id']),pv,pi)
         self.assertEqual(len(failed['ranked']['matches']),18)
 

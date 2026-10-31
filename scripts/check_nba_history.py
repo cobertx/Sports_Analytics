@@ -13,6 +13,7 @@ from unittest.mock import Mock,patch
 import pandas as pd
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.data import DataSourceError,Query,fetch
 from sports_analytics.nba_espn import load,identities,IDENTITIES
 from sports_analytics.service import DataService
@@ -142,7 +143,7 @@ class PromptLandingChecks(TestCase):
         self.addCleanup(self.service._refresh.shutdown,wait=True)
         self.source=load(Query('NBA',SEASON,'player'),client_for(boxes()))
         self.app=create_app(service=self.service,career_service=Mock())
-        self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in self.app.callback_map.values() if m.get('callback')}
+        self.cb=callback_functions(self.app)
         snapshot=dict(sport='NBA',game_id='123',commence_time=f'{SEASON}-10-24T23:00:00Z')
         row=dict(subject='James Harden',selection='Over',line=15.5,market_key='player_points_alternate',market='Alt Points')
         self.href=button(snapshot,row).href
@@ -186,8 +187,8 @@ class PromptLandingChecks(TestCase):
         with patch('sports_analytics.service.fetch',return_value=self.source) as request,self.app.server.test_client() as client:
             payload=dict(output=key,
                 outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['market-url.hash'])
+                inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['market-url.hash'])
             initial=client.post('/_dash-update-component',json=payload)
             self.assertTrue(initial.get_json()['response']['historical-cache-pending']['data'])
             self.service._refresh.tasks.join()

@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 import requests
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from scripts.callback_fixtures import callback_functions
 from sports_analytics.data import DataSourceError
 from sports_analytics.odds_api import OddsApiService
 from sports_analytics.nfl_markets import NflMarketService
@@ -212,7 +213,7 @@ class OddsAccountsChecks(TestCase):
         app=create_app(service=Mock(path=self.root/'data.sqlite3'),odds_service=self.api,nfl_market_service=markets,
                        nba_market_service=Mock(),ncaaf_market_service=Mock(),api_usage_log=markets.usage_log,
                        schedule_service=Mock(),kalshi_service=Mock(),polymarket_service=Mock())
-        callbacks={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in app.callback_map.values() if m.get('callback')}
+        callbacks=callback_functions(app)
         from dash import _callback_context
         with patch.object(_callback_context.CallbackContext,'triggered_id',new_callable=lambda:property(lambda _: 'odds-refresh')):
             graph,metrics,status=callbacks['odds_usage']('ODDS_API',1,0)

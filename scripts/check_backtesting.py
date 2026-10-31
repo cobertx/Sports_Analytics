@@ -15,6 +15,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from models.replay import calibration_tail, cached_calculation, replay_cache, fingerprint
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.backtesting_service import BacktestingService, estimation_history, game_model, eligible_pairs
 from models.Player_Stats.Weighted_Historical_Performance.core import WHPConfig, WeightedHistoricalPerformance, eligible_history
 from models.Player_Stats.Usage_Opportunity.historical_data import UsageHistoryRepository
@@ -270,8 +271,7 @@ class ReplayChecks(TestCase):
             service._jobs['running']=dict(state='running',percent=25,message='Evaluating',display_label='All teams',completed=1,total=4,
                 parameters=dict(sport='NBA',group='game-outcome',key='ppp'))
             app=create_app(backtesting_service=service)
-            callbacks={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__
-                       for m in app.callback_map.values() if m.get('callback')}
+            callbacks=callback_functions(app)
             context={k:result['context'][k] for k in ['sport','group','model']}
             with patch.object(service,'history',side_effect=AssertionError('Closed history should be lazy')):
                 self.assertEqual(callbacks['previous_simulations'](context,False,0,None)[0],[])

@@ -19,7 +19,7 @@ from .distributions import UsageOpportunityForecast
 from .efficiency_model import conversion,yards_per_event
 from .errors import UsageOpportunityError
 from .historical_data import eligible,match_player
-from models.replay import replay_instance
+from models.replay import replay_instance,input_digest
 from .markets import market_spec,prop_key
 from .nfl_model import split_completions
 from .opportunity_model import observed,share_rows,allocate
@@ -221,8 +221,7 @@ class CollegePlayerMarketService:
             Path(__file__).resolve().parents[3]/'sports_analytics/ncaaf_model_data.py',
             Path(__file__).resolve().parents[2]/'season_weights.py']))).hexdigest()
         identity=dict(method=self.method,config=asdict(config),implementation=signature,snapshot=snapshot,
-            input_sha256=sha256((players.to_json(orient='table',date_format='iso',index=False)+
-                                teams.to_json(orient='table',date_format='iso',index=False)).encode()).hexdigest())
+            input_sha256=input_digest(players,teams))
         path=self.repository.root/'forecasts/ncaaf'/(sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
         saved=load_json(path,self.repository.root,identity) if self.persist else None
         if saved is not None:

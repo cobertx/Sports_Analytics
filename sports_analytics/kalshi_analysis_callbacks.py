@@ -1,4 +1,7 @@
 """Forecast only changed contract definitions; scan all categories on explicit clicks."""
+from .navigation import scoped_callback
+from .presentation import signed_state
+
 from dash import ALL,Input,Output,State,ctx,html,no_update,set_props
 from dash.exceptions import PreventUpdate
 
@@ -12,6 +15,9 @@ from .mispricing import criteria_values, selected_methods, method_details
 from .kalshi_view import route,odds_text,comparison_rows,table as quote_table
 from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
+from .filter_jobs import FilterJobs,request_key
+from .lazy_markets import markets as lazy_markets
+from .loading import indicator
 
 
 def results(snapshot, ranked, criteria, models):
@@ -27,9 +33,10 @@ def results(snapshot, ranked, criteria, models):
                 html.Td(item['row']['category']),html.Td(method_details(item)),
                 html.Td(odds_text(item['implied'])),
                 html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),
-                html.Td(f"{100*item['edge']:+.2f}",className='mispricing-edge'),
+                html.Td(f"{100*item['edge']:+.2f}",className='mispricing-edge',**{'data-sign':signed_state(item['edge'])}),
             ]) for i,item in enumerate(items)] or [html.Tr(html.Td('No qualifying markets.',colSpan=8))]),
-        ],className='mispricing-table'),className='mispricing-table-scroll')
+        ],className='mispricing-table'),className='mispricing-table-scroll',tabIndex=0,role='region',
+            **{'aria-label':f'Filtered selections starting at rank {start}'})
     matches=ranked['matches']
     return html.Div([
         html.Div(f"{len(matches)} qualifying selections. Estimated probability > {100*criteria['probability']:g}% and "
@@ -39,7 +46,9 @@ def results(snapshot, ranked, criteria, models):
         html.P('Quote snapshot fetched '+format_eastern(snapshot['fetched_at'])+'. Click '+('Quick Filtering' if consensus else 'Apply Criteria')+' to update these results.',className='forecast-history'),
         *[html.P(message,className='ppp-comparison-note' if message.startswith('Game injuries:') else 'mispricing-error',role='status') for message in [*snapshot.get('notices',[]),*models.get('errors',[])]],
         html.Section([html.H3('Top 3 by edge'),table(matches[:3],1)],className='mispricing-top'),
-        html.Section([html.H3('Remaining qualifying markets'),table(matches[3:],4)],className='mispricing-remaining'),
+        html.Section([html.H3('Remaining qualifying markets'),
+            lazy_markets.panel(lazy_markets.view(),0,lambda count:table(matches[3:3+count],4),
+                               max(0,len(matches)-3),size=50)],className='mispricing-remaining'),
         html.P('Edge uses each side’s ask / payout, before trading fees. Calculated probability retains binary settlement equality outcomes. '
                'Unsupported rules, missing history and unavailable prices are excluded. '+
                ('Every method assigned to a prompt must pass both thresholds. Ranking uses the lowest edge across those methods; '
@@ -59,10 +68,11 @@ def filter_snapshot(service,game,selected,pull=False):
     return snapshot,status
 
 
-def register(app,service,game_forecast,player_forecast,filtered_results=None):
+def register(app,service,game_forecast,player_forecast,filtered_results=None,*,jobs=None):
+    jobs=jobs or FilterJobs()
     prompt_fields=dict(type='kalshi-quick-prompt-method',scope=ALL,prompt=ALL)
 
-    @app.callback(Output('kalshi-quick-prompts','children'),Input('kalshi-quick-prompts-panel','open'),
+    @scoped_callback(app,'kalshi',Output('kalshi-quick-prompts','children'),Input('kalshi-quick-prompts-panel','open'),
                   Input('kalshi-context','data'),Input('kalshi-snapshot','value'),Input('kalshi-category','value'),
                   Input('workspace-page','value'))
     def kalshi_prompt_methods(opened,game,selected,category,page):
@@ -82,7 +92,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None):
         shown=category==FILTER
         return ({'display':'block' if shown else 'none'},*({'display':'none' if shown else 'block'},)*4)
 
-    @app.callback(Output('kalshi-models','data'),Input('kalshi-quotes','data'),Input('kalshi-filter-quotes','data'),Input('kalshi-context','data'),
+    @scoped_callback(app,'kalshi',Output('kalshi-models','data'),Input('kalshi-quotes','data'),Input('kalshi-filter-quotes','data'),Input('kalshi-context','data'),
                   Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),Input('kalshi-snapshot','value'),
                   Input('workspace-page','value'),Input('kalshi-category','value'),State('kalshi-models','data'),State('market-url','hash'))
     def kalshi_models(snapshot,scan,game,method,player_method,selected,page,category,previous,location_hash=None):
@@ -122,16 +132,24 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None):
                   Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),Input('kalshi-snapshot','value'),
                   Input(rows,'id'),State('kalshi-quotes','data'),State('kalshi-context','data'),
                   State('kalshi-category','value'),State('workspace-page','value'),State('market-url','hash'),
-                  State('kalshi-detail-table','open'),prevent_initial_call=False)
-    def kalshi_model_rows(models,criteria,method,player_method,selected,identities,snapshot,game,category,page,location_hash,table_open):
+                  State('kalshi-detail-table','open'),State('kalshi-rules-signature','data'),prevent_initial_call=False)
+    def kalshi_model_rows(models,criteria,method,player_method,selected,identities,snapshot,game,category,page,location_hash,table_open,view_state=None):
         # Update only existing rows after forecasts finish, preserving accordions.
         if (page!='kalshi' or not game or not snapshot or category==FILTER or not identities
                 or route(location_hash)!=(game['sport'],game['id'])
                 or (snapshot['sport'],snapshot['game_id'],snapshot['category'])!=(game['sport'],game['id'],category)):
             raise PreventUpdate
         shown={**decorate(snapshot,game,selected,method,player_method,models,criteria),'game':game}
+        if view_state and view_state.get('context')==[game['sport'],game['id'],category]:
+            from .kalshi_view import market_groups,market_rows,market_body
+            for index,group in enumerate(market_groups(shown).values()):
+                ordered=market_rows(group)
+                lazy_markets.update(view_state.get('lazy_view'),index,lambda count,ordered=ordered:
+                                    market_body(ordered,shown,'Kalshi',count))
         rendered={}
+        wanted={(item['ticker'],item['side']) for item in identities}
         for row in shown['rows']:
+            if not any((row['ticker'],side) in wanted for side in ('yes','no')):continue
             for side,value in zip(('yes','no'),comparison_rows(row,shown)):
                 rendered[(row['ticker'],side)]=value
         children=[];classes=[]
@@ -163,7 +181,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None):
         except (DataSourceError,OSError,ValueError,TypeError) as exc:
             return no_update,no_update,str(exc)+' Previous criteria and results remain applied.'
 
-    @app.callback(Output('kalshi-filter-results','children'),
+    @scoped_callback(app,'kalshi',Output('kalshi-filter-results','children'),
                   Input('kalshi-filter-quotes','data'),Input('kalshi-applied-criteria','data'),Input('kalshi-context','data'),
                   Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),Input('kalshi-snapshot','value'),
                   Input('kalshi-category','value'),Input('workspace-page','value'),Input('kalshi-models','data'),prevent_initial_call=True)
@@ -184,8 +202,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None):
                   State('kalshi-quick-game-methods','value'),State('kalshi-quick-player-methods','value'),
                   State('kalshi-context','data'),State('kalshi-category','value'),State('kalshi-snapshot','value'),
                   State('workspace-page','value'),State('market-url','hash'),
-                  State(prompt_fields,'value'),State(prompt_fields,'id'),prevent_initial_call=True,
-                  running=[(Output('kalshi-quick-filter','disabled'),True,False)])
+                  State(prompt_fields,'value'),State(prompt_fields,'id'),prevent_initial_call=True)
     def kalshi_quick_scan(clicks,probability,edge,methods,player_methods,game,category,selected,page,location_hash,prompt_values=None,prompt_ids=None):
         if not clicks or page!='kalshi' or not game or category!=FILTER:raise PreventUpdate
         if route(location_hash)!=(game['sport'],game['id']):raise PreventUpdate
@@ -193,33 +210,62 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None):
             criteria=criteria_values(probability,edge)
             methods,player_methods=selected_methods(methods,player_methods)
             overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope('kalshi',game['sport'],game['id']))
-            snapshot,status=filter_snapshot(service,game,selected)
-            ranked,errors=quick_calculate(game,snapshot,selected,methods,player_methods,criteria,game_forecast,player_forecast,overrides)
-            if filtered_results is not None:
-                try:
-                    filtered_results.save(snapshot,ranked,criteria,provider='Kalshi',game=game,
-                        request=dict(selection=selected,methods=methods,player_methods=player_methods,prompt_methods=overrides,sequence=clicks))
-                except (DataSourceError,OSError,ValueError) as exc:
-                    errors=[*errors,'Quick Filtering completed, but its report was not saved: '+str(exc)]
-            return dict(context=identity(game,selected,methods,player_methods),criteria=criteria,
-                        snapshot=snapshot,ranked=ranked,errors=errors,prompt_methods=overrides),status+' Every method assigned to a prompt must pass both thresholds.'
+            def calculate_scan():
+                snapshot,status=filter_snapshot(service,game,selected)
+                ranked,errors=quick_calculate(game,snapshot,selected,methods,player_methods,criteria,game_forecast,player_forecast,overrides)
+                if filtered_results is not None:
+                    try:
+                        filtered_results.save(snapshot,ranked,criteria,provider='Kalshi',game=game,
+                            request=dict(selection=selected,methods=methods,player_methods=player_methods,prompt_methods=overrides,sequence=clicks))
+                    except (DataSourceError,OSError,ValueError) as exc:
+                        errors=[*errors,'Quick Filtering completed, but its report was not saved: '+str(exc)]
+                return dict(snapshot=snapshot,ranked=ranked,errors=errors,status=status)
+            context=identity(game,selected,methods,player_methods)
+            key=request_key([context,criteria,overrides])
+            jobs.tasks.read(key,calculate_scan,refresh=True,force=True)
+            return dict(context=context,criteria=criteria,prompt_methods=overrides,job=key,sequence=clicks), 'Quick Filtering is calculating in the background.'
+
         except (DataSourceError,OSError,ValueError,TypeError) as exc:
             return no_update,str(exc)+' Previous Quick Filtering results remain saved.'
 
-    @app.callback(Output('kalshi-quick-results','children'),Input('kalshi-quick-scan','data'),Input('kalshi-context','data'),
+    @scoped_callback(app,'kalshi',Output('kalshi-quick-results','children'),Input('kalshi-quick-scan','data'),Input('kalshi-context','data'),
                   Input('kalshi-quick-game-methods','value'),Input('kalshi-quick-player-methods','value'),
                   Input('kalshi-quick-probability','value'),Input('kalshi-quick-edge','value'),Input('kalshi-snapshot','value'),
                   Input('kalshi-category','value'),Input('workspace-page','value'),
-                  Input(prompt_fields,'value'),State(prompt_fields,'id'),prevent_initial_call=True)
-    def kalshi_quick_results(scan,game,methods,player_methods,probability,edge,selected,category,page,prompt_values=None,prompt_ids=None):
+                  Input(prompt_fields,'value'),State(prompt_fields,'id'),Input('kalshi-quick-poll','n_intervals'),prevent_initial_call=True)
+    def kalshi_quick_results(scan,game,methods,player_methods,probability,edge,selected,category,page,prompt_values=None,prompt_ids=None,_tick=None):
         if page!='kalshi' or category!=FILTER:raise PreventUpdate
         prompt=html.P('Click Quick Filtering to compare all selected methods and see the top three edges.',className='saved-market-empty')
+        def changed_selection():
+            if scan and scan.get('job'):
+                set_props('kalshi-quick-poll',{'disabled':True})
+                set_props('kalshi-quick-filter',{'disabled':False})
+            return prompt
         try:
             methods,player_methods=selected_methods(methods,player_methods)
             criteria=criteria_values(probability,edge)
             overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope(
                 'kalshi',(game or {}).get('sport'),(game or {}).get('id')))
-        except ValueError:return prompt
+        except ValueError:return changed_selection()
         if (not scan or not game or scan['context']!=identity(game,selected,methods,player_methods)
-                or scan['criteria']!=criteria or scan.get('prompt_methods',{})!=overrides):return prompt
-        return results({**scan['snapshot'],'game':game},scan['ranked'],criteria,dict(errors=scan['errors']))
+                or scan['criteria']!=criteria or scan.get('prompt_methods',{})!=overrides):return changed_selection()
+        record=jobs.tasks.peek(scan['job']) if scan.get('job') else scan
+        if scan.get('job') and jobs.tasks.queue.state(scan['job'])['pending']:
+            return indicator('Quick Filtering is calculating in the background...')
+        if record is None:
+            state=jobs.tasks.queue.state(scan['job'])
+            set_props('kalshi-quick-poll',{'disabled':True})
+            set_props('kalshi-quick-filter',{'disabled':False})
+            return html.P(state['error'] or 'This result expired. Click Quick Filtering to load it again.',
+                          className='mispricing-error',role='status')
+        if scan.get('job'):
+            set_props('kalshi-quick-poll',{'disabled':True})
+            set_props('kalshi-quick-filter',{'disabled':False})
+            set_props('kalshi-quick-status',{'children':record.get('status','')+' Quick Filtering completed.'})
+        return results({**record['snapshot'],'game':game},record['ranked'],criteria,dict(errors=record['errors']))
+
+    app.clientside_callback("""function(page,category,scan,game){const active=page==='kalshi'&&
+        category==='Mispricing Filter'&&scan?.job&&scan.context?.[0]===game?.sport&&scan.context?.[1]===game?.id;
+        return [!active,!!active];} """,
+        Output('kalshi-quick-poll','disabled'),Output('kalshi-quick-filter','disabled'),
+        Input('workspace-page','value'),Input('kalshi-category','value'),Input('kalshi-quick-scan','data'),Input('kalshi-context','data'))

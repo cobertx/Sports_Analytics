@@ -23,6 +23,7 @@ coverage.xml
 
 # Local source caches, account logs, downloaded data and fitted estimates
 data/cache/
+data/benchmarks/
 data/backtesting/
 data/pnl/
 data/information_variable/

@@ -18,6 +18,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.historical_links import market_metrics
 from sports_analytics.backtesting_service import BacktestingService, input_csv
@@ -111,9 +112,9 @@ class PerformanceChecks(TestCase):
         with patch('sports_analytics.service.fetch', return_value=self.frame):
             self.service.load(self.query, refresh=True)
         pd.testing.assert_frame_equal(self.service.cached(self.key).frame, self.frame)
-        for i in range(6):
+        for i in range(20):
             self.service._decode(zlib.compress(self.frame.assign(pts=i).to_json(orient='table', index=False).encode()))
-        self.assertEqual(self.service._decode.cache_info().currsize, 4)
+        self.assertEqual(self.service._decode.cache_info().currsize, 16)
 
     def test_metric_order_zero_stats_missing_values_and_positions_are_preserved(self):
         frame = pd.DataFrame(dict(position=['QB', 'QB'], passing_yards=[0., None], rushing_yards=[0., 0.],
@@ -162,7 +163,7 @@ class PagePerformanceChecks(TestCase):
         with patch('sports_analytics.service.fetch',return_value=self.frame):self.service.load(self.query,refresh=True)
         self.career=Mock()
         self.app=create_app(service=self.service,career_service=self.career)
-        self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in self.app.callback_map.values() if m.get('callback')}
+        self.cb=callback_functions(self.app)
         self.network=patch('requests.sessions.Session.request',side_effect=AssertionError('No external HTTP'))
         self.network.start();self.addCleanup(self.network.stop)
 
@@ -216,15 +217,33 @@ class PagePerformanceChecks(TestCase):
         self.assertEqual(route('#nba-game-123','NBA','market'),(no_update,no_update))
         self.assertEqual(route('#historical-team','NBA','historical'),(no_update,no_update))
         self.assertEqual(route('#nfl-games','NBA','historical'),('NFL','market'))
-        key,meta=next((k,m) for k,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__=='restore_game_route')
-        values={'market-url':'#nba-kalshi-market','sport':'NBA','workspace-page':'market'}
-        with self.app.server.test_client() as client:
-            response=client.post('/_dash-update-component',json=dict(output=key,
-                outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['market-url.hash']))
-        self.assertEqual(response.status_code,200)
-        self.assertEqual(response.get_json()['response'],{'workspace-page':{'value':'kalshi'}})
+        meta=self.app.callback_map['..sport.value...workspace-page.value..']
+        self.assertNotIn('callback',meta,'URL routing must not need an HTTP callback')
+
+    def test_history_results_have_route_scope_and_preserve_zoom_only_for_the_same_statistic(self):
+        dataset=self.load()[0]
+        route='#historical-player'
+        result=self.cb['analyze'](dataset,'001','pts',3,None,route,'historical')
+        figure,cards,records,columns=result
+        self.assertEqual(figure.layout.meta['navigation_scope'],{'route':route,'sport':'NBA','kind':'player'})
+        self.assertEqual(list(figure.data[0].y),list(range(20,28)))
+        repeated=self.cb['analyze'](dataset,'001','pts',5,None,route,'historical')
+        self.assertEqual(repeated[0].layout.uirevision,figure.layout.uirevision)
+        other=self.cb['analyze'](dataset,'001','reb',3,None,route,'historical')
+        self.assertNotEqual(other[0].layout.uirevision,figure.layout.uirevision)
+        linked='#historical-player?sport=NBA&name=Player+One'
+        opened=self.cb['analyze'](dataset,'001','pts',3,None,linked,'historical')
+        self.assertEqual(opened[0].layout.meta['navigation_scope']['route'],linked)
+        self.assertEqual(opened[2],records)
+        self.assertEqual(opened[3],columns)
+        empty=self.cb['analyze'](None,None,None,3,None,linked,'historical')
+        self.assertEqual(empty[0].layout.meta['navigation_scope'],{'route':linked,'sport':None,'kind':None})
+        self.assertEqual(empty[2:],([],[]))
+        metadata=next(m for m in self.app.callback_map.values() if m.get('callback') and m['callback'].__wrapped__.__name__=='analyze')
+        self.assertIn({'id':'nav-historical','property':'data'},metadata['inputs'])
+        self.assertIn({'id':'workspace-page','property':'value'},metadata['state'])
+        scope=self.app.callback_map['historical-render-scope.data']
+        self.assertNotIn('callback',scope,'Route feedback must not require another HTTP request')
 
 
 class SavedInputPerformanceChecks(TestCase):

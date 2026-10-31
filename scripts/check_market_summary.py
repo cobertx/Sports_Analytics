@@ -12,6 +12,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
 from models.Game_Outcome.PPP.PPP import MarketProbability
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.market_summary import calculate,entries,matching_game,polymarket_target,route
@@ -235,7 +236,7 @@ class SummaryCallbackChecks(TestCase):
             kalshi_service=self.kalshi,polymarket_service=self.poly,ppp_service=self.engines['PPP'],epa_service=self.engines['EPA'],
             elo_service=self.engines['ELO'],whp_service=self.players['WHP'],usage_opportunity_service=self.players['UO'],
             opponent_adjusted_service=self.players['OAM'],pace_game_environment_service=self.players['PGE'])
-        self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in self.app.callback_map.values() if m.get('callback')}
+        self.cb=callback_functions(self.app)
         network=patch('requests.sessions.Session.request',side_effect=AssertionError('No external requests'))
         network.start();self.addCleanup(network.stop)
         self.catalog=dict(sport='NFL',days=7,games=[game()],Kalshi=dict(games=[exchange()]),Polymarket=dict(games=[exchange('Polymarket')]))
@@ -340,8 +341,8 @@ class SummaryCallbackChecks(TestCase):
                 key,meta=next((k,m) for k,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
                 response=client.post('/_dash-update-component',json=dict(output=key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                    inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                    state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['summary-game.value']))
+                    inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['summary-game.value']))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 result=response.get_json()['response']
                 if name=='summary_quotes':values['summary-quotes']=result['summary-quotes']['data']
@@ -367,8 +368,8 @@ class SummaryCallbackChecks(TestCase):
         with self.app.server.test_client() as client:
             response=client.post('/_dash-update-component',json=dict(output=key,
                 outputs=[[dict(id=identity,property=output.component_property) for identity in identities] for output in meta['output']],
-                inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['summary-models.data']))
+                inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['summary-models.data']))
         self.assertEqual(response.status_code,200,response.get_data(as_text=True))
         data=response.get_json()['response']
         self.assertEqual(len(data),30);self.assertIn('70.00%',str(data));self.assertNotIn('summary-market-sections',data)

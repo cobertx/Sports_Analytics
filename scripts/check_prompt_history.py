@@ -12,6 +12,7 @@ import pandas as pd
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash._utils import to_json
 from dash.exceptions import PreventUpdate
+from scripts.callback_fixtures import wire_value
 from sports_analytics.historical_links import history_target,target_metric
 from sports_analytics.prompt_history import button,fanduel_target,exchange_target,outcomes,prior_history
 from sports_analytics.market_view import market_sections
@@ -21,7 +22,7 @@ from sports_analytics.dashboard import ALL_TEAMS
 import check_market_history as history_fixtures
 import check_kalshi as kalshi_fixtures
 import check_polymarket as poly_fixtures
-from check_exchange_updates import apply_patch,normalized
+from check_exchange_updates import apply_patch,normalized,expand_sections
 
 
 def snapshot():
@@ -52,7 +53,7 @@ class PromptHistoryChecks(TestCase):
 
     def test_every_fanduel_selection_has_button_including_more_lines_and_scorer_reference(self):
         s=snapshot();s['rows']=[dict(row(),line=i+.5) for i in range(8)]
-        shown=market_sections(s,'Receiving')
+        shown=expand_sections(market_sections(s,'Receiving'))
         buttons=[c for c in history_fixtures.components(shown) if 'market-history-button' in (getattr(c,'className','') or '').split()]
         self.assertEqual(len(buttons),8)
         self.assertEqual(sorted(history_target(b.href)['line'] for b in buttons),[i+.5 for i in range(8)])
@@ -169,8 +170,8 @@ class PromptChartChecks(TestCase):
             with self.fixture.app.server.test_client() as client:
                 response=client.post('/_dash-update-component',json=dict(output=meta_key,
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                    inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                    state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=['market-url.hash']))
+                    inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['market-url.hash']))
             self.assertEqual(response.status_code,200,response.get_data(as_text=True))
             figure=response.get_json()['response']['trend']['figure']
             self.assertEqual(figure['layout']['shapes'][0]['y0'],line)

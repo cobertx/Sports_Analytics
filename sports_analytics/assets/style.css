@@ -1,4 +1,16 @@
-:root { color-scheme: dark; --bg: #0b1422; --panel: #111d2e; --line: #243249; --text: #e7edf6; --muted: #93a5bd; --accent: #57dbc4; }
+:root {
+  color-scheme: dark;
+  --bg: #0b1422; --panel: #111d2e; --raised: #17253a; --line: #33465f;
+  --text: #e7edf6; --muted: #a8b8cc; --accent: #57dbc4;
+  --probability: #75baff; --positive: #7ddeac; --negative: #ffa3af;
+  --warning: #f6c667; --comparison: #b7b6ff;
+  --selected: #102e32; --input: #0e1929;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px;
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 10px;
+  --font: 'Segoe UI', Arial, sans-serif;
+  --shadow-floating: 0 12px 40px #0006;
+}
+.market-load-more { margin: 12px 0; padding: 9px 14px; color: var(--accent); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Segoe UI', Arial, sans-serif; font-size: 14px; }
 button, input { font: inherit; }
@@ -13,7 +25,7 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .page-toolbar { position: sticky; top: 20px; }
 .sport-page-link { display: flex; align-items: center; margin: 0 0 4px; padding: 10px 12px; border-radius: 6px; font-size: 13px; color: var(--muted); text-decoration: none; }
 .sport-page-link:hover { background: #172b3b; }
-.sport-page-link.active { background: #102e32; color: var(--accent); font-weight: 650; }
+.sport-page-link.active { background: var(--selected); color: var(--accent); font-weight: 650; }
 .historical-navigation { margin: 2px 0 7px 12px; padding-left: 9px; border-left: 1px solid var(--line); }
 @media (max-width: 700px) {
   .page-toolbar { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
@@ -28,7 +40,7 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .page-navigation input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 /* Dash 4 wraps the radio input in a span; let the label own the whole row. */
 .page-navigation .dash-options-list-option-wrapper { display: contents; }
-.page-navigation label:has(input:checked) { background: #102e32; color: var(--accent); font-weight: 650; }
+.page-navigation label:has(input:checked) { background: var(--selected); color: var(--accent); font-weight: 650; }
 .page-navigation label:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .page-navigation label:hover { background: #172b3b; }
 .market-heading { display: flex; justify-content: space-between; align-items: center; gap: 22px; padding: 24px; }
@@ -43,26 +55,26 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .game-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .game-card { padding: 20px; min-width: 0; position: relative; background: #172237; }
 .game-card:has(.market-data-recent) { background: #123c34; border-color: #3d8f79; }
-.game-card:has(.market-data-recent):hover { border-color: #57dbc4; }
+.game-card:has(.market-data-recent):hover { border-color: var(--accent); }
 .game-card-hit { position: absolute; inset: 0; z-index: 1; border-radius: inherit; }
 .game-card:has(.game-card-hit):hover { border-color: #4b8194; }
 .game-card-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .game-footer-left { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .latest-pull-time { display: block; line-height: 1.45; }
-.latest-pull-label { display: block; color: #aabbd0; font-size: 12px; margin: 5px 0; }
-.latest-pull-timestamp { display: block; color: #e7edf6; font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.latest-pull-label { display: block; color: var(--muted); font-size: 12px; margin: 5px 0; }
+.latest-pull-timestamp { display: block; color: var(--text); font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .market-data-recent .latest-pull-timestamp { color: #98f2cf; }
 .game-card-heading, .game-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .game-card-heading { margin-bottom: 23px; }
 .game-sport { font-size: 10px; font-weight: 750; letter-spacing: 1.5px; color: var(--accent); }
-.game-time { color: #c7d3e4; font-size: 11px; text-align: right; }
+.game-time { color: var(--text); font-size: 11px; text-align: right; }
 .game-team { display: flex; align-items: center; gap: 12px; }
 .team-badge { display: grid; place-items: center; background: #213447; border: 1px solid #344e65; border-radius: 9px; width: 49px; height: 43px; flex-shrink: 0; font-size: 12px; font-weight: 750; }
 .team-badge-logo { height: 49px; padding: 4px; background: #edf3f8; border-color: #8c9bae; }
 .team-logo { display: block; width: 100%; height: 100%; object-fit: contain; }
 .game-team strong { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .game-team small { display: block; color: var(--muted); margin-top: 5px; font-size: 10px; }
-.game-at { color: #64758d; margin: 9px 0 9px 61px; font-size: 12px; }
+.game-at { color: var(--muted); margin: 9px 0 9px 61px; font-size: 12px; }
 .game-venue { display: flex; flex-direction: column; gap: 5px; padding: 18px 0; margin-top: 10px; color: var(--muted); font-size: 11px; }
 .game-venue strong { color: #becde0; font-weight: 500; }
 .game-card-footer { padding-top: 15px; border-top: 1px solid var(--line); font-size: 11px; position: relative; z-index: 2; align-items: start; flex-wrap: wrap; }
@@ -73,37 +85,37 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .pull-markets-button { background: #193b3c; border: 1px solid #346862; color: var(--accent); border-radius: 5px; padding: 8px 10px; font-size: 11px; font-weight: 600; }
 .pull-markets-button:hover { background: #24504f; }
 .pull-credit-note { display: block; margin-top: 10px; color: var(--muted); font-size: 10px; text-align: right; }
-.market-pull-error { color: #f6c667; font-size: 12px; }
+.market-pull-error { color: var(--warning); font-size: 12px; }
 .latest-pull-time .market-pull-error { display: block; margin-top: 5px; font-size: 12px; font-weight: 400; }
-.sportsbook-view { --odds-blue: #169fff; background: #080909; border: 1px solid #292d31; border-radius: 8px; padding: 16px; }
+.sportsbook-view { --odds-blue: var(--probability); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
 .back-to-games { display: inline-block; color: var(--odds-blue); font-size: 12px; text-decoration: none; margin: 0 0 22px; }
 .detail-page-actions { display: flex; align-items: start; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
 .detail-pull-control { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
-.detail-pull-control small { color: #8fa7bd; font-size: 10px; }
-.detail-pull-success { color: #57dbc4; font-size: 12px; }
+.detail-pull-control small { color: var(--muted); font-size: 10px; }
+.detail-pull-success { color: var(--accent); font-size: 12px; }
 .matchup-banner { display: flex; align-items: center; justify-content: center; gap: clamp(25px, 6vw, 90px); padding: 8px 10px 28px; }
 .matchup-team { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; max-width: 170px; }
 .matchup-team .team-badge { background: transparent; border: 0; width: 62px; height: 62px; }
 .matchup-team strong, .matchup-start strong { font-size: 13px; }
-.matchup-team small { color: #93a8bd; font-size: 10px; }
+.matchup-team small { color: var(--muted); font-size: 10px; }
 .matchup-start { display: flex; flex-direction: column; gap: 8px; align-items: center; font-size: 12px; text-align: center; }
-.matchup-start small { color: #8295aa; font-size: 10px; }
-.snapshot-controls { display: flex; align-items: center; gap: 20px; padding: 16px 0; border-top: 1px solid #292d31; }
+.matchup-start small { color: var(--muted); font-size: 10px; }
+.snapshot-controls { display: flex; align-items: center; gap: 20px; padding: 16px 0; border-top: 1px solid var(--line); }
 .snapshot-controls .field { width: 275px; margin: 0; flex-shrink: 0; }
-.snapshot-description { font-size: 11px; color: #9ab0c2; line-height: 1.7; overflow-wrap: anywhere; min-width: 0; }
-.snapshot-description small { display: block; color: #76899e; font-size: 10px; }
-.market-category-tabs { display: flex !important; overflow-x: auto; border-bottom: 1px solid #373b40; margin: 8px 0 20px; }
+.snapshot-description { font-size: 11px; color: var(--muted); line-height: 1.7; overflow-wrap: anywhere; min-width: 0; }
+.snapshot-description small { display: block; color: var(--muted); font-size: 10px; }
+.market-category-tabs { display: flex !important; overflow-x: auto; border-bottom: 1px solid var(--line); margin: 8px 0 20px; }
 .market-category-tab { background: transparent !important; color: var(--odds-blue) !important; border: 0 !important; border-bottom: 2px solid transparent !important; padding: 14px 16px !important; font-size: 12px; white-space: nowrap; min-width: max-content; flex: 1 0 auto !important; }
 .market-category-tab.selected { border-bottom-color: var(--odds-blue) !important; font-weight: 700; }
-.sportsbook-market { background: #1d1e1e; border: 1px solid #303335; border-radius: 3px; margin-bottom: 10px; overflow: hidden; }
+.sportsbook-market { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; margin-bottom: 10px; overflow: hidden; }
 .sportsbook-market > summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; list-style: none; cursor: pointer; font-size: 13px; color: #bfd5e7; }
 .sportsbook-market > summary::-webkit-details-marker, .more-market-lines > summary::-webkit-details-marker { display: none; }
-.sportsbook-market[open] > summary { border-bottom: 1px solid #373b3d; }
+.sportsbook-market[open] > summary { border-bottom: 1px solid var(--line); }
 .market-chevron { color: var(--odds-blue); font-size: 16px; transform: rotate(-90deg); }
 .sportsbook-market[open] > summary .market-chevron { transform: rotate(0); }
 .market-outcome { display: flex; align-items: center; gap: 10px; padding: 6px 12px; min-height: 49px; }
 .player-marker { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #38454b; border-radius: 50%; background: #101618; color: #98c5e4; font-size: 9px; flex-shrink: 0; }
-.market-selection { flex: 1; color: #d0dfed; font-size: 12px; line-height: 1.5; }
+.market-selection { flex: 1; color: var(--text); font-size: 12px; line-height: 1.5; }
 .market-history-link { color: inherit; text-decoration: underline; text-decoration-color: #607f91; text-underline-offset: 3px; }
 .market-history-link:hover, .market-history-link:focus-visible { color: var(--accent); text-decoration-color: currentColor; }
 .sportsbook-market { scroll-margin-top: 20px; }
@@ -112,15 +124,15 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .market-price-button:hover { background: #11334d; border-color: #20a4ff; }
 .market-price-button.is-selected { color: #fff; background: #087cce; border-color: #59baff; box-shadow: 0 0 0 1px #59baff; }
 .market-line-comparison { display: grid; grid-template-columns: minmax(180px, 1fr) 82px repeat(3, minmax(102px, .5fr)) minmax(92px, .5fr); gap: 12px; min-width: 760px; }
-.market-comparison-heading { padding: 12px; color: #8fa7bd; font-size: 11px; border-bottom: 1px solid #373b3d; }
+.market-comparison-heading { padding: 12px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--line); }
 .market-probability, .ppp-probability, .ppp-fair-odds, .market-edge { font-size: 12px; font-variant-numeric: tabular-nums; }
-.ppp-probability, .ppp-fair-odds { color: #57dbc4; }
+.ppp-probability, .ppp-fair-odds { color: var(--accent); }
 .sportsbook-market:has(.market-line-comparison) { overflow-x: auto; }
 .ppp-comparison { margin-top: 24px; }
 .forecast-methods { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 18px 0 8px; }
 .forecast-method-control { min-width: 0; }
 .forecast-method-control .field { margin-bottom: 0; }
-.forecast-history { color: #8fa7bd; font-size: 12px; line-height: 1.6; margin: 9px 0 0; }
+.forecast-history { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 9px 0 0; }
 @media (max-width: 700px) { .forecast-methods { grid-template-columns: 1fr; } }
 .ppp-comparison-note { font-size: 12px; line-height: 1.7; margin: 14px 2px 20px; }
 .ppp-chart { overflow: hidden; margin: 18px 0; }
@@ -131,34 +143,34 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .criteria-controls { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(130px, 1fr) auto; align-items: end; gap: 16px; }
 .criteria-controls .field { margin: 0; }
 .criteria-controls .field input { width: 100%; background: #f3f6fb; color: #000; }
-.apply-criteria-button { border: 1px solid #57dbc4; border-radius: 6px; padding: 11px 18px; background: #193b3c; color: #57dbc4; font-size: 12px; font-weight: 600; }
+.apply-criteria-button { border: 1px solid var(--accent); border-radius: 6px; padding: 11px 18px; background: #193b3c; color: var(--accent); font-size: 12px; font-weight: 600; }
 .apply-criteria-button:hover { background: #24504f; }
-.quick-filter-button { background: #57dbc4; color: #0b2424; }
+.quick-filter-button { background: var(--accent); color: #0b2424; }
 .quick-filter-button:hover { background: #7be7d4; }
 .mispricing-results { margin-top: 24px; }
 .mispricing-results h3 { font-size: 15px; margin: 0 0 12px; }
 .mispricing-top, .mispricing-remaining { margin-top: 24px; min-width: 0; }
 .mispricing-table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
-.mispricing-top .mispricing-table-scroll { border-color: #57dbc4; }
+.mispricing-top .mispricing-table-scroll { border-color: var(--accent); }
 .mispricing-table { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 12px; }
 .mispricing-table th, .mispricing-table td { text-align: left; padding: 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
-.mispricing-table th { background: #17253a; color: #a7bfd3; font-weight: 600; }
-.mispricing-table td { color: #d0dfed; }
+.mispricing-table th { background: var(--raised); color: var(--muted); font-weight: 600; }
+.mispricing-table td { color: var(--text); }
 .mispricing-table tbody tr:last-child td { border-bottom: 0; }
-.mispricing-table td.mispricing-edge { color: #57dbc4; font-weight: 700; }
+.mispricing-table td.mispricing-edge { color: var(--accent); font-weight: 700; }
 .mispricing-error { color: #f4bd86; font-size: 12px; line-height: 1.6; }
 @media (min-width: 601px) and (max-width: 1050px) { .criteria-controls { grid-template-columns: repeat(2,minmax(0,1fr)); } }
-.criteria-status { color: #a7b9cd; font-size: 11px; line-height: 1.6; margin-top: 12px; }
-.criteria-evaluation { margin: 0 0 14px; padding: 12px 14px; border: 1px solid #f6c667; border-radius: 4px; background: #292719; color: #f7e5b5; font-size: 13px; line-height: 1.5; }
+.criteria-status { color: var(--muted); font-size: 11px; line-height: 1.6; margin-top: 12px; }
+.criteria-evaluation { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--warning); border-radius: 4px; background: #292719; color: #f7e5b5; font-size: 13px; line-height: 1.5; }
 .criteria-evaluation strong { display: block; }
-.criteria-evaluation-no-match { border-color: #f0747c; background: #301e23; color: #ffb6bc; }
+.criteria-evaluation-no-match { border-color: var(--negative); background: #301e23; color: #ffb6bc; }
 .market-outcome.market-line-comparison { border: 2px solid transparent; }
-.market-outcome.market-criteria-match { border-color: #f6c667; background: #302b1b; border-radius: 5px; }
-.sportsbook-market.market-criteria-group { border-color: #f6c667; }
-.sportsbook-market.market-criteria-no-match { border-color: #f0747c; }
+.market-outcome.market-criteria-match { border-color: var(--warning); background: #302b1b; border-radius: 5px; }
+.sportsbook-market.market-criteria-group { border-color: var(--warning); }
+.sportsbook-market.market-criteria-no-match { border-color: var(--negative); }
 .criteria-match-count, .criteria-no-match-count { font-size: 11px; margin-left: auto; }
-.criteria-match-count { color: #f6c667; }
-.criteria-no-match-count { color: #f0747c; font-weight: 700; }
+.criteria-match-count { color: var(--warning); }
+.criteria-no-match-count { color: var(--negative); font-weight: 700; }
 @media (max-width: 600px) { .criteria-controls { grid-template-columns: 1fr 1fr; } .apply-criteria-button { grid-column: 1 / -1; } }
 .more-market-lines { position: relative; border-top: 1px solid #383c40; }
 .more-market-lines > summary { padding: 12px; min-height: 42px; line-height: 18px; list-style: none; text-align: center; color: var(--odds-blue); font-size: 11px; cursor: pointer; }
@@ -167,7 +179,7 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .more-market-lines[open] > summary { position: absolute; bottom: 0; left: 0; right: 0; border-top: 1px solid #383c40; }
 .more-market-lines[open] .market-show-more { display: none; }
 .more-market-lines[open] .market-show-less { display: inline; }
-.saved-market-empty { padding: 24px 12px; color: #98aabc; font-size: 13px; }
+.saved-market-empty { padding: 24px 12px; color: var(--muted); font-size: 13px; }
 @media (max-width: 700px) { .snapshot-controls { flex-direction: column; align-items: stretch; } .snapshot-controls .field { width: 100%; } .sportsbook-view { padding: 12px 8px; } .matchup-banner { gap: 20px; } }
 .market-empty { padding: 32px 24px; margin-top: 22px; }
 .odds-heading { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 24px; margin-bottom: 20px; }
@@ -180,7 +192,7 @@ main { max-width: 1600px; margin: auto; padding: 34px 4% 20px; }
 .odds-setup { padding: 24px; margin-top: 22px; }
 .odds-setup p { font-size: 12px; }
 .odds-setup a { color: var(--accent); font-size: 12px; text-decoration: none; }
-.odds-setup-code { background: #0b1422; border: 1px solid var(--line); border-radius: 6px; padding: 14px; overflow-x: auto; color: #d9e6f5; }
+.odds-setup-code { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 14px; overflow-x: auto; color: #d9e6f5; }
 @media (max-width: 700px) { .odds-usage-grid, .odds-summary { grid-template-columns: 1fr; } .odds-heading { align-items: start; flex-direction: column; } }
 .intro { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 30px; }
 h1 { font-size: clamp(23px, 2.4vw, 34px); margin: 10px 0; font-weight: 650; letter-spacing: -.8px; }
@@ -202,16 +214,16 @@ p { color: var(--muted); line-height: 1.65; margin: 8px 0; }
 .dataset-actions button { white-space: nowrap; padding: 12px 10px; }
 .dataset-actions .secondary-button { margin-top: 0; }
 .field { margin-bottom: 20px; min-width: 0; }
-.field label { display: block; margin-bottom: 8px; font-size: 12px; color: #c7d3e4; font-weight: 600; }
-.field small { display: block; color: #8295af; font-size: 11px; line-height: 1.55; margin-top: 8px; }
-.field input[type=text], .field input[type=number] { width: 100%; background: #0e1929; border: 1px solid #33445c; border-radius: 6px; color: var(--text); padding: 11px; }
+.field label { display: block; margin-bottom: 8px; font-size: 12px; color: var(--text); font-weight: 600; }
+.field small { display: block; color: var(--muted); font-size: 11px; line-height: 1.55; margin-top: 8px; }
+.field input[type=text], .field input[type=number] { width: 100%; background: var(--input); border: 1px solid #33445c; border-radius: 6px; color: var(--text); padding: 11px; }
 .radio-group { display: flex; gap: 20px; padding: 4px 0; }
 .radio-group label { font-size: 13px; margin: 0; }
 .radio-group input { margin: 0 6px 0 0; accent-color: var(--accent); }
 .primary-button, .secondary-button { width: 100%; padding: 12px; border-radius: 6px; font-size: 12px; font-weight: 650; }
 .primary-button { background: var(--accent); border: 1px solid var(--accent); color: #10232b; }
 .primary-button:hover { background: #7ce6d3; }
-.secondary-button { margin-top: 10px; background: transparent; border: 1px solid #33445c; color: #b8c8dc; }
+.secondary-button { margin-top: 10px; background: transparent; border: 1px solid #33445c; color: var(--muted); }
 .secondary-button:hover { border-color: #6b8bab; }
 .analysis { min-width: 0; }
 .load-status { border: 1px solid #294047; background: #102329; color: #aec6cc; border-radius: 8px; padding: 13px 16px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
@@ -228,19 +240,19 @@ p { color: var(--muted); line-height: 1.65; margin: 8px 0; }
 .career-panel { margin-top: 22px; }
 .chart-note { font-size: 11px; padding: 0 22px 18px; margin: 0; }
 .table-panel { margin-top: 22px; overflow: hidden; padding-bottom: 10px; }
-.export-button { border: 1px solid #33445c; border-radius: 5px; background: transparent; color: #bacbdf; padding: 8px 12px; font-size: 11px; }
-footer { color: #64758d; font-size: 10px; margin-top: 30px; border-top: 1px solid var(--line); padding-top: 18px; letter-spacing: .4px; }
+.export-button { border: 1px solid #33445c; border-radius: 5px; background: transparent; color: var(--text); padding: 8px 12px; font-size: 11px; }
+footer { color: var(--muted); font-size: 10px; margin-top: 30px; border-top: 1px solid var(--line); padding-top: 18px; letter-spacing: .4px; }
 /* Dash 3 (react-select) and Dash 4 dropdowns. */
 .Select-control { background: #f3f6fb !important; border-color: #8795a8 !important; color: #000 !important; }
-.Select-menu-outer { background: #0e1929 !important; border-color: #33445c !important; color: var(--text) !important; }
+.Select-menu-outer { background: var(--input) !important; border-color: #33445c !important; color: var(--text) !important; }
 .app-shell .Select-value-label, .app-shell .Select-input > input { color: #000 !important; }
-.Select-option { background: #111d2e !important; color: var(--text) !important; }
+.Select-option { background: var(--panel) !important; color: var(--text) !important; }
 .Select-option.is-focused { background: #20374d !important; }
 .dash-dropdown { background: #f3f6fb !important; color: #000 !important; --Dash-Text-Strong: #000; --Dash-Text-Disabled: #586577; --Dash-Stroke-Strong: #8795a8; }
 .dash-dropdown-value, .dash-dropdown-value-item { color: #000 !important; }
-.dash-dropdown-content { background: #111d2e; color: #e7edf6; --Dash-Text-Strong: #e7edf6; --Dash-Fill-Inverse-Strong: #111d2e; }
-.dash-table-container .dash-spreadsheet-container input { color: #c7d3e4 !important; }
-.dash-table-container button { background: #17253a; color: #c7d3e4; border-color: #33445c; }
+.dash-dropdown-content { background: var(--panel); color: var(--text); --Dash-Text-Strong: var(--text); --Dash-Fill-Inverse-Strong: var(--panel); }
+.dash-table-container .dash-spreadsheet-container input { color: var(--text) !important; }
+.dash-table-container button { background: var(--raised); color: var(--text); border-color: #33445c; }
 @media (max-width: 1150px) { .page-shell { grid-template-columns: 165px minmax(0, 1fr); gap: 16px; } .workspace { gap: 16px; } .game-grid { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .page-shell { grid-template-columns: 1fr; } .page-toolbar { position: static; } .page-navigation { display: flex; gap: 6px; } .page-navigation label { flex: 1; margin: 0; } .market-heading { align-items: start; flex-direction: column; } .market-controls { flex-wrap: wrap; } }
 @media (max-width: 600px) { main { padding: 25px 16px 18px; } header { padding: 16px; } .sport-tab { font-size: 11px; padding: 14px 5px !important; } .dataset-builder { padding: 18px; } .dataset-actions { padding-top: 0; flex-basis: 100%; } .analysis-filters { grid-template-columns: 1fr; gap: 0; } .kpi-grid { grid-template-columns: 1fr; gap: 10px; } .kpi { padding: 16px; } .kpi strong { font-size: 25px; } .panel-heading .eyebrow { display: none; } }

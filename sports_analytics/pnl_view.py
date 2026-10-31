@@ -1,9 +1,12 @@
 """Persistent personal P&L tab; recording history never places an order."""
+from .presentation import table_cell, table_filter, table_header
 import base64
 from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
 import sqlite3
+
+from .navigation import scoped_callback
 
 from dash import ALL,Input,Output,State,ctx,dcc,html,dash_table,no_update
 from dash.exceptions import PreventUpdate
@@ -22,9 +25,8 @@ def local(value):return datetime.fromisoformat(value).astimezone(pnl.ZONE).strft
 def table(identity,columns):
     return dash_table.DataTable(id=identity,data=[],columns=[dict(id=key,name=label) for key,label in columns],page_size=15,
         sort_action='native',filter_action='native',style_table={'overflowX':'auto'},
-        style_cell={'backgroundColor':'#111d2e','color':'#c7d3e4','border':'1px solid #243249','padding':'10px','textAlign':'left',
-                    'fontFamily':'Segoe UI','fontSize':'12px','minWidth':'95px','maxWidth':'300px','whiteSpace':'normal'},
-        style_header={'backgroundColor':'#17253a','fontWeight':'600'},style_filter={'backgroundColor':'#17253a'})
+        style_cell=table_cell(minWidth='95px', maxWidth='300px', whiteSpace='normal'),
+        style_header=table_header(),style_filter=table_filter())
 
 
 def import_panel():
@@ -140,7 +142,7 @@ def register(app,ledger):
     @app.callback(Output('pnl-page','style'),Input('sport','value'))
     def pnl_visibility(tab):return {} if tab=='PNL' else {'display':'none'}
 
-    @app.callback(Output('pnl-token','data'),Input('sport','value'),State('pnl-token','data'))
+    @scoped_callback(app,'pnl',Output('pnl-token','data'),Input('sport','value'),State('pnl-token','data'))
     def pnl_token(tab,previous):
         if tab!='PNL' or previous:raise PreventUpdate
         return uuid4().hex
@@ -172,7 +174,7 @@ def register(app,ledger):
             return uuid4().hex,result['message'],uuid4().hex
         except (ValueError,sqlite3.Error) as exc:return no_update,str(exc),no_update
 
-    @app.callback(Output('pnl-account','options'),Output('pnl-account','value'),Output('pnl-bet-select','options'),
+    @scoped_callback(app,'pnl',Output('pnl-account','options'),Output('pnl-account','value'),Output('pnl-bet-select','options'),
                   Input('sport','value'),Input('pnl-revision','data'),Input('pnl-refresh','n_clicks'),State('pnl-account','value'))
     def pnl_options(tab,revision,refresh,account):
         if tab!='PNL':raise PreventUpdate
@@ -180,7 +182,7 @@ def register(app,ledger):
         return [dict(label='All accounts',value='__all__'),*[dict(label=accounts[k],value=k) for k in sorted(accounts)]],account if account in accounts else '__all__',[
             dict(label=f"{r['account']} · {r['description']} · {r['status']} · {dollars(r['stake'])} · {r['id'][:8]}",value=r['id']) for r in reversed(records) if r['record_type']=='bet']
 
-    @app.callback(Output('pnl-kpis','children'),Output('pnl-balance-chart','figure'),Output('pnl-profit-chart','figure'),Output('pnl-bets','data'),Output('pnl-events','data'),Output('pnl-empty','children'),
+    @scoped_callback(app,'pnl',Output('pnl-kpis','children'),Output('pnl-balance-chart','figure'),Output('pnl-profit-chart','figure'),Output('pnl-bets','data'),Output('pnl-events','data'),Output('pnl-empty','children'),
                   Input('sport','value'),Input('pnl-revision','data'),Input('pnl-account','value'),Input('pnl-refresh','n_clicks'))
     def pnl_history(tab,revision,account,refresh):
         if tab!='PNL':raise PreventUpdate

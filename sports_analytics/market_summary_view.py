@@ -49,7 +49,7 @@ def layout():
                    'Lines with different push rules stay separate. A dash means no matching quote.',className='summary-comparison-note'),
             dcc.Loading(html.Div(id='summary-quote-status',className='load-status',role='status'),delay_show=500,color='#57dbc4',overlay_style={'visibility':'visible'}),
             html.Div(id='summary-model-status',className='forecast-history',role='status'),
-            dcc.Tabs(id='summary-category',value='All Markets',children=[dcc.Tab(label=value,value=value) for value in
+            dcc.Tabs(id='summary-category',value='All Markets',mobile_breakpoint=0,children=[dcc.Tab(label=value,value=value) for value in
                      ['All Markets','Game Lines','Player Props','Other Markets']],className='market-category-tabs'),
             dcc.Loading(html.Div(id='summary-market-sections'),delay_show=500,color='#57dbc4',overlay_style={'visibility':'visible'}),
         ],id='summary-detail',style={'display':'none'}),

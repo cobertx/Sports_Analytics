@@ -12,6 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.backtesting_service import BacktestingService
 from sports_analytics.backtesting_view import available_models,navigation,summary_route,summary_href
@@ -47,8 +48,7 @@ class BacktestSummaryChecks(TestCase):
         network=patch('requests.sessions.Session.request',side_effect=AssertionError('No external requests'))
         network.start();self.addCleanup(network.stop)
         self.app=create_app(backtesting_service=self.service)
-        self.cb={meta['callback'].__wrapped__.__name__:meta['callback'].__wrapped__
-                 for meta in self.app.callback_map.values() if meta.get('callback')}
+        self.cb=callback_functions(self.app)
         for method in ['start','run','options','game_inputs','player_inputs']:
             mocked=patch.object(self.service,method,side_effect=AssertionError('Opening saved results must not prepare inputs or run a model'))
             mocked.start();self.addCleanup(mocked.stop)
@@ -62,8 +62,8 @@ class BacktestSummaryChecks(TestCase):
                 if isinstance(outputs,list) else dict(id=outputs.component_id,property=outputs.component_property))
         with self.app.server.test_client() as client:
             response=client.post('/_dash-update-component',json=dict(output=key,outputs=outputs,
-                inputs=[dict(**item,value=values[item['id']]) for item in meta['inputs']],
-                state=[dict(**item,value=values[item['id']]) for item in meta['state']],changedPropIds=[changed]))
+                inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=[changed]))
         self.assertEqual(response.status_code,200,response.get_data(as_text=True))
         return response.get_json()['response']
 

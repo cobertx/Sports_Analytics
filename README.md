@@ -1,5 +1,9 @@
 # Sports Analytics
 
+For local cache limits, on-demand market loading, background Quick Filtering and
+repeatable offline benchmarks, see [dashboard performance](docs/PERFORMANCE.md).
+For scoped loading, state restoration and navigation checks, see [navigation notes](docs/NAVIGATION.md).
+
 A Python Dash workspace for analyzing historical **NBA, NFL, and NCAA Football (NCAAF)** team statistics, NBA and NFL player statistics, and developing forecasts of future performance. NCAAF FanDuel player links also open saved college player history using separately prepared data.
 
 Code implementation manuals: [PPP guide](models/Game_Outcome/PPP/PPP_Implementation_Guide.pdf)

@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.kalshi import BASE, KalshiService, category, price, contract
@@ -62,8 +63,7 @@ class KalshiChecks(TestCase):
     def app(self):
         with patch('requests.sessions.Session.request', side_effect=AssertionError('No network')):
             app = create_app(kalshi_service=self.service)
-        return app, {m['callback'].__wrapped__.__name__: m['callback'].__wrapped__
-                     for m in app.callback_map.values() if m.get('callback')}
+        return app, callback_functions(app)
 
     def test_dollar_prices_fixed_point_volume_missing_and_legacy_fields(self):
         result = contract(raw_market(), dict(event_ticker=GAME, title='Game'), 'NFL')
@@ -235,15 +235,16 @@ class KalshiChecks(TestCase):
                          ['Game winner','Alternate spreads','Total points'])
         self.assertTrue(all(s.className=='sportsbook-market kalshi-market' for s in sections))
         self.assertEqual([s.open for s in sections],[True,True,False])
+        from check_exchange_updates import expand_sections
+        expand_sections(sections)
         outcomes=[c for c in components(sections) if getattr(c,'className',None)=='market-outcome market-line-comparison']
         self.assertEqual(len(outcomes),2*len(snapshot['rows']))
         self.assertEqual(outcomes[-16].children[0].children[0].children,'Over 0.5 points — Yes')
         prices=[c for c in components(outcomes[-16:-14]) if getattr(c,'className',None)=='market-price kalshi-price']
         self.assertEqual([p.children for p in prices],['-104','+∞'])
         self.assertIn('Market odds',str(sections));self.assertIn('Market implied probability',str(sections))
-        more=[c for c in components(sections) if getattr(c,'className',None)=='more-market-lines']
-        self.assertEqual(len(more),1);self.assertFalse(more[0].open)
-        self.assertIn('Show more · 2 selections',str(more[0]))
+        more=[c for c in components(sections) if getattr(c,'className',None)=='market-load-more']
+        self.assertEqual(len(more),1);self.assertEqual(more[0].style,{'display':'none'})
         snapshot['rows'][-1]['yes_ask']=None
         self.assertIn('—',str(view.market_sections(snapshot)))
         self.assertIn('No contracts',str(view.market_sections(dict(rows=[]))))
@@ -290,8 +291,8 @@ class KalshiChecks(TestCase):
         def post(changed):
             return app.server.test_client().post('/_dash-update-component', json=dict(output=key,
                 outputs=[dict(id=o.component_id, property=o.component_property) for o in meta['output']],
-                inputs=[dict(**item, value=values[item['id']]) for item in meta['inputs']],
-                state=[dict(**item, value=values[item['id']]) for item in meta['state']], changedPropIds=[changed]))
+                inputs=[dict(**item, value=wire_value(item,values)) for item in meta['inputs']],
+                state=[dict(**item, value=wire_value(item,values)) for item in meta['state']], changedPropIds=[changed]))
         response = post('kalshi-pull.n_clicks')
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         saved = response.get_json()['response']['kalshi-quotes']['data']

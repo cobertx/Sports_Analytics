@@ -51,7 +51,8 @@ def table(labels, metrics):
         html.Thead(html.Tr([html.Th('Measure'), *[html.Th(labels[side]) for side in ('yes','no')]])),
         html.Tbody([html.Tr([html.Th(label), *[html.Td(amount(values.get(side), money)) for side in ('yes','no')]])
                     for label, values, money in metrics]),
-    ]), className='structure-table-scroll')
+    ]), className='structure-table-scroll', tabIndex=0, role='region',
+        **{'aria-label':'Market activity measures by outcome'})
 
 
 def activity(market, provider):

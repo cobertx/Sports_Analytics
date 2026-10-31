@@ -11,7 +11,7 @@
 .in-game-visual { padding: 22px; overflow: hidden; min-width: 0; }
 .in-game-filters { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 0 14px; }
 .in-game-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 12px; }
-.in-game-stat { display: flex; flex-direction: column; gap: 8px; border: 1px solid #2c4154; border-radius: 8px; padding: 14px; background: #132637; }
+.in-game-stat { display: flex; flex-direction: column; gap: 8px; border: 1px solid #2c4154; border-radius: 8px; padding: 14px; background: var(--raised); }
 .in-game-stat span { font-size: 11px; color: #b4c5d6; }
 .in-game-stat strong { font-size: 25px; color: #f0e6d0; font-weight: 600; }
 .in-game-details { padding: 20px; }
@@ -19,24 +19,24 @@
 .in-game-details[open] summary { margin-bottom: 18px; }
 .nfl-drive-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; margin-bottom: 22px; }
 .nfl-drive-column { max-height: 310px; overflow-y: auto; padding-right: 6px; }
-.nfl-drive-column > h3 { position: sticky; top: 0; padding: 8px 0; background: #111d2e; z-index: 1; }
+.nfl-drive-column > h3 { position: sticky; top: 0; padding: 8px 0; background: var(--panel); z-index: 1; }
 .nfl-drive-column h3,.nfl-usage-card h3 { font-size: 14px; color: #dbe9ed; margin: 0 0 12px; }
-.nfl-drive-button { display: flex; flex-direction: column; gap: 6px; width: 100%; margin-bottom: 7px; padding: 12px; text-align: left; border: 1px solid #33485b; border-radius: 7px; background: #132637; color: #d8e5ee; }
+.nfl-drive-button { display: flex; flex-direction: column; gap: 6px; width: 100%; margin-bottom: 7px; padding: 12px; text-align: left; border: 1px solid #33485b; border-radius: 7px; background: var(--raised); color: #d8e5ee; }
 .nfl-drive-button strong { font-size: 12px; }
 .nfl-drive-button span,.nfl-drive-button small { font-size: 11px; color: #aabfd2; }
-.nfl-drive-button.active { background: #123c38; border-color: #57dbc4; }
+.nfl-drive-button.active { background: #123c38; border-color: var(--accent); }
 .nfl-usage-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin: 16px 0 24px; }
-.nfl-usage-card { min-width: 0; border: 1px solid #2c4154; border-radius: 8px; padding: 16px; background: #122334; }
+.nfl-usage-card { min-width: 0; border: 1px solid #2c4154; border-radius: 8px; padding: 16px; background: var(--raised); }
 .nfl-usage-card .in-game-help { font-size: 11px; }
 .nfl-usage-row { margin-top: 13px; }
 .nfl-usage-label { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; font-size: 11px; }
 .nfl-usage-label > span { flex: 1 1 80px; color: #d4e4ec; overflow-wrap: anywhere; }
 .nfl-usage-label > small { color: #90a7bf; }
 .nfl-usage-track { height: 5px; background: #24364a; border-radius: 4px; margin-top: 7px; overflow: hidden; }
-.nfl-usage-track > div { height: 100%; background: #57dbc4; }
+.nfl-usage-track > div { height: 100%; background: var(--accent); }
 .nfl-usage-row.unknown .nfl-usage-track > div { background: #788a9e; }
 .nfl-charting-unavailable { color: #e0bc7a; font-size: 12px; }
-#in-game-nfl-panel a { color: #57dbc4; }
+#in-game-nfl-panel a { color: var(--accent); }
 @media (max-width: 1000px) { .nfl-usage-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 600px) { .nfl-drive-grid,.nfl-usage-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .in-game-filters { grid-template-columns: repeat(2,minmax(0,1fr)); } .in-game-summary { grid-template-columns: repeat(2,minmax(0,1fr)); } }

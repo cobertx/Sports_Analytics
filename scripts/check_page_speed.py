@@ -17,6 +17,7 @@ from dash import Dash,no_update
 from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 from models.Game_Outcome.PPP.PPP import PPPForecast
+from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.market_view import market_sections
 from sports_analytics.page_cache import PageTasks,QuotePages
 from sports_analytics.data import DataSourceError
@@ -182,7 +183,7 @@ class PageSpeedChecks(TestCase):
         markets=Mock();markets.latest.return_value={game['id']:bundle['providers']['FanDuel']['snapshot']}
         game_fit=Mock();player_fit=Mock();app=Dash(__name__,suppress_callback_exceptions=True)
         register_summary(app,Mock(),{'NFL':markets},services['Kalshi'],services['Polymarket'],game_fit,player_fit,pages=pages)
-        cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in app.callback_map.values() if m.get('callback')}
+        cb=callback_functions(app)
         start=perf_counter()
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-game')):
             first,_=cb['summary_quotes'](game['id'],catalog,0,'market-summary','NFL',None)
@@ -218,8 +219,8 @@ class PageSpeedChecks(TestCase):
         start=perf_counter()
         response=client.post('/_dash-update-component',json=dict(output=key,
             outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-            inputs=[dict(item,value=values[item['id']]) for item in meta['inputs']],
-            state=[dict(item,value=values[item['id']]) for item in meta['state']],changedPropIds=['market-url.hash']))
+            inputs=[dict(item,value=wire_value(item,values)) for item in meta['inputs']],
+            state=[dict(item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['market-url.hash']))
         elapsed=perf_counter()-start
         self.assertEqual(response.status_code,200,response.get_data(as_text=True));self.assertLess(elapsed,1)
         self.assertTrue(entered.wait(2));payload=response.get_json()['response']
@@ -237,7 +238,8 @@ class PageSpeedChecks(TestCase):
             if result[1] is not no_update:break
             sleep(.01)
         self.assertFalse(result[1]['pending'])
-        self.assertEqual(to_json(result[0]),to_json(market_sections(fixture.saved,'Game',forecast,method='PPP')))
+        from check_exchange_updates import normalized
+        self.assertEqual(normalized(result[0]),normalized(market_sections(fixture.saved,'Game',forecast,method='PPP')))
         fixture.game_services['PPP'].forecast.assert_called_once()
         print(f'FanDuel game HTTP render: {1000*elapsed:.1f} ms while the forecast was blocked.')
 

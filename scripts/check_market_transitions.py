@@ -11,6 +11,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
 from models.season_weights import POLICY_VERSION
+from scripts.callback_fixtures import callback_functions
 from sports_analytics.dashboard import create_app
 from sports_analytics.kalshi_analysis import FILTER
 from sports_analytics.mispricing import filter_context
@@ -26,7 +27,7 @@ class MarketTransitionChecks(TestCase):
         self.source=Mock(path=Path(self.tmp.name)/'cache.sqlite3')
         self.app=create_app(service=self.source,schedule_service=self.schedule,nfl_market_service=self.markets,
                             kalshi_service=self.exchange,polymarket_service=self.poly)
-        self.cb={m['callback'].__wrapped__.__name__:m['callback'].__wrapped__ for m in self.app.callback_map.values() if m.get('callback')}
+        self.cb=callback_functions(self.app)
         self.network=patch('requests.sessions.Session.request',side_effect=AssertionError('No external HTTP'))
         self.network.start();self.addCleanup(self.network.stop)
 

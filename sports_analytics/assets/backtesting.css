@@ -1,7 +1,7 @@
 .navigation-icon { display: inline-block; margin-right: 7px; font-size: 17px; line-height: 1; vertical-align: -1px; }
 .backtesting-navigation { margin: 2px 0 0 12px; padding-left: 9px; border-left: 1px solid var(--line); }
 .backtesting-nav-group { margin-bottom: 5px; }
-.backtesting-nav-group > summary { position: relative; list-style: none; padding: 10px 15px 10px 5px; color: #c7d3e4; font-size: 12px; font-weight: 600; cursor: pointer; }
+.backtesting-nav-group > summary { position: relative; list-style: none; padding: 10px 15px 10px 5px; color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; }
 .backtesting-nav-group > summary::-webkit-details-marker { display: none; }
 .backtesting-nav-group > summary::after { content: '›'; position: absolute; right: 3px; top: 6px; font-size: 20px; color: var(--muted); transition: transform .15s; }
 .backtesting-nav-group[open] > summary::after { transform: rotate(90deg); }
@@ -10,7 +10,7 @@
 .backtesting-model-links { display: grid; gap: 3px; padding: 0 0 7px 6px; }
 .backtesting-model-link { display: block; padding: 7px 8px; border-radius: 5px; font-size: 11px; line-height: 1.5; text-decoration: none; color: var(--muted); overflow-wrap: anywhere; }
 .backtesting-model-link:hover { background: #172b3b; color: var(--text); }
-.backtesting-model-link.active { background: #102e32; color: var(--accent); font-weight: 600; }
+.backtesting-model-link.active { background: var(--selected); color: var(--accent); font-weight: 600; }
 .backtesting-page { min-width: 0; }
 .backtest-summary-list { padding: 22px; margin-bottom: 22px; }
 .backtest-summary-list a { color: var(--accent); }
@@ -35,8 +35,8 @@
 .backtesting-settings-scroll { overflow-x: auto; padding: 0 22px 22px; }
 .backtesting-settings { width: 100%; border-collapse: collapse; font-size: 12px; }
 .backtesting-settings th, .backtesting-settings td { text-align: left; padding: 12px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
-.backtesting-settings thead { background: #17253a; color: var(--text); }
-.backtesting-settings tbody th { font-weight: 500; color: #c7d3e4; width: 70%; }
+.backtesting-settings thead { background: var(--raised); color: var(--text); }
+.backtesting-settings tbody th { font-weight: 500; color: var(--text); width: 70%; }
 .backtesting-settings td { color: var(--accent); }
 .backtesting-model-notes { margin: 0 0 22px; }
 .backtesting-model-notes > summary { color: var(--muted); padding: 10px 0; font-size: 12px; cursor: pointer; }
@@ -50,7 +50,7 @@
 .research-setup,.research-methodology { padding: 22px; margin-bottom: 22px; }
 .research-methodology h3,.research-setup h3 { font-size: 16px; margin: 0 0 14px; }
 .research-methodology h3:not(:first-child) { margin-top: 24px; }
-.research-methodology p,.research-methodology li { font-size: 13px; color: #c7d3e4; line-height: 1.8; }
+.research-methodology p,.research-methodology li { font-size: 13px; color: var(--text); line-height: 1.8; }
 .research-methodology li { padding-left: 5px; margin-bottom: 12px; }
 .research-scope-controls { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
 .research-parameter-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin: 12px 0; }
@@ -72,24 +72,24 @@
 .backtest-controls input { width: 100%; }
 .backtest-controls .SingleDatePicker,.backtest-controls .SingleDatePickerInput { width: 100%; border-radius: 6px; }
 .backtest-controls .DateInput { width: calc(100% - 36px); background: transparent; }
-.backtest-controls .DateInput_input { font-size: 12px; padding: 10px 8px; color: #000; }
-.backtest-controls .DateInput .DateInput_input { background: #f3f6fb; color: #000; border: 0; }
-.backtest-controls .DateInput .DateInput_input::placeholder { color: #586577; opacity: 1; }
+.backtest-controls .DateInput_input { font-size: 13px; padding: 10px 8px; color: var(--text); }
+.backtest-controls .DateInput .DateInput_input { background: var(--input); color: var(--text); border: 0; }
+.backtest-controls .DateInput .DateInput_input::placeholder { color: var(--muted); opacity: 1; }
 .backtest-controls .dash-datepicker { width: 100%; }
-.backtest-controls .dash-datepicker-input-wrapper { width: 100%; background: #f3f6fb; border-radius: 6px; padding: 0 10px; min-height: 34px; }
+.backtest-controls .dash-datepicker-input-wrapper { width: 100%; background: var(--input); border-radius: 6px; padding: 0 10px; min-height: 38px; }
 .backtest-controls .dash-datepicker-input-wrapper > div:first-child { flex: 1; min-width: 0; }
-.backtest-controls .field input.dash-datepicker-input { background: #f3f6fb !important; color: #000 !important;
+.backtest-controls .field input.dash-datepicker-input { background: var(--input) !important; color: var(--text) !important;
   width: 100% !important; box-sizing: border-box !important; height: 32px; min-height: 0; padding: 6px 0 !important;
   border: 0; border-radius: 0; font-size: 13px; }
-.backtest-controls .field input.dash-datepicker-input::placeholder { color: #586577 !important; opacity: 1; }
-.backtest-controls .field input[type=number] { background: #f3f6fb; color: #000; }
-.backtest-controls .field input[type=text]:not(.dash-dropdown-focus-target) { background: #f3f6fb; color: #000; }
-.backtest-controls .field input[type=number]::placeholder { color: #586577; opacity: 1; }
+.backtest-controls .field input.dash-datepicker-input::placeholder { color: var(--muted) !important; opacity: 1; }
+.backtest-controls .field input[type=number] { background: var(--input); color: var(--text); }
+.backtest-controls .field input[type=text]:not(.dash-dropdown-focus-target) { background: var(--input); color: var(--text); }
+.backtest-controls .field input[type=number]::placeholder { color: var(--muted); opacity: 1; }
 .backtest-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
 .backtest-progress { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 220px; }
 .backtest-progress progress { width: clamp(120px,18vw,260px); height: 12px; accent-color: var(--accent); border: 0; border-radius: 6px; overflow: hidden; }
-.backtest-progress progress::-webkit-progress-bar { background: #243249; border-radius: 6px; }
-.backtest-progress progress::-webkit-progress-value { background: #57dbc4; border-radius: 6px; transition: width .3s; }
+.backtest-progress progress::-webkit-progress-bar { background: var(--line); border-radius: 6px; }
+.backtest-progress progress::-webkit-progress-value { background: var(--accent); border-radius: 6px; transition: width .3s; }
 .backtest-progress span { font-size: 12px; color: var(--muted); }
 .backtest-target { max-width: 320px; margin-top: 20px; }
 .backtest-target .field { margin: 0; }
