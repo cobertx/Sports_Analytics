@@ -62,6 +62,7 @@ def measure(records,steps,label,repeats):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repeats',type=int,default=5)
+    parser.add_argument('--exchange-history',action='store_true',help='Also measure six exchange/history/Back events separately')
     args=parser.parse_args()
     if args.repeats<1:parser.error('repeats must be positive')
     if not node():parser.error('Node is required; no dependencies will be installed')
@@ -71,6 +72,7 @@ def main():
         after=graph(fixture.app);result=run_client(fixture.app,before=before)
         reference=measure(before,result['steps'],'before',args.repeats)
         updated=measure(after,result['steps'],'after',args.repeats)
+        if updated['callback_invocations']>119:raise AssertionError('Original warm sequence exceeded 119 server callbacks')
         reduction=1-updated['callback_invocations']/reference['callback_invocations']
         if reduction<.6:raise AssertionError('Callback invocation reduction below 60%')
         def subscribers(records,identity):return sum(any(i['id']==identity for i in r['inputs']) for r in records)
@@ -81,6 +83,17 @@ def main():
             direct_url_subscribers=dict(before=subscribers(before,'market-url'),after=subscribers(after,'market-url')),
             direct_page_subscribers=dict(before=subscribers(before,'workspace-page'),after=subscribers(after,'workspace-page')),
             steps=[{k:v for k,v in step.items() if k!='values'} for step in result['steps']])
+        if args.exchange_history:
+            steps=[]
+            for provider,game in [('kalshi','KXNFLGAME-TEST'),('polymarket','456')]:
+                route=f'#nfl-{provider}-game-{game}'
+                steps.extend([dict(label=provider+' game',hash=route),
+                    dict(label=provider+' history',hash='#historical-player?sport=NFL&name=Player+A&market=player_reception_yds'),
+                    dict(label=provider+' Back',hash=route)])
+            exchange=run_client(fixture.app,steps=steps)
+            report['exchange_history']=measure(after,exchange['steps'],'after',args.repeats)
+            report['exchange_history']['events']=len(steps)
+            report['exchange_history']['limitation']='Scoped framework dispatch only; prompt restoration and real quotes are exercised separately in offline UX fixtures.'
         print(json.dumps(report,indent=2))
     finally:fixture.doCleanups()
 

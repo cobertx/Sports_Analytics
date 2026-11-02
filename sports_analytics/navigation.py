@@ -77,7 +77,7 @@ def register_sidebar(app,*outputs):
     app.clientside_callback('''function(page,sport,kind,saved){
         const links='''+to_json(links)+''';
         const active=value=>'sport-page-link'+(page===value?' active':'');
-        const entry=saved?.[sport], remembered=entry&&new RegExp('^#'+sport.toLowerCase()+'-game-[0-9]+$').test(entry.route||'');
+        const entry=saved?.v===2?saved.entries?.['market:'+sport]:saved?.[sport], remembered=entry&&new RegExp('^#'+sport.toLowerCase()+'-game-[0-9]+$').test(entry.route||'');
         return [links[[sport,kind].join(':')]||[],{display:page==='historical'&&['NBA','NFL','NCAAF'].includes(sport)?'grid':'none'},
           active('historical'),active('market'),active('backtesting'),remembered?entry.route:'#'+sport.toLowerCase()+'-games'];
     }''',*outputs,Input('workspace-page','value'),Input('sport','value'),Input('entity-type','value'),Input('market-return','data'))

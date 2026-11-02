@@ -76,6 +76,10 @@ jobs:
         run: node scripts/check_market_transitions.js
       - name: Check scoped navigation and client presentation equivalence
         run: python scripts/check_navigation_pipeline.py
+      - name: Check history identities, archived market returns and failure recovery
+        run: python scripts/check_navigation_ux.py
+      - name: Check market/history UX under delayed transitions
+        run: node scripts/check_navigation_ux.js
       - name: Check offline navigation dispatch budget
         run: python scripts/benchmark_navigation.py --repeats 2
       - name: Check mispricing ranking and market filter controls

@@ -16,6 +16,7 @@ from .display_time import format_eastern
 from .exchange_render import render
 from .kalshi_analysis import FILTER, decorate
 from .page_cache import QuotePages
+from .market_navigation import remembered_market
 
 
 def register(app, service, *, view=None, provider='Kalshi',pages=None):
@@ -36,13 +37,15 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
             function.__name__ = function.__name__.replace('kalshi_', prefix+'_', 1)
             return scoped_callback(app,prefix,*args, **kwargs)(function)
         return decorate
-    app.clientside_callback("""function(page,sport,hash,frequency,selected,game,category){
+    app.clientside_callback("""function(page,sport,hash,frequency,selected,game,category,saved){
         const prefix='"""+prefix+"""',supported=['NBA','NFL','NCAAF'].includes(sport),active=page===prefix&&supported,
             route=window.dash_clientside.market_transition.route(hash),detail=active&&route&&route.provider===prefix&&route.sport===sport&&!!route.game;
         frequency=[0,2,5,10,30].includes(frequency)?frequency:5;
         const live=active&&detail&&game&&game.sport===sport&&selected==='live'&&frequency>0&&category!=='Mispricing Filter',
-            href='#'+sport.toLowerCase()+'-'+prefix+'-market';
-        return [{display:active?'grid':'none'},supported?{}:{display:'none'},'sport-page-link'+(active?' active':''),href,
+            href='#'+sport.toLowerCase()+'-'+prefix+'-market', entry=saved?.v===2?saved.entries?.[prefix+':'+sport]:null,
+            remembered=entry&&window.dash_clientside.market_transition.route(entry.route);
+        return [{display:active?'grid':'none'},supported?{}:{display:'none'},'sport-page-link'+(active?' active':''),
+            remembered?.provider===prefix&&remembered.sport===sport?entry.route:href,
             {display:detail?'none':'block'},{display:detail?'block':'none'},href,!active,!live,1000*(frequency||5)];
     }""",
         Output(f'{prefix}-page', 'style'), Output(f'{prefix}-page-link', 'style'),
@@ -52,7 +55,7 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
                   Output(f'{prefix}-quote-timer', 'interval'),
         Input('workspace-page','value'),Input('sport','value'),Input('market-url','hash'),
         Input(f'{prefix}-frequency','value'),Input(f'{prefix}-snapshot','value'),Input(f'{prefix}-context','data'),
-        *([Input('kalshi-category','value')] if provider=='Kalshi' else []))
+        Input(f'{prefix}-category','value'),State('market-return','data'))
 
     @callback(Output(f'{prefix}-games', 'data'), Output(f'{prefix}-list-status', 'children'),
                   Output(f'{prefix}-game-cards', 'children'),
@@ -80,17 +83,20 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
     @callback(Output(f'{prefix}-context', 'data'), Output(f'{prefix}-game-header', 'children'),
                   Output(f'{prefix}-category', 'children'), Output(f'{prefix}-category', 'value'),
                   Input(f'{prefix}-games', 'data'), Input('market-url', 'hash'), Input('sport', 'value'),
-                  State(f'{prefix}-context', 'data'), State(f'{prefix}-category', 'value'))
-    def kalshi_game(catalog, location_hash, sport, previous, selected):
+                  State(f'{prefix}-context', 'data'), State(f'{prefix}-category', 'value'),State('market-return','data'))
+    def kalshi_game(catalog, location_hash, sport, previous, selected,market_return=None):
         route = view.route(location_hash)
         if not route or route[0]!=sport or not route[1]:raise PreventUpdate
         if not catalog or catalog.get('sport') != sport:
             return None, '', [], 'Game Lines'
         game = next((g for g in catalog['games'] if g['id'] == route[1]), None)
-        if game and game == previous:
-            return no_update, no_update, no_update, no_update
         choices = view.categories(game)
+        remembered=remembered_market(market_return,sport,location_hash,prefix)
+        restored=remembered.get('category') if remembered else None
+        if game and game == previous:
+            return no_update, no_update, no_update, restored if restored in choices and restored!=selected and ctx.triggered_id in {'market-url',f'nav-{prefix}'} else no_update
         selection = selected if selected in choices and previous and previous.get('id') == route[1] else choices[0] if choices else 'Game Lines'
+        if restored in choices:selection=restored
         return (game if game != previous else no_update, view.game_header(game),
                 [dcc.Tab(label=c, value=c, className='market-category-tab', selected_className='market-category-tab selected') for c in choices], selection)
 
@@ -111,8 +117,8 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
                   Input(f'{prefix}-quote-timer', 'n_intervals'), Input(f'{prefix}-pull', 'n_clicks'),
                   State(f'{prefix}-frequency', 'value'),State('market-url','hash'),
                   Input(f'{prefix}-cache-poll','n_intervals'),State(f'{prefix}-cache-state','data'),
-                  State(f'{prefix}-quotes','data'),State(f'{prefix}-quote-status','children'))
-    def kalshi_quotes(page, sport, game, category, selected, _tick, pulls, frequency,location_hash=None,_cache_tick=None,cache_state=None,previous_snapshot=None,previous_status=None):
+                  State(f'{prefix}-quotes','data'),State(f'{prefix}-quote-status','children'),State('market-return','data'))
+    def kalshi_quotes(page, sport, game, category, selected, _tick, pulls, frequency,location_hash=None,_cache_tick=None,cache_state=None,previous_snapshot=None,previous_status=None,market_return=None):
         if page != prefix or sport not in SPORTS: raise PreventUpdate
         if location_hash is not None:
             route=view.route(location_hash)
@@ -140,6 +146,10 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
         try:
             reload_history = ctx.triggered_id in {f'{prefix}-context', f'{prefix}-category', f'{prefix}-pull'} or selected is None
             options = history_options(game, category) if reload_history else no_update
+            remembered=remembered_market(market_return,sport,location_hash,prefix)
+            if not pull and remembered and remembered.get('category')==category and ctx.triggered_id in {'market-url',f'nav-{prefix}',f'{prefix}-context',f'{prefix}-category'}:
+                options=history_options(game,category) if options is no_update else options
+                if remembered.get('snapshot') in {o['value'] for o in options}:selected=remembered['snapshot']
             if reload_history and selected not in {o['value'] for o in options}:
                 selected = 'live'
             archived = selected not in {None, 'live'} and not pull
@@ -156,11 +166,19 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
                 status += (' Loading this category…' if snapshot.get('updating') else f' {provider} has no contracts for this linked category.')
             if pull: options = history_options(game, category)
             chosen = 'live' if pull else selected
+            snapshot={**snapshot,'selection':chosen}
             # Re-emitting the dropdown's own input needlessly retriggers refreshes.
             return (no_update if snapshot==previous_snapshot else snapshot,
                     no_update if status==previous_status else status,options,chosen if chosen != selection_before else no_update)
         except (DataSourceError, OSError, ValueError, TypeError) as exc:
-            return None, f'{provider} quotes unavailable: ' + str(exc), no_update, no_update
+            message=f'{provider} quotes unavailable: '+str(exc)
+            same=(previous_snapshot and (previous_snapshot.get('sport'),previous_snapshot.get('game_id'),
+                previous_snapshot.get('category'),previous_snapshot.get('selection'))==(sport,game['id'],category,selected))
+            snapshot={**(previous_snapshot if same else {}),'sport':sport,'game_id':game['id'],'category':category,
+                'rows':previous_snapshot.get('rows',[]) if same else [],'selection':selected,
+                'error':str(exc),'updating':False,'page_pending':False}
+            if same and snapshot['rows']:message+=' Showing previously loaded quotes; see their timestamp.'
+            return snapshot, message, no_update, no_update
         finally:
             with polling_lock:
                 polling[key] -= 1

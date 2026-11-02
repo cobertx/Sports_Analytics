@@ -38,10 +38,10 @@ def graph(app):
             for m in app.callback_map.values() if m.get('callback')]
 
 
-def run_client(app,before=None,references=None):
+def run_client(app,before=None,references=None,steps=None):
     config=dict(asset=(ROOT/'sports_analytics/assets/market_transition.js').read_text(encoding='utf-8'),
         inline=app._inline_scripts,clients=[m for m in app._callback_list if m.get('clientside_function')],
-        pages=PAGES,steps=STEPS,before=before or [],after=graph(app),references=references or [])
+        pages=PAGES,steps=STEPS if steps is None else steps,before=before or [],after=graph(app),references=references or [])
     result=subprocess.run([node(),str(ROOT/'scripts/navigation_harness.js')],input=to_json(config),
         capture_output=True,text=True,encoding='utf-8',check=True)
     return json.loads(result.stdout)

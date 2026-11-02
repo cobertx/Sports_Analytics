@@ -98,7 +98,8 @@ function checkMarketTransitions(source) {
   check(api.readiness(context,null,null,catalog,null,null,{...info,game:{changed:'unrelated'}},
     {context:['NBA','123','Points'],values:[999]},null,projection)===noUpdate,'Unchanged readiness does not repaint the screen');
   const changedMethod=detailArgs.slice();changedMethod[17]='ELO';
-  check(screen(...changedMethod).includes('market-quotes-pending'),'Hide probabilities belonging to the prior selected method');
+  check(screen(...changedMethod).includes('market-model-pending')&&!screen(...changedMethod).includes('market-quotes-pending'),
+    'Keep source quotes while hiding probabilities belonging to the prior method');
   const historyArgs=['#historical-player?sport=NBA&name=Player+A','NBA',null,null,null,null,null,null,'historical'];
   check(screen(...historyArgs).includes('history-view-pending'),'Hide the last player while linked history loads');
   historyArgs[16]={route:historyArgs[0],sport:'NBA'};

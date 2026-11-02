@@ -148,3 +148,88 @@ Browser access was still unavailable: no browser was exposed and the native
 connection could not be opened. No real-browser speed or visual-smoothness result
 is claimed. Restart `index.py` and refresh the browser tab to load the new callbacks
 and assets; use the browser scenarios above for visual verification.
+
+## Market and player-history UX follow-up
+
+This pass keeps the existing router, premium theme and calculation services.
+Quote identity is now checked independently of model identity: switching methods
+keeps matching prices visible while hiding old probabilities, fair odds, edges,
+criterion highlights and distribution charts. A refresh of the same completed view
+can retain its content with an Updating label. Empty in-progress quote loads still
+use placeholders; empty/error responses terminate them and expose the existing
+snapshot/refresh controls. Failed exchange refreshes retain old quotes only when
+sport, game, category and snapshot selection match, with their original timestamp.
+No paid pull is retried automatically.
+
+Historical results carry a separate analysis identity containing route, dataset
+key/revision, season, phase, week/source-team scope, entity, statistic, rolling
+window and displayed team filter. The chart's existing navigation metadata remains
+compatible. A local guard keeps the chart, hit-rate cards and game log hidden until
+that identity agrees with the current controls. The controls remain usable. Linked
+player selection hydration must settle before the result is revealed; deliberate
+user selections can override the link. Career charts have a separate identity for
+their actual all-season scope and independent pending/error states. Zoom remains
+stable for an unchanged analytical selection.
+
+`market-return` session metadata now uses `{v: 2, entries: {"provider:SPORT": ...}}`.
+There is at most one entry for each of three providers and three sports. Entries
+contain only validated routes, snapshot/category/method selections, prompt/section
+identifiers and rendered row counts. Legacy FanDuel sport-keyed entries remain
+readable. Provider links return to the remembered game; explicit game URLs take
+precedence. Archive reads validate the filename against available saved snapshots.
+Returning from history reopens the prompt and requests previously expanded rows
+through the existing 50-row callback. Removed snapshots/categories/prompts fall
+back to the available view/header with a short notice. Restoration is scoped to
+the active provider and stops on user interaction; unrelated progress and Plotly
+mutations do not drive market restoration scans.
+
+Destination and calculation feedback uses one lightweight clientside status owner.
+Repeated polling with the same phase does not repeat its live announcement. The
+existing 150 ms loader delay remains; no artificial navigation delay, full-page
+fade, extra initially mounted graph, dataset browser cache or dependency was added.
+Placeholders reserve space for history, career and market sections.
+
+### Follow-up measurements
+
+Offline Windows measurements, with external requests blocked:
+
+| Measurement | Before this UX pass | After |
+| --- | ---: | ---: |
+| Original 11-event server callback count | 119 | 119 |
+| Control request bytes, full sequence | 97,525 | 98,173 |
+| Control response bytes | 3,332 | 3,332 |
+| Large category initial JSON | 146,971 bytes | 146,971 bytes |
+| Initial layout JSON | 262,242 bytes | 262,739 bytes |
+| Initially mounted graphs | 8 | 8 |
+
+Five warmed dispatch samples measured a 45.818 ms median for the original sequence.
+The additional six Kalshi/Polymarket game → history → Back events measured 62
+server callback invocations, 53,638 request bytes, 1,736 response bytes, and a
+24.242 ms dispatch median. These are framework/control-plane timings with no-op
+data handlers, not browser click-to-content, real quote loading, or forecast times.
+The large category render/serialization median was 15.314 ms over five samples;
+its Python allocation peak was 1,764,305 bytes. No browser speed improvement is
+claimed from these measurements.
+
+The five existing chart/table analytical signatures matched their prior baselines.
+Numerical, distribution, ranking, export, coverage, concurrency and cache checks
+remain in the regression suite. The added offline fixtures exercise archive
+returns without a live quote call, scoped quote/model failures, retained refreshes,
+full history identities, career readiness, manual selections during hydration,
+lazy-row restoration, and rapid/delayed navigation.
+
+The final combined validation passed all 41 Python check suites (480 unit tests
+plus project checks), 354 direct JavaScript checks, and the offline dispatch and
+payload budgets. Affected suites were rerun after the final error-state handling.
+Python syntax, dependency consistency and whitespace checks also passed.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/check_navigation_ux.py
+node scripts/check_navigation_ux.js
+.\.venv\Scripts\python.exe scripts/benchmark_navigation.py --repeats 5 --exchange-history
+```
+
+Raw local reports: `data/benchmarks/navigation_ux_*.json` (Git-ignored). Browser
+access remains unavailable. Real keyboard behavior, mobile/zoom layouts,
+slow-network painting, focus announcements and user-perceived latency still need
+verification in the browser; the controlled DOM harness does not establish them.

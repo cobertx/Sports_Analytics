@@ -29,13 +29,22 @@
 }
 .market-screen-kalshi #parlay-drawer,.market-screen-polymarket #parlay-drawer,.market-screen-summary #parlay-drawer,
 .market-screen-filtered #parlay-drawer { display: none !important; }
-.market-sections-transition { display: none; padding: 16px 0; }
+.market-sections-transition { display: none; padding: 16px 0; min-height: 220px; }
 .market-quotes-pending #saved-market-sections { display: none !important; }
 .market-quotes-pending #market-sections-transition { display: block; }
-.exchange-sections-transition { display: none; padding: 16px 0; }
+.exchange-sections-transition { display: none; padding: 16px 0; min-height: 220px; }
 .exchange-quotes-pending #kalshi-market-sections,.exchange-quotes-pending #polymarket-market-sections,
 .exchange-quotes-pending .kalshi-detail-table,.exchange-quotes-pending .kalshi-rules { display: none !important; }
 .exchange-quotes-pending .exchange-sections-transition { display: block; }
+.market-model-pending :is(.ppp-probability,.ppp-fair-odds,.market-edge),
+.exchange-model-pending :is(.model-probability,.model-fair-odds,.market-edge) { visibility: hidden; }
+.market-model-pending :is(.player-distribution,.ppp-chart) { display: none; }
+.market-model-pending :is(.criteria-match-count,.criteria-no-match-count,.criteria-evaluation),
+.exchange-model-pending :is(.criteria-match-count,.criteria-no-match-count,.criteria-evaluation) { visibility: hidden; }
+.market-model-pending .market-criteria-match,.exchange-model-pending .market-criteria-match { border-color: transparent; background: var(--panel); }
+.navigation-feedback { color: var(--muted); font-size: 13px; margin: 0 0 12px; min-height: 20px; }
+.navigation-feedback:empty,.market-return-status:empty { display: none; }
+.market-return-status { padding: 8px 0; }
 /* Leaving a market must hide it before the new page's server callbacks finish. */
 .workspace-screen #historical-page,.workspace-screen #market-page,.workspace-screen #kalshi-page,
 .workspace-screen #polymarket-page,.workspace-screen #market-summary-page,.workspace-screen #filtered-results-page,
@@ -52,8 +61,11 @@
    results. A late response can never display that player's charts or table. */
 .historical-transition-status { display: none; padding: 16px 0; min-height: 440px; }
 .historical-results { min-width: 0; }
-.history-view-pending .historical-results { display: none; }
+.history-view-pending .historical-results > :is(.kpi-grid,#historical-performance-panel,#career-panel,.table-panel,.action-loading) { display: none; }
 .history-view-pending #historical-transition-status { display: block; }
+.career-pending-status { display: none; min-height: 350px; }
+.career-view-pending #career-panel > .action-loading { display: none; }
+.career-view-pending #career-panel > .career-pending-status { display: block; }
 .history-skeleton-cards { height: 90px; margin: 18px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .history-skeleton-chart { height: 300px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .page-toolbar .sport-page-link { transition: color 180ms, background-color 180ms; }

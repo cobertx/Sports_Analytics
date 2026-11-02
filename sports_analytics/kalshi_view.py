@@ -324,8 +324,8 @@ def comparison_rows(row,snapshot=None,provider='Kalshi'):
                       title='American odds equivalent of this outcome’s quoted buying price / payout, before fees.'),
             html.Span(probability_text(market),className='market-probability'),
             *([] if polymarket else [
-                html.Span(probability_text(probability),className='market-probability',title=row.get('model_method','')+': '+row.get('model_detail','Estimate unavailable')),
-                html.Span(odds_text(probability),className='market-probability'),
+                html.Span(probability_text(probability),className='market-probability model-probability',title=row.get('model_method','')+': '+row.get('model_detail','Estimate unavailable')),
+                html.Span(odds_text(probability),className='market-probability model-fair-odds'),
                 html.Span(f'{100*edge:+.2f} pp' if edge is not None else '—',className='market-edge',**{'data-sign':signed_state(edge)}),
             ]),
         ],**({'id':dict(type='kalshi-comparison-row',sport=snapshot['sport'],game=snapshot['game_id'],ticker=row['ticker'],side=side)}
@@ -346,7 +346,8 @@ def market_sections(snapshot, provider='Kalshi', *,lazy=True,view_id=None):
     groups = market_groups(snapshot)
     polymarket = provider=='Polymarket'
     if not groups:
-        return html.P('No contracts are available in this category.',className='saved-market-empty')
+        return html.P('Quotes could not be loaded. Use the existing refresh or snapshot controls to retry.' if snapshot.get('error') else
+                      'No contracts are available in this category.',className='saved-market-empty',role='status')
 
     def outcome(row):
         return html.Div(comparison_rows(row,snapshot,provider),className='kalshi-contract',key=row['ticker'])

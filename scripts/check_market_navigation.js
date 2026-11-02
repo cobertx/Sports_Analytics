@@ -34,15 +34,15 @@ function checkMarketNavigation(source) {
   };
 
   let saved = remember(location.hash, 'saved-snapshot', 'Receiving', {NBA: {route: '#nba-game-456'}});
-  check(saved.NFL.route === location.hash && saved.NFL.snapshot === 'saved-snapshot', 'Remember exact game and snapshot');
-  check(saved.NFL.category === 'Receiving' && saved.NBA.route === '#nba-game-456', 'Keep category and separate sport context');
+  check(saved.entries['market:NFL'].route === location.hash && saved.entries['market:NFL'].snapshot === 'saved-snapshot', 'Remember exact game and snapshot');
+  check(saved.entries['market:NFL'].category === 'Receiving' && saved.entries['market:NBA'].route === '#nba-game-456', 'Keep category and migrate separate sport context');
   check(remember(location.hash, 'saved-snapshot', 'Receiving', saved) === noUpdate, 'Avoid redundant store updates');
   click({ctrlKey: true});
   check(writes.length === 0, 'Do not capture new-tab clicks');
   click();
   check(writes.length === 1 && writes[0].id === 'market-return', 'Capture header link before navigation');
   saved = writes[0].props.data;
-  check(saved.NFL.section === sectionId, 'Capture exact player/market section');
+  check(saved.entries['market:NFL'].section === sectionId, 'Capture exact player/market section');
   change('#nfl-game-123', '#historical-player?sport=NFL&name=Jerry+Jeudy');
   check(remember(location.hash, null, null, saved) === noUpdate, 'Historical callbacks preserve the market origin');
   change('#historical-player?sport=NFL&name=Jerry+Jeudy', '#nfl-game-123');
@@ -61,9 +61,9 @@ function checkMarketNavigation(source) {
   windowEvents.wheel();nodes[sectionId] = element(sectionId);observer();
   check(scrolls.length === 3, 'Stop restoring when the user scrolls');
   saved = remember(location.hash, 'different-snapshot', 'Receiving', saved);
-  check(saved.NFL.section === null, 'Do not reuse a section from a different snapshot');
+  check(saved.entries['market:NFL'].section === null, 'Do not reuse a section from a different snapshot');
   check(remember('#nfl-games', null, null, saved) === noUpdate, 'Schedule navigation preserves the last game');
-  check(remember('#nba-game-999', 'nba-snapshot', 'Points', saved).NBA.route === '#nba-game-999', 'Capture NBA categories independently');
+  check(remember('#nba-game-999', 'nba-snapshot', 'Points', saved).entries['market:NBA'].route === '#nba-game-999', 'Capture NBA categories independently');
   const beforeHistory=scrolls.length;
   nodes['historical-performance-panel']=element('historical-performance-panel');
   change('#nfl-game-123','#historical-player?sport=NFL&name=Jerry+Jeudy');
@@ -122,7 +122,7 @@ function checkDeferredNavigation(source,transitionSource) {
   change('#nfl-game-123');flush();
   const anchor={closest:()=>nodes['market-section-test']};
   documentEvents.click({button:0,target:{closest:selector=>selector==='a.market-history-link'?anchor:null}});
-  check(writes.some(item=>item.id==='market-return'&&item.props.data.NFL.section==='market-section-test'),'Store the exact market before leaving');
+  check(writes.some(item=>item.id==='market-return'&&item.props.data.entries['market:NFL'].section==='market-section-test'),'Store the exact market before leaving');
   change('#historical-player?sport=NFL&name=Player+B');flush();
   nodes['market-game-detail'].hidden=true;
   change('#nfl-game-123');flush();

@@ -111,7 +111,13 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
             # Deliberate rescans may retry missing history; routine price polls do not refit.
             previous={**previous,'predictions':{key:value for key,value in previous.get('predictions',{}).items()
                                               if value.get('probability') is not None},'errors':[]}
-        record=calculate(game,snapshot,selected,method,player_method,game_forecast,player_forecast,previous)
+        try:
+            record=calculate(game,snapshot,selected,method,player_method,game_forecast,player_forecast,previous)
+        except (DataSourceError,OSError,ValueError,TypeError) as exc:
+            record=dict(context=identity(game,selected,method,player_method),predictions={},errors=[str(exc)])
+        if not record.get('context'):
+            record=dict(record,context=identity(game,selected,method,player_method),predictions={},
+                        errors=[snapshot['error']] if snapshot.get('error') else [])
         if category==FILTER:record={**record,'scan_sequence':scan.get('sequence')}
         return no_update if record==before else record
 

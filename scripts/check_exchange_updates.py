@@ -251,7 +251,7 @@ class ExchangeUpdateChecks(TestCase):
                         callbacks['kalshi_quotes']('kalshi','NFL',self.game,'Game Lines','live',0,0,5,None,1,active)
                 fetch.assert_not_called()
                 result=callbacks['kalshi_quotes']('kalshi','NFL',self.game,'Game Lines','live',0,0,5,None,1,state)
-                self.assertIs(result[0],self.snapshot);fetch.assert_called_once()
+            self.assertEqual(result[0],dict(self.snapshot,selection='live'));fetch.assert_called_once()
             catalog=self.service.games('NFL');catalog.update(window_days=7,updating=True)
             updated=callbacks['kalshi_games']('kalshi','NFL',7,0,0,catalog,1)
             self.assertIsNot(updated[0],no_update);self.assertFalse(updated[0]['updating'])
@@ -272,7 +272,7 @@ class ExchangeUpdateChecks(TestCase):
                     with self.assertRaises(PreventUpdate):callbacks['kalshi_quotes']('kalshi','NFL',self.game,'Game Lines','live',1,0,2)
                     self.assertEqual(fetch.call_count,1)
                 finally:release.set()
-                self.assertEqual(first.result(timeout=3)[0],self.snapshot)
+                self.assertEqual(first.result(timeout=3)[0],dict(self.snapshot,selection='live'))
         with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-pull')):
             saved=callbacks['kalshi_quotes']('kalshi','NFL',self.game,'Game Lines','live',2,1,2)[0]
         self.assertTrue(Path(saved['saved']).exists())
