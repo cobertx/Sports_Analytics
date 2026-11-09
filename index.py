@@ -1,12 +1,8 @@
-"""Launch the dashboard with: python index.py"""
-
 from pathlib import Path
 import subprocess
 import sys
 
 
-# IDE Run buttons may use system Python even when .venv is installed.
-# Switch before importing the app or any third-party dependencies.
 if __name__ == "__main__":
     project_dir = Path(__file__).resolve().parent
     environment_dir = project_dir / ".venv"

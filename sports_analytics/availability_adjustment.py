@@ -87,11 +87,6 @@ def inputs(players, teams, sport, cutoff, snaps=None):
 
 
 def absence_columns(team_games, ledger, reports, team, cutoff):
-    """Restrict absence comparisons to the player's observed club tenure.
-
-    A current structured report confirms the latest club, but no earlier unseen
-    player is invented. Intervening appearances for another club end a stint.
-    """
     result = team_games[team_games.team.eq(team)].copy(); columns = []; skipped = []
     for report in reports:
         name = identity_name(report['player'])
