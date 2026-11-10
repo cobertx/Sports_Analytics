@@ -15,6 +15,8 @@ from .nba_markets import NBA_MARKETS
 from .nfl_markets import NFL_MARKETS
 from .ncaaf_markets import NCAAF_MARKETS
 from .mispricing import GAME_METHODS,PLAYER_METHODS
+from .filter_jobs import request_key
+from .availability import revision as availability_revision
 from . import market_summary as analysis
 from . import market_summary_view as view
 
@@ -24,7 +26,7 @@ def attempt(function):
     except (DataSourceError,OSError,ValueError,TypeError) as exc:return None,str(exc)
 
 
-def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast,pages=None):
+def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast,pages=None,tasks=None):
     app.clientside_callback('''function(page,selected,catalog,quotes){
         return page!=='market-summary'||!((catalog&&catalog.updating)||(selected&&quotes&&quotes.updating));
     }''',Output('summary-cache-poll','disabled'),Input('workspace-page','value'),Input('summary-game','value'),
@@ -129,16 +131,30 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
     @scoped_callback(app,'market-summary',Output('summary-models','data'),Output('summary-model-status','children'),
                   Input('summary-quotes','data'),Input('summary-game-method','value'),Input('summary-player-method','value'),
                   Input('summary-recalculate','n_clicks'),Input('workspace-page','value'),Input('sport','value'),
-                  State('summary-game','value'),State('summary-models','data'),prevent_initial_call=True,
+                  State('summary-game','value'),State('summary-models','data'),
+                  *([Input('summary-model-poll','n_intervals')] if tasks is not None else []),prevent_initial_call=True,
                   running=[(Output('summary-recalculate','disabled'),True,False)])
-    def summary_models(bundle,method,player_method,clicks,page,sport,selected,previous):
+    def summary_models(bundle,method,player_method,clicks,page,sport,selected,previous,_model_tick=None):
         if page!='market-summary' or not bundle or bundle.get('sport')!=sport or str(bundle['game']['id'])!=selected:raise PreventUpdate
         if any((record.get('snapshot') or {}).get('page_pending') and not (record.get('snapshot') or {}).get('rows')
                for record in bundle.get('providers',{}).values()):raise PreventUpdate
         if method not in GAME_METHODS or player_method not in PLAYER_METHODS:raise PreventUpdate
         if (analysis.current_models(previous,bundle,method,player_method)
                 and ctx.triggered_id!='summary-recalculate'):raise PreventUpdate
-        models=analysis.calculate(bundle,method,player_method,game_forecast,player_forecast)
+        def compute():
+            return analysis.calculate(bundle,method,player_method,game_forecast,player_forecast)
+        if tasks is not None and _model_tick is not None:
+            key=request_key(['summary-model-v1',bundle['id'],method,player_method,analysis.POLICY_VERSION,availability_revision(sport),clicks])
+            models,pending,error=tasks.read(key,compute)
+            if pending:
+                record=dict(job=key,pending=True,status='pending',bundle_id=bundle['id'],method=method,player_method=player_method)
+                if record==previous:return no_update,no_update
+                return record,'Quotes available · Calculating probabilities in the background…'
+            if error or models is None:
+                return dict(job=key,pending=False,status='error',bundle_id=bundle['id'],errors=[error or 'Calculation unavailable.']),\
+                    'Calculation failed. '+(error or '')+' Use Recalculate estimates to retry.'
+            models={**models,'job':key,'pending':False,'status':'complete'}
+        else:models=compute()
         models['render_id']=uuid4().hex
         status=(f'{method} game / {player_method} player estimates. Historical cutoff: '+format_eastern(models['cutoff'])+'. '
                 'All providers use the earliest quote timestamp, capped at game start, to avoid using later history for older saved prices.' if models['cutoff'] else '')

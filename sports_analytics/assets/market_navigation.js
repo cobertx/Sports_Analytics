@@ -57,7 +57,8 @@
     const panel = document.getElementById(roots[route.provider]);
     if (!panel || !panel.getClientRects().length || getComputedStyle(panel).display === 'none') return;
     const shell=document.getElementById('app-shell');
-    if(/quotes-pending|market-screen-pending/.test(shell?.className||''))return;
+    if(/quotes-pending|market-screen-pending/.test(shell?.className||'')||panel.closest?.('.market-screen-pending')||
+       /quotes-pending/.test(panel.className||''))return;
     const selected=controls[route.provider];
     if(selected?.context&&(selected.context.sport!==route.sport||String(selected.context.id)!==route.game))return;
     if(selected&&(selected.snapshot!==pending.snapshot||selected.category!==pending.category)){
@@ -204,7 +205,7 @@
     // Coalesce Plotly/Dash mutation bursts; do no layout reads for unrelated
     // updates once restoration has finished.
     const root=pending&&document.getElementById(roots[routeFor(pending.route)?.provider]);
-    const relevant=!records.length||records.some(record=>record.target.id==='app-shell'||record.target.closest?.('.page-toolbar')||
+    const relevant=!records.length||records.some(record=>['app-shell','historical-results','career-panel','market-page','kalshi-page','polymarket-page'].includes(record.target.id)||record.target.closest?.('.page-toolbar')||
       !record.target.closest?.('.dash-graph,.js-plotly-plot')&&root?.contains?.(record.target));
     if ((pending||historyPending||pendingFocus||navigationPending)&&relevant) schedule();
   }).observe(document.documentElement, {childList: true, subtree: true, attributes: true,

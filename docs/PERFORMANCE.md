@@ -80,6 +80,49 @@ p95 estimate. No real-browser latency or visual smoothness improvement is claime
 
 ## Regression checks
 
+### Independent section loading (November 2026)
+
+Shell visibility now depends only on route, sport and workspace. Per-page header,
+quote, model, primary-history and career guards have separate owners. Primary history
+does not subscribe to career completion, and quotes do not subscribe to model completion.
+The existing hash router, model services, numerical definitions and saved reports remain.
+
+Kalshi and Market Summary forecasts share the existing two-worker page-task queue
+(16 retained results); career history has a separate two-worker queue (8 retained results).
+Pending browser values contain scoped job references. Polling pauses on inactive pages;
+work continues and is recovered on return. Explicit retries get a new identity. Initial
+poll counters are explicitly zero so the first browser request also queues its work.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/check_progressive_loading.py
+.\.venv\Scripts\python.exe scripts/benchmark_progressive_loading.py --repeats 5
+node scripts/check_progressive_loading.js
+```
+
+Five samples on this Windows workspace, with other regression checks running:
+
+| Blocked-work HTTP submission | Samples (ms) | Median (ms) |
+| --- | --- | ---: |
+| Career | 85.5, 43.6, 58.9, 52.5, 52.7 | 52.7 |
+| Kalshi | 16.6, 16.1, 14.8, 14.8, 12.3 | 14.8 |
+| Market Summary | 17.6, 18.2, 12.7, 14.1, 176.6 | 17.6 |
+
+The fixture holds source/model completion with an Event, then checks identical
+completed observations/probabilities, duplicate-work suppression and independent quote
+or chart availability. These figures measure the initial pending response, not total
+model execution or browser painting. There is no comparable before/after browser timing
+or stable p95 estimate. The existing 11-event dispatch fixture remains at 119 server
+callbacks, preserving its budget; it also excludes real calculations and browser work.
+
+The offline browser fixture can be run with
+`python scripts/preview_progressive_loading.py`, then opened at
+`http://127.0.0.1:8052/#historical-player`. Native Edge inspection confirmed the primary
+chart, eight game-log observations and summary values while career work was held, and
+navigation to Backtesting while that work continued. Browser control subsequently
+stopped because the current URL could not be identified confidently. The final complete
+browser scenario sweep and the 100 ms interaction target remain unmeasured; automated
+checks cover retained-result return, scope changes, failed jobs and explicit retries.
+
 ```powershell
 .\.venv\Scripts\python.exe scripts/check_dashboard_efficiency.py
 ```

@@ -31,6 +31,25 @@ The sidebar's 180 ms color transitions honor reduced-motion preferences. No
 full-page fades, reloads, continuously animated skeletons or routing migration
 were introduced.
 
+## Independent result readiness
+
+The shell uses only route, sport and workspace metadata. Data and calculation signals
+now control their own sections: the game header, quote rows, probabilities, historical
+performance and career chart can become ready independently. Matching quotes stay usable
+while forecasts run, and career history cannot hold the primary chart or game log closed.
+
+Local scope guards reject incompatible sport/game/snapshot/method/player results. Native
+hash changes invalidate old panels immediately; back navigation also rechecks retained
+results when their render metadata did not change. Same-scope refreshes retain original
+timestamps and an Updating label. Loading placeholders reserve space; terminal errors
+stop polling and offer explicit retries. The queues are process-local, matching the
+existing single-server deployment; no new external service or cross-worker cache is implied.
+
+Run `python scripts/check_progressive_loading.py` and
+`node scripts/check_progressive_loading.js` for independent readiness, stale scope,
+initial poll state, job reuse, errors, retries and retained-result return checks.
+See [performance notes](PERFORMANCE.md) for measurements and browser verification limits.
+
 ## Validation
 
 The first navigation pass passed 221 Python unit tests and 285 JavaScript checks.

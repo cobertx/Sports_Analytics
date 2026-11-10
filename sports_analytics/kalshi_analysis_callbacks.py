@@ -8,7 +8,7 @@ from dash.exceptions import PreventUpdate
 from .data import DataSourceError
 from .display_time import format_eastern
 from .kalshi import CATEGORIES
-from .kalshi_analysis import FILTER,GAME_METHODS,PLAYER_METHODS,identity,calculate,decorate,rank,quick_calculate,prompt_targets
+from .kalshi_analysis import FILTER,GAME_METHODS,PLAYER_METHODS,identity,definition,calculate,decorate,rank,quick_calculate,prompt_targets
 from . import quick_methods
 from .market_view import probability_text
 from .mispricing import criteria_values, selected_methods, method_details
@@ -68,7 +68,7 @@ def filter_snapshot(service,game,selected,pull=False):
     return snapshot,status
 
 
-def register(app,service,game_forecast,player_forecast,filtered_results=None,*,jobs=None):
+def register(app,service,game_forecast,player_forecast,filtered_results=None,*,jobs=None,tasks=None):
     jobs=jobs or FilterJobs()
     prompt_fields=dict(type='kalshi-quick-prompt-method',scope=ALL,prompt=ALL)
 
@@ -94,8 +94,9 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
 
     @scoped_callback(app,'kalshi',Output('kalshi-models','data'),Input('kalshi-quotes','data'),Input('kalshi-filter-quotes','data'),Input('kalshi-context','data'),
                   Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),Input('kalshi-snapshot','value'),
-                  Input('workspace-page','value'),Input('kalshi-category','value'),State('kalshi-models','data'),State('market-url','hash'))
-    def kalshi_models(snapshot,scan,game,method,player_method,selected,page,category,previous,location_hash=None):
+                  Input('workspace-page','value'),Input('kalshi-category','value'),State('kalshi-models','data'),State('market-url','hash'),
+                  *([Input('kalshi-model-poll','n_intervals'),Input('kalshi-model-retry','n_clicks')] if tasks is not None else []))
+    def kalshi_models(snapshot,scan,game,method,player_method,selected,page,category,previous,location_hash=None,_model_tick=None,_retry=None):
         if page!='kalshi' or not game:raise PreventUpdate
         if location_hash is not None and route(location_hash)!=(game['sport'],game['id']):raise PreventUpdate
         if category==FILTER:
@@ -111,14 +112,28 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
             # Deliberate rescans may retry missing history; routine price polls do not refit.
             previous={**previous,'predictions':{key:value for key,value in previous.get('predictions',{}).items()
                                               if value.get('probability') is not None},'errors':[]}
-        try:
-            record=calculate(game,snapshot,selected,method,player_method,game_forecast,player_forecast,previous)
-        except (DataSourceError,OSError,ValueError,TypeError) as exc:
-            record=dict(context=identity(game,selected,method,player_method),predictions={},errors=[str(exc)])
-        if not record.get('context'):
-            record=dict(record,context=identity(game,selected,method,player_method),predictions={},
-                        errors=[snapshot['error']] if snapshot.get('error') else [])
-        if category==FILTER:record={**record,'scan_sequence':scan.get('sequence')}
+        def compute():
+            try:
+                record=calculate(game,snapshot,selected,method,player_method,game_forecast,player_forecast,previous)
+            except (DataSourceError,OSError,ValueError,TypeError) as exc:
+                record=dict(context=identity(game,selected,method,player_method),predictions={},errors=[str(exc)])
+            if not record.get('context'):
+                record=dict(record,context=identity(game,selected,method,player_method),predictions={},
+                            errors=[snapshot['error']] if snapshot.get('error') else [])
+            if category==FILTER:record={**record,'scan_sequence':scan.get('sequence')}
+            return record
+        if tasks is not None and _model_tick is not None:
+            context=identity(game,selected,method,player_method)
+            key=request_key(['kalshi-model-v1',context,[definition(row) for row in snapshot['rows']],
+                             scan.get('sequence') if category==FILTER else None,snapshot.get('error'),_retry])
+            record,pending,error=tasks.read(key,compute)
+            if pending:
+                record=dict(context=context,job=key,pending=True,status='pending')
+            else:
+                failed=bool(error or record and record.get('errors') and not record.get('predictions'))
+                record={**(record or dict(context=context,predictions={},errors=[error or 'Calculation unavailable. Retry this selection.'])),
+                        'job':key,'pending':False,'status':'error' if failed else 'complete'}
+        else:record=compute()
         return no_update if record==before else record
 
     @app.callback(Output('kalshi-model-status','children'),Input('kalshi-models','data'),Input('kalshi-context','data'),
@@ -127,6 +142,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
         if not game:return ''
         if not models or models.get('context')!=identity(game,selected,method,player_method):
             return 'Calculated probabilities: waiting for the selected category and methods.'
+        if models.get('pending'):return 'Quotes available · Calculating probabilities in the background…'
         history=models.get('history',{})
         return [html.Span(f"{method} latest historical game: {history.get('game') or 'unavailable'} · "
                           f"{player_method} latest player history: {history.get('player') or 'unavailable'}"),
@@ -198,7 +214,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
         snapshot=scan['snapshot']
         if (snapshot['sport'],snapshot['game_id'],scan['selection'])!=(game['sport'],game['id'],selected):return prompt
         if method not in GAME_METHODS or player_method not in PLAYER_METHODS:return prompt
-        if not models or models.get('context')!=identity(game,selected,method,player_method):
+        if not models or models.get('pending') or models.get('context')!=identity(game,selected,method,player_method):
             return html.P('Calculating the selected forecast methods…',className='saved-market-empty')
         displayed={**decorate(snapshot,game,selected,method,player_method,models,criteria),'game':game}
         return results(displayed,rank(displayed,criteria),criteria,models)

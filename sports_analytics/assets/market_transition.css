@@ -45,6 +45,18 @@
 .navigation-feedback { color: var(--muted); font-size: 13px; margin: 0 0 12px; min-height: 20px; }
 .navigation-feedback:empty,.market-return-status:empty { display: none; }
 .market-return-status { padding: 8px 0; }
+.section-page-status { display: none; padding: 24px; min-height: 220px; }
+.market-screen-pending > .section-page-status,.market-screen-unavailable > .section-page-status { display: block; }
+.section-page-unavailable,.market-screen-unavailable .section-page-loading { display: none; }
+.market-screen-unavailable .section-page-unavailable { display: block; }
+.market-screen-unavailable > :not(.section-page-status) { display: none !important; }
+.market-sport-list :is(#market-game-detail,#kalshi-detail,#polymarket-detail) { display: none !important; }
+.market-sport-list:not(.market-screen-pending) :is(#market-list,#kalshi-list,#polymarket-list) { display: block !important; }
+.summary-quotes-pending { min-height: 220px; }
+.summary-quotes-pending > * { display: none !important; }
+.summary-quotes-pending::before { content: 'Loading the selected game’s markets…'; color: var(--muted); display: block; padding: 16px 0; }
+.market-view-updating::before { content: 'Updating · Previously loaded data retains its timestamp.'; display: block; color: var(--muted); padding: 8px 0; font-size: 12px; }
+.market-model-pending::before { content: 'Quotes available · Calculating probabilities…'; display: block; color: var(--muted); padding: 8px 0; font-size: 12px; }
 /* Leaving a market must hide it before the new page's server callbacks finish. */
 .workspace-screen #historical-page,.workspace-screen #market-page,.workspace-screen #kalshi-page,
 .workspace-screen #polymarket-page,.workspace-screen #market-summary-page,.workspace-screen #filtered-results-page,
@@ -61,11 +73,12 @@
    results. A late response can never display that player's charts or table. */
 .historical-transition-status { display: none; padding: 16px 0; min-height: 440px; }
 .historical-results { min-width: 0; }
-.history-view-pending .historical-results > :is(.kpi-grid,#historical-performance-panel,#career-panel,.table-panel,.action-loading) { display: none; }
+.history-view-pending .historical-results > :is(.kpi-grid,#historical-performance-panel,#career-panel,.table-panel,.action-loading),
+.historical-results.history-view-pending > :is(.kpi-grid,#historical-performance-panel,#career-panel,.table-panel,.action-loading) { display: none; }
 .history-view-pending #historical-transition-status { display: block; }
 .career-pending-status { display: none; min-height: 350px; }
-.career-view-pending #career-panel > .action-loading { display: none; }
-.career-view-pending #career-panel > .career-pending-status { display: block; }
+.career-view-pending #career-panel > .action-loading,#career-panel.career-view-pending > .action-loading { display: none; }
+.career-view-pending #career-panel > .career-pending-status,#career-panel.career-view-pending > .career-pending-status { display: block; }
 .history-skeleton-cards { height: 90px; margin: 18px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .history-skeleton-chart { height: 300px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .page-toolbar .sport-page-link { transition: color 180ms, background-color 180ms; }

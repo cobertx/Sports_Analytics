@@ -130,7 +130,7 @@ def entries(bundle):
 
 
 def current_models(models,bundle,method,player_method):
-    return bool(models and models.get('weighting_policy')==POLICY_VERSION and
+    return bool(models and not models.get('pending') and models.get('weighting_policy')==POLICY_VERSION and
                 models.get('availability_revision')==availability_revision(bundle['sport']) and
                 [models.get('bundle_id'),models.get('method'),models.get('player_method')]==[bundle['id'],method,player_method])
 

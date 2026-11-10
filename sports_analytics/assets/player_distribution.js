@@ -118,7 +118,11 @@
   function connect(){
     const shell=document.getElementById('app-shell');
     if(!shell)return;
-    bootstrap.disconnect();visibilityObserver.observe(shell,{attributes:true,attributeFilter:['class']});schedule();
+    bootstrap.disconnect();visibilityObserver.observe(shell,{attributes:true,attributeFilter:['class']});
+    for(const id of ['market-page','kalshi-page','polymarket-page','market-game-detail','kalshi-detail','polymarket-detail']){
+      const panel=document.getElementById(id);if(panel)visibilityObserver.observe(panel,{attributes:true,attributeFilter:['class']});
+    }
+    schedule();
   }
   if(document.getElementById('app-shell'))connect();
   else bootstrap.observe(document.documentElement,{childList:true,subtree:true});

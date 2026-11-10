@@ -1,15 +1,74 @@
 /* URL-driven visibility runs locally, before any data or forecasting callback. */
 (() => {
 let latest=null;
+let shellLatest=null;
+const guards={};
 let historyRoute=null,historyHydrated=false,historyManual=false,historySelection=null;
 const plain = 'app-shell';
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 window.dash_clientside = Object.assign({},window.dash_clientside,{
   market_transition: {
+    shell: function(hash,sport,page) {
+      if(window.location.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;
+      shellLatest=[hash,sport,page];
+      const api=window.dash_clientside.market_transition,destination=api.destination(hash);
+      const special={RESEARCH:'backtesting',PNL:'pnl',ODDS_API:'odds'}[sport],route=api.route(hash);
+      if(special)return 'app-shell workspace-screen workspace-screen-'+special;
+      if(route&&route.sport!==sport)return plain;
+      if(route)return 'app-shell market-screen market-screen-'+route.provider+' market-screen-'+(route.game?'detail':'list');
+      const target=destination?.page||page||'historical';
+      return 'app-shell workspace-screen workspace-screen-'+target;
+    },
+    page_guard: function(provider,hash,sport,context,catalog,schedule) {
+      if(window.location.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;
+      guards[provider]=[provider,hash,sport,context,catalog,schedule];
+      const route=window.dash_clientside.market_transition.route(hash),base=provider==='market'?'market-page':'kalshi-page';
+      if(!route||route.provider!==provider)return base;
+      if(sport&&route.sport!==sport)return base+' market-sport-list'+(catalog?.sport===sport?'':' market-screen-pending');
+      const ready=route.game?context?.sport===route.sport&&String(context.id)===route.game:catalog?.sport===route.sport;
+      const games=provider==='market'?schedule:catalog?.games;
+      const unavailable=!ready&&route.game&&catalog?.sport===route.sport&&!catalog.updating&&Array.isArray(games)&&
+        !games.some(game=>String(game.id)===route.game);
+      return base+(ready?'':unavailable?' market-screen-unavailable':' market-screen-pending');
+    },
+    market_guard: function(hash,selection,category,method,player,history) {
+      if(window.location.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;
+      guards.marketResults=[hash,selection,category,method,player,history];
+      const active=/^#(?:nba|nfl|ncaaf)-game-\d+$/.test(hash||'')&&!['Mispricing','Additional Information'].includes(category);
+      const stale=active&&(!same(history?.context,[hash,selection])||history?.view_key?.[0]!==category);
+      const model=active&&!stale&&(history?.view_key?.[1]!==method||history?.view_key?.[2]!==player||history?.pending&&!history?.keep_visible);
+      return 'market-detail-view'+(stale?' market-quotes-pending':'')+(model?' market-model-pending':'')+
+        (active&&!stale&&history?.pending&&history?.keep_visible?' market-view-updating':'');
+    },
+    quote_guard: function(provider,hash,selection,category,view,quotes) {
+      if(window.location.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;
+      guards[provider+'Results']=[provider,hash,selection,category,view,quotes];
+      const route=window.dash_clientside.market_transition.route(hash);
+      const base='sportsbook-view kalshi-sportsbook';
+      if(!route||route.provider!==provider||!route.game||category==='Mispricing Filter')return base;
+      const matching=view?.context?.[0]===route.sport&&String(view?.context?.[1])===route.game&&view?.context?.[2]===category&&view?.view_scope?.[0]===selection;
+      const q=quotes?.sport===route.sport&&String(quotes?.game_id)===route.game&&quotes?.category===category&&
+        (quotes?.selection===undefined||quotes.selection===selection);
+      return base+(!matching||q&&quotes.updating&&!quotes.rows?.length?' exchange-quotes-pending':'')+
+        (matching&&q&&quotes.updating&&quotes.rows?.length?' market-view-updating':'');
+    },
+    model_guard: function(hash,selection,method,player,models) {
+      if(window.location.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;
+      const route=window.dash_clientside.market_transition.route(hash),m=models?.context;
+      const ready=route&&m?.[0]===route.sport&&String(m?.[1])===route.game&&m?.[8]===selection&&m?.[9]===method&&m?.[10]===player;
+      return !ready||models?.pending?'exchange-model-pending':'';
+    },
+    career_guard: function(figure,dataset,entity,metric,hash,sport,kind) {
+      if(window.location.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;
+      const expected={route:hash||'',sport:dataset?.sport??null,kind:dataset?.kind??null,phase:dataset?.phase??null,entity:entity??null,metric:metric??null};
+      const ready=same(figure?.layout?.meta?.career_scope,expected)&&!figure?.layout?.meta?.pending&&
+        (!dataset||dataset.sport===sport&&dataset.kind===kind);
+      return 'panel chart-panel career-panel'+(ready?'':' career-view-pending');
+    },
     user_history_control: function(){historyManual=true;},
     history_state: function(figure,career,dataset,entity,metric,windowSize,team,hash,sport,kind,season,phase,week,sourceTeam,pending,previous) {
       if(window.location?.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;
-      if(!/^#historical/.test(hash||''))return window.dash_clientside.no_update;
+      if(hash&&!/^#historical/.test(hash))return window.dash_clientside.no_update;
       if(historyRoute!==hash){historyRoute=hash;historyHydrated=false;historyManual=false;historySelection=null;}
       const selection=[entity,metric,windowSize,team,sport,kind,season,phase,week,sourceTeam];
       if(historyManual&&historySelection&&!same(selection,historySelection)){historyHydrated=true;historyManual=false;}
@@ -23,7 +82,7 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
         (sport==='NBA'||(d.week??null)===(week??null))&&(sport!=='NCAAF'||kind!=='team'||(d.team||'')===(sourceTeam||''));
       const matched=compatible&&same(rendered,requested);
       if(matched&&(!linked||figure?.layout?.meta?.link_ready))historyHydrated=true;
-      const empty=!dataset&&!pending&&(rendered?.route===hash||old?.route===hash);
+      const empty=!dataset&&!pending&&(rendered?.route===(hash||'')||old?.route===(hash||''));
       const ready=empty||matched&&(!linked||historyHydrated);
       const expectedCareer={route:hash||'',sport:d.sport??null,kind:d.kind??null,phase:d.phase??null,
         entity:entity??null,metric:metric??null};
@@ -162,6 +221,23 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
 window.addEventListener('hashchange',()=>{
   const api=window.dash_clientside;
   if(!api?.set_props)return;
+  if(shellLatest){
+    const api=window.dash_clientside.market_transition,hash=window.location.hash;
+    for(const provider of ['market','kalshi','polymarket']){
+      const state=guards[provider]?.slice()||[provider,hash,null,null,null];state[1]=hash;
+      state[2]=api.destination(hash)?.sport||state[2];
+      window.dash_clientside.set_props(provider+'-page',{className:api.page_guard(...state)});
+      const results=guards[provider==='market'?'marketResults':provider+'Results']?.slice();
+      if(results){results[provider==='market'?0:1]=hash;
+        window.dash_clientside.set_props(provider==='market'?'market-game-detail':provider+'-detail',{
+          className:provider==='market'?api.market_guard(...results):api.quote_guard(...results)});}
+    }
+    window.dash_clientside.set_props('historical-results',{className:'historical-results history-view-pending'});
+    window.dash_clientside.set_props('career-panel',{className:'panel chart-panel career-panel career-view-pending'});
+    const destination=api.destination(hash);
+    window.dash_clientside.set_props('app-shell',{className:api.shell(hash,destination?.sport||shellLatest[1],destination?.page||shellLatest[2])});
+    return;
+  }
   const args=latest?latest.slice():Array(8).fill(null);
   args[0]=window.location.hash;
   const destination=api.market_transition.destination(args[0]);

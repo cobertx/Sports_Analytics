@@ -12,7 +12,7 @@ from uuid import uuid4
 from time import time
 from threading import Lock
 
-from dash import ALL, Dash, Input, MATCH, Output, State, ctx, dash_table, dcc, html, no_update
+from dash import ALL, Dash, Input, MATCH, Output, State, ctx, dash_table, dcc, html, no_update, set_props
 from dash.exceptions import PreventUpdate, MissingCallbackContextException
 from flask import abort, send_from_directory
 import pandas as pd
@@ -54,6 +54,7 @@ from .page_cache import PageTasks,QuotePages,forecast_revision
 from .lazy_markets import register as register_lazy_markets
 from .filter_jobs import FilterJobs,request_key
 from .loading import configure as configure_loading,register as register_loading,indicator,loading as action_loading
+from .progressive_loading import configure as configure_progressive, register as register_progressive
 from .research_config import form_parameters
 from .historical_view import historical_route,statistics_kind,navigation as historical_navigation
 from .historical_links import history_target,matches_dataset,target_entity,target_metric,market_metrics,NBA_COMBINATIONS
@@ -329,6 +330,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     polymarket_service = polymarket_service or PolymarketService(background=True)
     structure_service = structure_service or MarketStructure(kalshi=kalshi_service,polymarket=polymarket_service)
     market_page_tasks=PageTasks(capacity=16)
+    career_tasks=PageTasks(capacity=8)
     filter_jobs=FilterJobs()
     exchange_pages={name:QuotePages(source) for name,source in [('Kalshi',kalshi_service),('Polymarket',polymarket_service)]
                     if getattr(source,'background',False) is True}
@@ -364,6 +366,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                title="Sports Analytics", update_title=None)
     register_lazy_markets(app)
     app._filter_jobs=filter_jobs
+    app._page_tasks=market_page_tasks
+    app._career_tasks=career_tasks
 
     def historical_target(location_hash):
         target=history_target(location_hash)
@@ -400,7 +404,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     app.layout = html.Div([
         dcc.Store(id="dataset"), dcc.Download(id="download"),
         dcc.Store(id='historical-cache-pending',data=False),dcc.Interval(id='historical-cache-poll',interval=500,disabled=True),
-        dcc.Store(id='historical-render-scope'),dcc.Store(id='navigation-ready'),
+        dcc.Store(id='historical-render-scope'),dcc.Store(id='career-job'),
+        dcc.Interval(id='career-poll',interval=500,n_intervals=0,disabled=True),
         dcc.Store(id='nav-active'),*[dcc.Store(id='nav-'+page+suffix) for page in PAGES for suffix in ('','-active')],
         html.Div([dcc.Input(id='workspace-page',type='hidden',value='historical'),
                   dcc.Input(id='entity-type',type='hidden',value='team')],style={'display':'none'}),
@@ -719,28 +724,16 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         backtesting_monitor_layout(),
         structure_layout(),
     ], id='app-shell',className="app-shell")
-    app.layout=configure_loading(app.layout)
+    app.layout=configure_loading(configure_progressive(app.layout))
     register_navigation(app)
     register_loading(app)
     register_player_distribution(app)
+    register_progressive(app)
+    app.clientside_callback("function(page,job,sport){return page!=='historical'||!['NBA','NFL'].includes(sport)||!job?.pending;}",
+        Output('career-poll','disabled'),Input('workspace-page','value'),Input('career-job','data'),Input('sport','value'))
 
-    app.clientside_callback('''function(game,kalshi,poly,scope,kg,pg,forecast,kv,pv,models,kq,pq,schedule,previous){
-        return window.dash_clientside.market_transition.readiness(game,kalshi,poly,scope,kg,pg,forecast,kv,pv,previous,
-          {models,kq,pq,schedule});}''',
-        Output('navigation-ready','data'),Input('market-detail-context','data'),Input('kalshi-context','data'),Input('polymarket-context','data'),
-        Input('market-schedule-scope','data'),Input('kalshi-games','data'),Input('polymarket-games','data'),
-        Input('market-forecast-history','data'),Input('kalshi-rules-signature','data'),Input('polymarket-rules-signature','data'),
-        Input('kalshi-models','data'),Input('kalshi-quotes','data'),Input('polymarket-quotes','data'),Input('market-schedule','data'),State('navigation-ready','data'))
-    app.clientside_callback('function(hash,classes,previous){return window.dash_clientside.market_transition.feedback(hash,classes,previous);}',
-        Output('navigation-feedback','children'),Input('market-url','hash'),Input('app-shell','className'),State('navigation-feedback','children'))
-    app.clientside_callback('function(...args){return window.dash_clientside.market_transition.compact(...args);}',
-        Output('app-shell','className'),Input('market-url','hash'),Input('sport','value'),Input('workspace-page','value'),Input('navigation-ready','data'),
-        Input('market-snapshot','value'),Input('market-category','value'),Input('kalshi-category','value'),Input('polymarket-category','value'),
-        Input('historical-render-scope','data'),Input('market-forecast-method','value'),Input('player-forecast-method','value'),
-        Input('kalshi-snapshot','value'),Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),Input('polymarket-snapshot','value'))
-
-    app.clientside_callback('function(...args){return window.dash_clientside.market_transition.history_state(...args);}',
-        Output('historical-render-scope','data'),Input('trend','figure'),Input('career-trend','figure'),
+    app.clientside_callback('function(figure,...args){return window.dash_clientside.market_transition.history_state(figure,null,...args);}',
+        Output('historical-render-scope','data'),Input('trend','figure'),
         Input('dataset','data'),Input('entity','value'),Input('metric','value'),Input('window','value'),
         Input('player-team','value'),Input('market-url','hash'),Input('sport','value'),Input('entity-type','value'),
         Input('season','value'),Input('season-type','value'),Input('week','value'),Input('college-team','value'),
@@ -2014,8 +2007,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
 
     @scoped_callback(app,'historical',Output("career-trend", "figure"), Output("career-status", "children"),
                   Input("dataset", "data"), Input("entity", "value"), Input("metric", "value"),
-                  Input('workspace-page','value'),State('market-url','hash'),State('sport','value'))
-    def analyze_career(dataset, entity, metric,page=None,location_hash=None,sport=None):
+                  Input('workspace-page','value'),State('market-url','hash'),State('sport','value'),
+                  Input('career-poll','n_intervals'),State('career-job','data'),Input('career-retry','n_clicks'))
+    def analyze_career(dataset, entity, metric,page=None,location_hash=None,sport=None,_career_tick=None,previous_job=None,_career_retry=None):
         if page is not None and page!='historical':raise PreventUpdate
         if location_hash and not historical_route(location_hash):raise PreventUpdate
         if dataset and sport is not None and dataset.get('sport')!=sport:raise PreventUpdate
@@ -2024,16 +2018,41 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             figure.update_layout(meta={**(figure.layout.meta or {}),'career_scope':scope},
                 uirevision=f"career:{scope['sport']}:{scope['phase']}:{entity}:{metric}")
             return figure,status
+        if _career_tick is not None and (not supported_dataset(dataset) or dataset['kind']!='player' or entity is None or metric is None):
+            set_props('career-job',{'data':None})
         if not supported_dataset(dataset) or dataset["kind"] != "player" or entity is None or metric is None:
             return rendered(empty_figure("Choose a player and statistic to load career history"), "")
         try:
             frame = historical_frame(dataset)
             selected = frame[frame["entity_id"] == entity]
             if selected.empty or metric not in relevant_metrics(selected, dataset["sport"], "player"):
+                if _career_tick is not None:set_props('career-job',{'data':None})
                 return rendered(empty_figure("Choose a statistic relevant to this player"), "")
             name = str(selected.iloc[0]["entity_name"])
-            career = career_service.load(dataset["sport"], entity, name, metric, dataset.get("phase", "regular"))
+            def load_career():
+                return career_service.load(dataset['sport'],entity,name,metric,dataset.get('phase','regular')),time()
+            # Dash always supplies its poll counter. Direct analytical callers
+            # may omit it and retain the synchronous calculation contract.
+            if _career_tick is None:
+                career,_=load_career()
+            else:
+                scope=career_scope(dataset,entity,metric,location_hash)
+                key=request_key(['career-v1',scope,dataset.get('revision') or dataset.get('fetched_at'),_career_retry])
+                cached=career_tasks.peek(key)
+                result,pending,error=career_tasks.read(key,load_career,refresh=bool(cached and time()-cached[1]>=86400))
+                job=dict(job=key,scope=scope,pending=pending,status='pending' if pending else 'error' if error else 'complete',error=error)
+                if job!=previous_job:set_props('career-job',{'data':job})
+                if pending:
+                    if previous_job==job:return no_update,no_update
+                    figure=empty_figure('Loading the selected player’s career…')
+                    figure.update_layout(meta={'pending':True})
+                    return rendered(figure,'Loading career history in the background…')
+                if error:raise DataSourceError(error)
+                if result is None:raise DataSourceError('Career history is unavailable. Change selection or retry loading history.')
+                career=result[0]
         except DataSourceError as exc:
+            if _career_tick is not None:
+                set_props('career-job',{'data':dict(scope=career_scope(dataset,entity,metric,location_hash),pending=False,status='error',error=str(exc))})
             return rendered(empty_figure("Career history could not be loaded"), str(exc))
         phase_label = "Regular season" if career.phase == "regular" else "Postseason"
         status = (f"{name} · {len(career.frame)} recorded seasons · {phase_label} · "
@@ -2061,8 +2080,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     register_comparison_callbacks(app,backtesting_service)
     register_in_game_callbacks(app,in_game_service)
     register_kalshi_callbacks(app,kalshi_service,pages=exchange_pages.get('Kalshi'))
-    register_kalshi_analysis(app,kalshi_service,forecast_game_markets,forecast_player_markets,filtered_results_service,jobs=filter_jobs)
+    register_kalshi_analysis(app,kalshi_service,forecast_game_markets,forecast_player_markets,filtered_results_service,jobs=filter_jobs,tasks=market_page_tasks)
     register_kalshi_callbacks(app,polymarket_service,view=polymarket_view,provider='Polymarket',pages=exchange_pages.get('Polymarket'))
-    register_market_summary(app,schedule_service,market_services,kalshi_service,polymarket_service,forecast_game_markets,forecast_player_markets,pages=exchange_pages)
+    register_market_summary(app,schedule_service,market_services,kalshi_service,polymarket_service,forecast_game_markets,forecast_player_markets,pages=exchange_pages,tasks=market_page_tasks)
     register_filtered_results(app,filtered_results_service)
     return app
