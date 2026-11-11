@@ -89,7 +89,7 @@ class ProviderReturnChecks(TestCase):
         with (patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-quote-timer')),
               patch.object(self.f.service,'quotes',side_effect=DataSourceError('offline fixture'))):
             result=self.cb['kalshi_quotes']('kalshi','NFL',self.f.game,'Game Lines','live',1,0,5,route,None,None,previous)
-            self.assertEqual(result[0]['rows'],previous['rows'])
+            self.assertEqual(result[0]['rows'],[{**row,'quote_stale':True,'quote_fetched_at':previous['fetched_at']} for row in previous['rows']])
             self.assertFalse(result[0]['updating'])
             self.assertIn('previously loaded',result[1])
             different={**previous,'game_id':'different'}

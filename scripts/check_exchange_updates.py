@@ -147,7 +147,7 @@ class ExchangeUpdateChecks(TestCase):
                     self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                     shown=response.get_json()['response']['kalshi-market-sections']['children']
                     self.assertIn('Market odds',str(shown));self.assertIn('Market implied probability',str(shown))
-                    self.assertEqual(str(shown).count("'type': 'kalshi-comparison-row'"),12)
+                    self.assertEqual(str(shown).count("'type': 'kalshi-comparison-row'"),6)
                     self.assertFalse(forecast.done())
             finally:release.set()
             forecast.result(timeout=3)

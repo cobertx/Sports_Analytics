@@ -56,7 +56,7 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
       if(window.location.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;
       const route=window.dash_clientside.market_transition.route(hash),m=models?.context;
       const ready=route&&m?.[0]===route.sport&&String(m?.[1])===route.game&&m?.[8]===selection&&m?.[9]===method&&m?.[10]===player;
-      return !ready||models?.pending?'exchange-model-pending':'';
+      return !ready||models?.pending&&!models?.keep_visible?'exchange-model-pending':'';
     },
     career_guard: function(figure,dataset,entity,metric,hash,sport,kind) {
       if(window.location.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;

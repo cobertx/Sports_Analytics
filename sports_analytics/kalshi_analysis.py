@@ -14,6 +14,7 @@ from .availability_adjustment import note as availability_note
 from . import quick_methods
 
 FILTER = 'Mispricing Filter'
+ADAPTER_VERSION = 2
 NBA_STATS = {'PTS':'points','REB':'rebounds','AST':'assists','3PT':'threes','STL':'steals',
              'BLK':'blocks','PRA':'points_rebounds_assists','PR':'points_rebounds',
              'PA':'points_assists','RA':'rebounds_assists'}
@@ -27,12 +28,31 @@ FOOTBALL_STATS = {'PASSYDS':'pass_yds','PASSATT':'pass_attempts','PASSCOMP':'pas
 def definition(row):
     fields=('ticker','event_ticker','event_title','title','yes_label','line','strike_type',
             'cap_strike','market_type','rules_primary','rules_secondary')
-    return hashlib.sha256(json.dumps([row.get(key) for key in fields],sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([ADAPTER_VERSION,*[row.get(key) for key in fields]],sort_keys=True).encode()).hexdigest()
 
 
-def identity(game, selected, method, player_method):
+def identity(game, selected, method, player_method, *, revision=None):
     return [game['sport'],game['id'],game.get('start'),game.get('matchup_title') or game.get('title'),
-            game.get('teams'),bool(game.get('neutral',False)),POLICY_VERSION,availability_revision(game['sport']),selected,method,player_method]
+            game.get('teams'),bool(game.get('neutral',False)),POLICY_VERSION,
+            availability_revision(game['sport']) if revision is None else revision,selected,method,player_method]
+
+
+def quick_scope(game, selected, methods, player_methods):
+    """User selections stay stable while discovery and availability refresh."""
+    return [game['sport'],str(game['id']),selected,methods,player_methods]
+
+
+def model_matches(models, game, selected, method, player_method):
+    """Display completed work for the selected game/method through source refreshes.
+
+    Availability revisions invalidate the calculation cache, but cannot erase a
+    completed forecast or invalidate a job while it is still being calculated.
+    Contract definitions are checked separately for every displayed prediction.
+    """
+    context=(models or {}).get('context')
+    expected=identity(game,selected,method,player_method,revision=[])
+    return (isinstance(context,list) and len(context)==len(expected) and
+            context[:7]+context[8:]==expected[:7]+expected[8:])
 
 
 def implied(row, side):
@@ -77,6 +97,17 @@ def threshold(row):
     return math.floor(line)+.5,'Under'
 
 
+def player_subject(row):
+    """Read explicit player names from current contracts or older event titles."""
+    for text in (row.get('title',''),row.get('event_title','')):
+        match=re.fullmatch(r'([^:]+):\s*(.+)',text)
+        if (match and len(match[1].split())>=2 and
+                not re.search(r'\b(vs\.?|at|versus)\b|@',match[1],re.I) and
+                match[1].strip().casefold() not in {'full game','first half','second half'}):
+            return match[1].strip()
+    return None
+
+
 def adapter(row, sport, teams):
     if row.get('market_type') not in {None,'binary'} or row.get('cap_strike') is not None:
         return None
@@ -104,19 +135,18 @@ def adapter(row, sport, teams):
     if family=='TOTAL':return dict(base,market_key='alternate_totals',subject=side,selection=side,line=line),False
     stat=(NBA_STATS if sport=='NBA' else FOOTBALL_STATS).get(family)
     if not stat:return None
-    # Provider event titles identify the player; never infer names from ticker initials.
+    # Current feeds put the player in the contract title and the matchup in the
+    # event title. Older snapshots used a player-specific event title.
     event=row.get('event_title','')
-    match=re.fullmatch(r'([^:]+):\s*(.+)',event)
-    if not match:return None
-    subject=match[1].strip()
-    if len(subject.split())<2 or re.search(r'\b(vs|at|@)\b',subject,re.I):return None
+    subject=player_subject(row)
+    if not subject:return None
     # Exclude conditional/period targets which the full-game player models do not cover.
     if re.search(r'\b(first|last|quarter|half|combined|each|double.double|triple.double)\b',event+' '+title,re.I):return None
     return dict(base,group=row['category'],market_key='player_'+stat+'_alternate',subject=subject,selection=side,line=line),False
 
 
-def calculate(game, snapshot, selected, method, player_method, game_forecast, player_forecast, previous=None):
-    context=identity(game,selected,method,player_method)
+def calculate(game, snapshot, selected, method, player_method, game_forecast, player_forecast, previous=None, *, context=None):
+    context=context if context is not None else identity(game,selected,method,player_method)
     old=previous if previous and previous.get('context')==context else {}
     records=dict(old.get('predictions',{}))
     pending=[row for row in snapshot['rows'] if records.get(row['ticker'],{}).get('definition')!=definition(row)]
@@ -159,12 +189,13 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
                 if probability is not None and not (math.isfinite(probability) and 0<=probability<=1):probability=None
             except (ValueError,TypeError,OverflowError) as exc:detail=str(exc)
         records[row['ticker']]=dict(definition=definition(row),probability=probability,method=model,detail=detail)
-    return dict(context=identity(game,selected,method,player_method),predictions=records,errors=list(dict.fromkeys([*old.get('errors',[]),*errors])),
+    return dict(context=context,predictions=records,errors=list(dict.fromkeys([*old.get('errors',[]),*errors])),
                 history=history,cutoff=source['pulled_at'])
 
 
-def decorate(snapshot, game, selected, method, player_method, models=None, criteria=None):
-    current=models if models and models.get('context')==identity(game,selected,method,player_method) else {}
+def decorate(snapshot, game, selected, method, player_method, models=None, criteria=None, *, context=None):
+    matching=(models and models.get('context')==context) if context is not None else model_matches(models,game,selected,method,player_method)
+    current=models if matching else {}
     rows=[]
     for original in snapshot['rows']:
         row=dict(original);record=current.get('predictions',{}).get(row['ticker'],{})
@@ -215,12 +246,13 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
         groups[targets[row['ticker']]['market_key'].startswith('player_')].append(row)
     assignments=quick_methods.plan(targets.values(),methods,player_methods,prompt_methods)
     needed={method for choices in assignments.values() for method in choices}
+    revision=availability_revision(game['sport'])
     def evaluate(method, player):
         subset={**snapshot,'rows':groups[player]}
-        models=calculate(game,subset,selected,methods[0] if player else method,
-                         method if player else player_methods[0],game_forecast,player_forecast)
-        displayed=decorate(subset,game,selected,methods[0] if player else method,
-                           method if player else player_methods[0],models)
+        game_method,player_method=(methods[0],method) if player else (method,player_methods[0])
+        context=identity(game,selected,game_method,player_method,revision=revision)
+        models=calculate(game,subset,selected,game_method,player_method,game_forecast,player_forecast,context=context)
+        displayed=decorate(subset,game,selected,game_method,player_method,models,context=context)
         return rank(displayed,ALL_PROBABILITIES),models.get('errors',[])
     tasks={method:lambda method=method:evaluate(method,False) for method in GAME_METHODS if method in needed}
     tasks.update({method:lambda method=method:evaluate(method,True) for method in PLAYER_METHODS if method in needed})

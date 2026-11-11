@@ -130,7 +130,8 @@ class SummaryAnalysisChecks(TestCase):
         source['providers']['FanDuel']['snapshot']['rows']=[dict(group='Passing',market='Passing yards',market_key='player_pass_yds_alternate',
             subject='Test Quarterback',selection=side,line=200.5,odds=100) for side in ['Over','Under']]
         source['providers']['Kalshi']['snapshot']['rows']=[binary(True),{**binary(True),'ticker':'another-offering'},
-            {**binary(True),'ticker':'other-player','event_title':'Another Quarterback: Passing Yards'}]
+            {**binary(True),'ticker':'other-player','event_title':'Another Quarterback: Passing Yards',
+             'title':'Another Quarterback: Passing Yards Over 200.5'}]
         groups=comparison_rows(entries(source),'Player Props')
         player=groups['Player Props','Test Quarterback - Alt Passing Yds']
         self.assertEqual(len(player),4)

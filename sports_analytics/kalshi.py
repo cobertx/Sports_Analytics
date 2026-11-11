@@ -170,6 +170,19 @@ class KalshiService:
                 data = self.client.json(BASE + path, params=params)
                 if not isinstance(data, dict) or 'error' in data or not isinstance(data.get('events'), list):
                     raise DataSourceError('Kalshi returned an invalid market-data response.')
+                if params.get('tickers') and params.get('with_nested_markets')=='true':
+                    events=data['events']
+                    expected=set(params['tickers'].split(','))
+                    returned={event.get('event_ticker') for event in events}
+                    if returned-expected:
+                        raise DataSourceError('Kalshi returned an event outside the selected game.')
+                    if any(not isinstance(event.get('markets'),list) for event in events):
+                        raise DataSourceError('Kalshi did not include contracts for this event.')
+                    if not data.get('cursor') and not params.get('cursor') and expected-returned:
+                        raise DataSourceError('Kalshi omitted linked events from this quote refresh.')
+                    before={event.get('event_ticker'):event for event in saved['data']['events']} if saved else {}
+                    if any(not event['markets'] and before.get(event.get('event_ticker'),{}).get('markets') for event in events):
+                        raise DataSourceError('Kalshi returned an empty contract list for a previously loaded event.')
                 saved = dict(data=data, fetched_at=self.now().isoformat(timespec='milliseconds'), stale=False, notice='')
                 with closing(self._connect()) as db, db:
                     db.execute('INSERT OR REPLACE INTO responses VALUES (?,?,?)',
@@ -253,6 +266,8 @@ class KalshiService:
                 for raw in event['markets']:
                     row = contract(raw, event, sport)
                     rows[row['ticker']] = row
+            if set(batch)-{event['event_ticker'] for event in events}:
+                raise DataSourceError('Kalshi omitted linked events from this quote refresh. Previously loaded markets are retained.')
         result = dict(sport=sport, game_id=game['id'], category=selected, rows=list(rows.values()),
                       fetched_at=min(stamps), notices=list(dict.fromkeys(notices)), saved=None,updating=bool(updates))
         if save:

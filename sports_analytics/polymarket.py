@@ -17,6 +17,7 @@ from .data import DataSourceError, HttpClient
 from .kalshi import CATEGORIES, numeric, parse_time
 from .nfl_model_data import atomic_text
 from .cache_refresh import RefreshQueue
+from .polymarket_labels import market_section
 
 GAMMA = 'https://gamma-api.polymarket.com'
 CLOB = 'https://clob.polymarket.com'
@@ -260,9 +261,7 @@ class PolymarketService:
                 if tradable: tokens.update(str(t) for t in assets if t is not None)
                 kind = market.get('sportsMarketType') or 'Other markets'
                 question = market.get('question') or market.get('slug') or str(market['id'])
-                section = kind.replace('_',' ').title()
-                if selected_category in {'Player Props','Passing Props','Receiving Props','Rushing Props','Touchdowns & Scoring'}:
-                    section = question.split(':',1)[0]+' - '+section if ':' in question else question
+                section = market_section(kind,question,selected_category)
                 group_key=hashlib.sha256(section.encode()).hexdigest()[:16]
                 rows.append(dict(ticker=str(market['id']), event_ticker=str(event['id'])+'-'+group_key,
                     event_title=section, section=section, category=selected_category, title=question,sports_market_type=kind,

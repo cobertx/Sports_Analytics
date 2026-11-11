@@ -114,6 +114,15 @@ function checkMarketTransitions(source) {
   check(!screen(...historyArgs).includes('history-view-pending'),'A completed empty/error view remains visible with its source status');
   screen(...historyArgs);window.location.hash=historyArgs[0];events.hashchange();
   check(!writes.at(-1).props.className.includes('history-view-pending'),'Returning to matching retained history does not flash a placeholder');
+  const modelHash='#nfl-kalshi-game-KXNFLGAME-TEST';window.location.hash=modelHash;
+  const modelContext=['NFL','KXNFLGAME-TEST',null,null,null,false,'policy',[],'live','PPP','WHP'];
+  const guard=models=>api.model_guard(modelHash,'live','PPP','WHP',models);
+  check(guard({context:modelContext,pending:false})==='','Reveal completed probability, fair odds and edge cells');
+  check(guard({context:modelContext,pending:true})==='exchange-model-pending','Hide uncalculated cells on the first forecast');
+  check(guard({context:modelContext,pending:true,keep_visible:true})==='','Keep completed values visible during a source refresh');
+  check(api.model_guard(modelHash,'live','EPA','WHP',{context:modelContext,pending:true,keep_visible:true})==='exchange-model-pending',
+    'A method change must never reveal another method\'s probabilities');
+  window.location.hash=historyArgs[0];
   window.location.hash=historyArgs[0].replace('Player+A','Player+C');events.hashchange();
   check(writes.at(-1).props.className.includes('history-view-pending'),'Native history navigation hides the old scope before any server callback');
   const count=writes.length;delete window.dash_clientside.set_props;events.hashchange();

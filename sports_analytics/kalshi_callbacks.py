@@ -78,6 +78,8 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
                             and bool(previous.get('updating'))==bool(catalog.get('updating')))
             return (no_update if same_catalog else catalog, message, no_update if same_games else view.cards(catalog))
         except (DataSourceError, OSError, ValueError, TypeError) as exc:
+            if previous and (previous.get('sport'),previous.get('window_days'))==(sport,days):
+                return no_update, str(exc)+' Showing previously loaded games; see their timestamp.', no_update
             return dict(sport=sport, games=[]), str(exc), []
 
     @callback(Output(f'{prefix}-context', 'data'), Output(f'{prefix}-game-header', 'children'),
@@ -90,15 +92,24 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
         if not catalog or catalog.get('sport') != sport:
             return None, '', [], 'Game Lines'
         game = next((g for g in catalog['games'] if g['id'] == route[1]), None)
+        # Discovery lists only open events and may temporarily omit a live game
+        # or some linked categories. It must not tear down the game being read.
+        if previous and (previous.get('sport'),previous.get('id'))==(sport,route[1]):
+            if game is None:return (no_update,)*4
+            game={**game,'events':list(dict.fromkeys([*previous.get('events',[]),*game.get('events',[])]))}
+            if provider=='Polymarket':
+                game={**game,'categories':list(dict.fromkeys([*previous.get('categories',[]),*game.get('categories',[])]))}
         choices = view.categories(game)
         remembered=remembered_market(market_return,sport,location_hash,prefix)
         restored=remembered.get('category') if remembered else None
         if game and game == previous:
             return no_update, no_update, no_update, restored if restored in choices and restored!=selected and ctx.triggered_id in {'market-url',f'nav-{prefix}'} else no_update
         selection = selected if selected in choices and previous and previous.get('id') == route[1] else choices[0] if choices else 'Game Lines'
-        if restored in choices:selection=restored
+        if restored in choices and (not previous or previous.get('id')!=route[1] or ctx.triggered_id in {'market-url',f'nav-{prefix}'}):selection=restored
         return (game if game != previous else no_update, view.game_header(game),
-                [dcc.Tab(label=c, value=c, className='market-category-tab', selected_className='market-category-tab selected') for c in choices], selection)
+                no_update if previous and choices==view.categories(previous) else
+                [dcc.Tab(label=c, value=c, className='market-category-tab', selected_className='market-category-tab selected') for c in choices],
+                no_update if selection==selected else selection)
 
     def history_options(game, category):
         options = [dict(label='Live quotes', value='live')]
@@ -158,6 +169,26 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
             else:
                 snapshot=service.quotes(game,category,refresh=pull,save=pull)
                 if pages is not None:pages.remember(game,category,snapshot)
+            same = (previous_snapshot and (previous_snapshot.get('sport'),previous_snapshot.get('game_id'),
+                    previous_snapshot.get('category'),previous_snapshot.get('selection'))==
+                    (sport,game['id'],category,selected))
+            if not archived and same and previous_snapshot.get('rows'):
+                # A transient empty/partial response is not a market deletion.
+                # Retain missing selections explicitly marked with their old time.
+                current={row['ticker']:row for row in snapshot['rows']}
+                missing=[{**row,'quote_stale':True,'quote_fetched_at':row.get('quote_fetched_at') or previous_snapshot.get('fetched_at')}
+                         for row in previous_snapshot['rows'] if row['ticker'] not in current]
+                rows=[current.pop(row['ticker'],row) for row in previous_snapshot['rows'] if row['ticker'] in current]
+                rows.extend(current.values())
+                if missing:
+                    by_ticker={row['ticker']:row for row in [*rows,*missing]}
+                    rows=[by_ticker.pop(row['ticker']) for row in previous_snapshot['rows']]
+                    rows.extend(by_ticker.values())
+                snapshot={**snapshot,'rows':rows}
+                if missing:
+                    snapshot['notices']=[*snapshot.get('notices',[]),
+                        f'{len(missing)} selections were absent from the latest response. Previously loaded quotes remain visible with their original timestamps.']
+                    if not snapshot.get('fetched_at'):snapshot['fetched_at']=previous_snapshot.get('fetched_at')
             stamp = format_eastern(snapshot['fetched_at']) if snapshot.get('fetched_at') else 'No live quote timestamp'
             status = ('SAVED SNAPSHOT' if archived else 'PUBLIC REST QUOTES') + f" · {len(snapshot['rows'])} contracts · Fetched {stamp}."
             if snapshot.get('notices'): status += ' ' + ' '.join(snapshot['notices'])
@@ -175,7 +206,8 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
             same=(previous_snapshot and (previous_snapshot.get('sport'),previous_snapshot.get('game_id'),
                 previous_snapshot.get('category'),previous_snapshot.get('selection'))==(sport,game['id'],category,selected))
             snapshot={**(previous_snapshot if same else {}),'sport':sport,'game_id':game['id'],'category':category,
-                'rows':previous_snapshot.get('rows',[]) if same else [],'selection':selected,
+                'rows':[{**row,'quote_stale':True,'quote_fetched_at':row.get('quote_fetched_at') or previous_snapshot.get('fetched_at')}
+                        for row in previous_snapshot.get('rows',[])] if same else [],'selection':selected,
                 'error':str(exc),'updating':False,'page_pending':False}
             if same and snapshot['rows']:message+=' Showing previously loaded quotes; see their timestamp.'
             return snapshot, message, no_update, no_update

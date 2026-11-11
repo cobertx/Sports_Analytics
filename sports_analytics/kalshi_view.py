@@ -21,6 +21,7 @@ from .prompt_history import button as history_button
 from .lazy_markets import markets as lazy_markets
 from .market_structure_link import button as structure_button
 from .loading import indicator
+from .kalshi_labels import selection, selection_rows
 
 MULTIWORD_MASCOTS = {'Crimson Tide', 'Sun Devils', 'Red Wolves', 'Black Knights', 'Golden Bears',
     'Blue Devils', 'Yellow Jackets', 'Fighting Illini', "Ragin' Cajuns", 'Golden Gophers',
@@ -139,7 +140,8 @@ def layout(provider='Kalshi'):
         dcc.Store(id=f'{prefix}-games'), dcc.Store(id=f'{prefix}-context'), dcc.Store(id=f'{prefix}-quotes'),
         dcc.Store(id=f'{prefix}-rules-signature'),
         *([dcc.Store(id='kalshi-models'),dcc.Store(id='kalshi-applied-criteria'),
-           dcc.Store(id='kalshi-filter-quotes'), dcc.Store(id='kalshi-quick-scan')] if not polymarket else []),
+           dcc.Store(id='kalshi-filter-quotes'), dcc.Store(id='kalshi-quick-scan'),
+           dcc.Store(id='kalshi-quick-state')] if not polymarket else []),
         dcc.Interval(id=f'{prefix}-list-timer', interval=60000, disabled=True),
         dcc.Interval(id=f'{prefix}-quote-timer', interval=5000, disabled=True),
         dcc.Store(id=f'{prefix}-cache-state'),dcc.Interval(id=f'{prefix}-cache-poll',interval=1500,disabled=True),
@@ -310,16 +312,20 @@ def odds_text(probability):
 
 def comparison_rows(row,snapshot=None,provider='Kalshi'):
     polymarket=provider=='Polymarket'
+    formatter=selection
+    if polymarket:
+        from .polymarket_labels import selection as formatter
     result=[]
-    for side in ('yes','no'):
+    for side in ((row['_display_side'],) if '_display_side' in row else ('yes','no')):
         probability=row.get(side+'_probability');market=implied(row,side)
         edge=probability-market if probability is not None and market is not None else None
         label=row.get(side+'_label') or side.title()
         result.append(html.Div([
-            html.Div([html.Span(row['title']+' — '+(label if polymarket else side.title()),className='market-selection'),
-                      html.Small(label,className='kalshi-outcome-labels') if not polymarket else None,
+            html.Div([html.Span(row.get('_display_label') or formatter(row,side,snapshot)[0],className='market-selection'),
+                      html.Small('Previously loaded quote · '+str(row.get('quote_fetched_at') or 'timestamp unavailable'),
+                                 className='kalshi-outcome-labels') if row.get('quote_stale') else None,
                       history_button(snapshot or {},row,provider,side),structure_button(snapshot or {},row,provider,side)],
-                     title=f"{row['ticker']} · Payout/notional ${row['notional']:g} · {row['status']}"),
+                     title=f"{row['title']} · {side.title()}: {label} · {row['ticker']} · Payout/notional ${row['notional']:g} · {row['status']}"),
             html.Span(odds_text(market),className='market-price kalshi-price',
                       title='American odds equivalent of this outcome’s quoted buying price / payout, before fees.'),
             html.Span(probability_text(market),className='market-probability'),
@@ -337,7 +343,7 @@ def comparison_rows(row,snapshot=None,provider='Kalshi'):
 
 
 def market_body(rows,snapshot,provider,count):
-    return html.Div([html.Div(comparison_rows(row,snapshot,provider),className='kalshi-contract',key=row['ticker'])
+    return html.Div([html.Div(comparison_rows(row,snapshot,provider),className='kalshi-contract',key=row['ticker']+'-'+row.get('_display_side','both'))
                      for row in rows[:count]],className='market-outcomes')
 
 
@@ -350,7 +356,7 @@ def market_sections(snapshot, provider='Kalshi', *,lazy=True,view_id=None):
                       'No contracts are available in this category.',className='saved-market-empty',role='status')
 
     def outcome(row):
-        return html.Div(comparison_rows(row,snapshot,provider),className='kalshi-contract',key=row['ticker'])
+        return html.Div(comparison_rows(row,snapshot,provider),className='kalshi-contract',key=row['ticker']+'-'+row.get('_display_side','both'))
 
     sections = []
     view=(view_id or lazy_markets.view()) if lazy else None
@@ -358,7 +364,10 @@ def market_sections(snapshot, provider='Kalshi', *,lazy=True,view_id=None):
     for index,(event,rows) in enumerate(groups.items()):
         family = event.split('-',1)[0].removeprefix('KX'+snapshot['sport'])
         title = rows[0].get('section') or names.get(family) or (rows[0]['event_title'] or rows[0]['title']).replace(':',' -',1)
-        rows = market_rows(rows)
+        if polymarket:
+            from .polymarket_labels import section_title
+            title=section_title(title)
+        rows = selection_rows(rows,snapshot,provider)
         # Stable keys and unchanged open props preserve native accordion state
         # while live quote values update, including the nested "Show more" list.
         sections.append(html.Details([
@@ -373,7 +382,9 @@ def market_sections(snapshot, provider='Kalshi', *,lazy=True,view_id=None):
                 html.Details([html.Summary('Show more'),html.Div([outcome(row) for row in rows[6:]])],
                     className='more-market-lines',open=False) if not lazy and len(rows)>6 else None,
             ],className='kalshi-market-lines'),
-        ],id='kalshi-section-'+event,key=event,open=index<2,className='sportsbook-market kalshi-market'))
+        ],id='kalshi-section-'+event,key=event,open=index<2,className='sportsbook-market kalshi-market',
+            **{'data-market-scope':'|'.join([provider,snapshot['sport'],snapshot['game_id'],snapshot['category'],
+                                           str((snapshot.get('view_scope') or ['live'])[0])])}))
     return sections
 
 
@@ -385,7 +396,8 @@ def table(snapshot, include_rules=True, provider='Kalshi', *, build_rows=True, b
             row = dict(original)
             for key in ['yes_bid', 'yes_ask', 'no_bid', 'no_ask', 'last_price']:
                 row[key] = 100 * original[key] if original.get(key) is not None else None
-            row['quote_fetched_at'] = (snapshot or {}).get('fetched_at')
+            row['quote_fetched_at'] = original.get('quote_fetched_at') or (snapshot or {}).get('fetched_at')
+            row['quote_stale'] = bool(original.get('quote_stale'))
             rows.append(row)
         if build_tooltips:
             detail = f"{original['rules_primary']}\n{original['rules_secondary']}\nContract payout/notional: ${original['notional']:g}"

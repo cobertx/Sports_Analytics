@@ -10,7 +10,9 @@ DYNAMIC = (*PRICES,'volume','volume_24h','open_interest','yes_bid_size','yes_ask
            'metadata_updated','metadata_fetched_at','yes_book_timestamp','no_book_timestamp',
            'yes_implied','no_implied','yes_probability','no_probability','yes_edge','no_edge',
            'yes_match','no_match','model_method','model_detail')
-VISIBLE = {'yes_ask','no_ask','yes_probability','no_probability','yes_match','no_match','model_method','model_detail'}
+DYNAMIC += ('quote_stale','quote_fetched_at')
+VISIBLE = {'yes_ask','no_ask','yes_probability','no_probability','yes_match','no_match','model_method','model_detail',
+           'quote_stale','quote_fetched_at'}
 
 
 def assign(patch, path, value):
@@ -48,15 +50,15 @@ def render(snapshot, previous=None, *, table_open=False, rules_open=False, provi
         changed_rows = {index for index,value in enumerate(values) if value!=before[index]}
         if changed_rows:
             patch=Patch()
-            indices={id(row):index for index,row in enumerate(rows)}
+            indices={row['ticker']:index for index,row in enumerate(rows)}
             for group,group_rows in enumerate(view.market_groups(snapshot).values()):
-                ordered=view.market_rows(group_rows)
+                ordered=view.selection_rows(group_rows,snapshot,provider)
                 lazy=len(ordered)>6 or group>=2
                 count=lazy_markets.update(lazy_view,group,lambda limit,ordered=ordered:
                     view.market_body(ordered,snapshot,provider,limit)) if lazy else len(ordered)
                 for offset,row in enumerate(ordered):
                     if lazy and (count is None or offset>=count):continue
-                    index=indices[id(row)]
+                    index=indices[row['ticker']]
                     if index not in changed_rows: continue
                     fields={key for key,old,new in zip(DYNAMIC,before[index],values[index]) if old!=new}
                     if not fields & VISIBLE: continue
@@ -70,9 +72,12 @@ def render(snapshot, previous=None, *, table_open=False, rules_open=False, provi
             for index,row in enumerate(rows):
                 for field,old,new in zip(DYNAMIC,before[index],values[index]):
                     if old!=new:
-                        patch[index][field]=100*new if field in PRICES and new is not None else new
+                        value=100*new if field in PRICES and new is not None else new
+                        if field=='quote_fetched_at':value=new or snapshot.get('fetched_at')
+                        if field=='quote_stale':value=bool(new)
+                        patch[index][field]=value
                 if snapshot.get('fetched_at')!=previous.get('fetched_at'):
-                    patch[index]['quote_fetched_at']=snapshot.get('fetched_at')
+                    patch[index]['quote_fetched_at']=row.get('quote_fetched_at') or snapshot.get('fetched_at')
             if patch.to_plotly_json()['operations']: table=patch
     state=dict(context=[snapshot['sport'],snapshot['game_id'],snapshot['category']],
                view_scope=snapshot.get('view_scope'),

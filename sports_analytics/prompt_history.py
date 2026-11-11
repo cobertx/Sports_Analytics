@@ -124,7 +124,12 @@ def exchange_target(snapshot,row,provider,side='yes'):
                 if not stat or not name:return None
                 target.update(kind='player',name=name,market='player_'+stat)
     if target['kind']=='player' and not stat_spec(sport,target['market']):return None
-    target['prompt']=row['title']+' · '+(side.title() if provider=='Kalshi' else row[side+'_label'])
+    if provider=='Kalshi':
+        from .kalshi_labels import selection
+        target['prompt']=selection(row,side,snapshot)[0]
+    else:
+        from .polymarket_labels import selection
+        target['prompt']=selection(row,side,snapshot)[0]
     target['origin']=f'#{sport.lower()}-{provider.lower()}-game-'+str(snapshot['game_id'])
     return target
 

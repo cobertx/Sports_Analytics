@@ -239,9 +239,10 @@ class KalshiChecks(TestCase):
         expand_sections(sections)
         outcomes=[c for c in components(sections) if getattr(c,'className',None)=='market-outcome market-line-comparison']
         self.assertEqual(len(outcomes),2*len(snapshot['rows']))
-        self.assertEqual(outcomes[-16].children[0].children[0].children,'Over 0.5 points — Yes')
-        prices=[c for c in components(outcomes[-16:-14]) if getattr(c,'className',None)=='market-price kalshi-price']
-        self.assertEqual([p.children for p in prices],['-104','+∞'])
+        labels=[outcome.children[0].children[0].children for outcome in outcomes[-16:]]
+        self.assertEqual(labels,[f'{side} {i+.5:g}' for side in ('Under','Over') for i in range(8)])
+        prices=[outcome.children[1].children for outcome in outcomes[-16:]]
+        self.assertEqual(prices,['+∞']*8+['-104']*8)
         self.assertIn('Market odds',str(sections));self.assertIn('Market implied probability',str(sections))
         more=[c for c in components(sections) if getattr(c,'className',None)=='market-load-more']
         self.assertEqual(len(more),1);self.assertEqual(more[0].style,{'display':'none'})

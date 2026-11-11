@@ -19,11 +19,15 @@ class LazyMarkets:
         return key
 
     def exists(self,view):
-        with self.lock:return view in self.views
+        with self.lock:
+            if view not in self.views:return False
+            self.views.move_to_end(view)
+            return True
 
     def update(self,view,section,render):
         with self.lock:
             if view not in self.views or section not in self.views[view]:return None
+            self.views.move_to_end(view)
             old=self.views[view][section]
             self.views[view][section]=(render,*old[1:])
             return old[4]
