@@ -50,9 +50,11 @@ def aggregate_team_games(frame):
                 or (pair.pts <= 0).any() or a.pts == b.pts):
             continue
         for own, opponent in ((a, b), (b, a)):
+            available=(pd.to_datetime(pair['available_at'],utc=True).max() if 'available_at' in pair else
+                       own.event_date.normalize()+pd.Timedelta(days=2))
             rows.append({"game_id": str(game_id), "team": own.team, "opponent": opponent.team,
                          "event_date": own.event_date.isoformat(),
-                         "available_at": (own.event_date.normalize() + pd.Timedelta(days=2)).isoformat(),
+                         "available_at": available.isoformat(),
                          "points": float(own.pts), "points_allowed": float(opponent.pts),
                          "possessions": possessions, "is_home": int(own.team == home)})
     if not rows:
@@ -88,7 +90,7 @@ class NbaModelData:
                 "source_fetched_at":dataset.fetched_at,"cache_key":dataset.key,
                 "games":prepared.game_id.nunique(),"sha256":hashlib.sha256(destination.read_bytes()).hexdigest(),
                 "possessions":"mean of both teams' FGA + 0.44*FTA - OREB + TOV; includes overtime",
-                "availability":"game UTC date + 2 days; conservative completion lag"}
+                "availability":"Observed source availability; legacy rows use UTC game date + 2 days"}
             atomic_text(metadata,json.dumps(manifest,indent=2))
             self._prepared[key]=(prepared.copy(deep=True),self._revisions([destination,metadata]))
             self._prepared.move_to_end(key)
@@ -96,14 +98,19 @@ class NbaModelData:
             return prepared
 
     def prepare(self, seasons, refresh=False):
+        from .history_freshness import active_season, active_phases
         frames, notices = [], []
         for season in seasons:
             for phase in ("regular", "postseason"):
                 query = Query("NBA", season, "team", phase)
                 try:
                     dataset = self.service.load(query, refresh=refresh)
+                    if dataset.status=='stale cache':
+                        if season>=active_season('NBA') and phase in active_phases('NBA'):
+                            raise DataSourceError('Current NBA team results could not be refreshed. '+dataset.notice)
                     prepared = self._prepare_dataset(dataset,query)
                 except (DataSourceError, ValueError) as exc:
+                    if season>=active_season('NBA') and phase in active_phases('NBA'):raise
                     notices.append(f"NBA {season} {phase} unavailable: {exc}")
                     continue
                 if dataset.notice:

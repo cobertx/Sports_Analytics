@@ -64,7 +64,7 @@ def comparison(target,invert,side,provider,sport,teams):
     if not spread and target['selection'] not in {'Over','Under'}:return None
     line=target.get('line')
     if not isinstance(line,(int,float)) or not math.isfinite(line):return None
-    subject=team_identity(target['subject'],sport)['name'] if spread else target['subject'] if player else ''
+    subject=team_identity(target['subject'],sport)['name'] if spread or key=='team_totals' else target['subject'] if player else ''
     boundary=-line if spread else line
     compare='gt' if spread or target['selection']=='Over' else 'lt'
     push=provider=='FanDuel' and float(line).is_integer()
@@ -81,8 +81,9 @@ def comparison(target,invert,side,provider,sport,teams):
         compare='gt' if compare in {'gt','ge'} else 'lt'
     category='Player Props' if player else 'Game Lines'
     market=MARKET_NAMES.get(key+'_alternate',MARKET_NAMES.get(key,(key.replace('_',' ').title(),)))[0]
-    group=subject+' - '+market if player else 'Spread / Winner' if spread else 'Game Total'
+    group=subject+' - '+market if player else subject+' - Team total' if key=='team_totals' else 'Spread / Winner' if spread else 'Game Total'
     label=f'{subject} {-boundary:+g}' if spread else f'{"Over" if compare=="gt" else "Under"} {boundary:g}'
+    if key=='team_totals':label=subject+' '+label
     return dict(key=[category,key,' '.join(subject.casefold().split()),boundary,compare,push],
                 category=category,group=group,label=label,line=-boundary if spread else boundary,
                 note=f'Push at {line:g}' if push else '')
@@ -108,7 +109,8 @@ def entries(bundle):
             if target:
                 market=MARKET_NAMES.get(key,(key.replace('alternate_','').replace('_',' ').title(),))[0]
                 group=(target['subject']+' - '+market if player else
-                       target['subject']+' - Spread / Winner' if key=='alternate_spreads' else 'Game Total')
+                       target['subject']+' - Spread / Winner' if key=='alternate_spreads' else
+                       target['subject']+' - Team total' if key=='team_totals' else 'Game Total')
                 category='Player Props' if player else 'Game Lines'
             else:
                 group=row.get('event_title') or row.get('market') or row.get('title') or 'Other markets'

@@ -20,6 +20,8 @@ from .nba_markets import NBA_TEAM_CODES
 from .nfl_markets import NFL_TEAM_CODES
 from .page_cache import forecast_revision
 
+OVERLAY_VERSION = 2
+
 
 def club(value, sport):
     codes = NBA_TEAM_CODES if sport == 'NBA' else NFL_TEAM_CODES
@@ -191,7 +193,7 @@ class AvailabilityAdjuster:
         self.lock = RLock(); self.cache = OrderedDict(); self.input_cache = OrderedDict()
 
     def revision(self, sport):
-        return [VERSION, self.store.revision(sport), forecast_revision(self.repository, sport),
+        return [VERSION, OVERLAY_VERSION, self.store.revision(sport), forecast_revision(self.repository, sport),
                 [(str(p),p.stat().st_size,p.stat().st_mtime_ns) for p in sorted(self.nfl_directory.glob('snap_counts_*.csv'))]]
 
     def _inputs(self, snapshot, cutoff):
@@ -281,6 +283,9 @@ class AvailabilityAdjuster:
     def _game(self,snapshot,result,games,ledger,outs,cutoff,info):
         sport = snapshot['sport']
         variance_margin = variance_total = 0.
+        try:covariance = np.asarray(result.diagnostics.get('score_covariance'),dtype=float)
+        except (ValueError,TypeError):covariance = np.asarray(None,dtype=float)
+        covariance = covariance.copy() if covariance.shape==(2,2) and np.isfinite(covariance).all() else None
         for side, other in (('home','away'),('away','home')):
             team = club(snapshot[side+'_team'],sport)
             reports = [r for r in outs if club(r.get('team_code') or r['team'],sport)==team]
@@ -293,11 +298,16 @@ class AvailabilityAdjuster:
             setattr(result,side+'_mean',float(after[0])); setattr(result,other+'_mean',float(after[1]))
             variance_margin += max(0.,float(np.array([1,-1]) @ effect.covariance @ np.array([1,-1])))
             variance_total += max(0.,float(np.ones(2) @ effect.covariance @ np.ones(2)))
+            if covariance is not None:
+                # Effect coordinates are own/opponent; the forecast covariance
+                # is always home/away, including when an away player is absent.
+                covariance += effect.covariance if side=='home' else effect.covariance[::-1,::-1]
             info['applied'].append(dict(team=team,**effect.evidence,
                 description=f'{team} scoring {before[0]:.2f} → {after[0]:.2f}, opponent scoring {before[1]:.2f} → {after[1]:.2f} points',
                 score_change=(after-np.asarray(before)).tolist()))
         result.margin_sd = math.sqrt(result.margin_sd**2+variance_margin)
         result.total_sd = math.sqrt(result.total_sd**2+variance_total)
+        if covariance is not None:result.diagnostics['score_covariance']=covariance.tolist()
 
     def _players(self,snapshot,result,players,games,ledger,outs,cutoff,info):
         sport = snapshot['sport']

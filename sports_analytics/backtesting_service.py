@@ -431,6 +431,8 @@ class BacktestingService:
                     percent=min(99,int(100*done/total)) if total else 0)
         def work():
             try:
+                updater=getattr(self,'history_updater',None)
+                if updater is not None:updater.refresh_for_analysis(parameters['sport'])
                 run_parameters=dict(parameters)
                 if parameters.get('sport')=='NBA' and parameters.get('group')=='game-outcome':
                     run_parameters.setdefault('prepare_history',True)

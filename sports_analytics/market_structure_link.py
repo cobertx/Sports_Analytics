@@ -31,6 +31,7 @@ def reference(snapshot, row, provider='FanDuel', side='yes'):
     # comparison treats game spread keys specially, including winner markets.
     if spread:
         adapted['market_key'] = 'alternate_spreads'
+    if target['market']=='team_total':adapted['market_key']='team_totals'
     result = comparison(adapted, False, 'yes', 'Kalshi', sport, teams)
     if result and target['market'] == 'team_total':
         result['key'][2] = team_identity(target['name'], sport)['name'].casefold()

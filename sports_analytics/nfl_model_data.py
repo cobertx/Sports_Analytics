@@ -7,9 +7,11 @@ to invent team plays. The CSV and its source manifest can be reused by models.
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import re
 import hashlib
 import json
 import tempfile
+from collections.abc import Mapping
 
 import pandas as pd
 
@@ -163,19 +165,30 @@ class NflModelData:
         self._source_notices = []
 
     def _source(self, name, url, refresh=False):
+        from .history_freshness import active_season, source_fresh
         path = self.directory / "raw" / name
         metadata = path.with_suffix(".source.json")
+        years=re.findall(r'(20\d{2})',name)
+        season=int(years[-1]) if years else active_season('NFL')
+        previous=json.loads(metadata.read_text()) if metadata.exists() else {}
         if path.exists() and metadata.exists() and not refresh:
-            age = datetime.now(timezone.utc) - datetime.fromisoformat(json.loads(metadata.read_text())["fetched_at"])
-            if age < timedelta(hours=24):
+            if source_fresh(path,'NFL',season,fetched_at=json.loads(metadata.read_text())["fetched_at"]):
                 return path
         try:
-            response = self.client.get(url)
+            headers={key:value for key,value in [('If-None-Match',previous.get('etag')),
+                     ('If-Modified-Since',previous.get('last_modified'))] if value}
+            response = self.client.get(url,headers=headers) if headers else self.client.get(url)
         except DataSourceError:
+            if season>=active_season('NFL'):
+                raise DataSourceError(f'Current NFL {name} could not be refreshed; analysis requires current source data.')
             if path.exists() and metadata.exists():
                 self._source_notices.append(f"Saved {name} used after a source refresh failed.")
                 return path
             raise
+        if getattr(response,'status_code',200)==304 and path.exists():
+            previous['fetched_at']=datetime.now(timezone.utc).isoformat()
+            atomic_text(metadata,json.dumps(previous,indent=2))
+            return path
         content = response.content
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
@@ -191,11 +204,15 @@ class NflModelData:
         finally:
             if temporary:
                 temporary.unlink(missing_ok=True)
+        response_headers=getattr(response,'headers',{})
+        response_headers=response_headers if isinstance(response_headers,Mapping) else {}
         atomic_text(metadata, json.dumps({"url": url, "fetched_at": datetime.now(timezone.utc).isoformat(),
-                                          "sha256": hashlib.sha256(content).hexdigest()}, indent=2))
+            "sha256": hashlib.sha256(content).hexdigest(),'etag':response_headers.get('ETag'),
+            'last_modified':response_headers.get('Last-Modified')}, indent=2))
         return path
 
     def prepare(self, seasons, refresh=False):
+        from .history_freshness import active_season, source_fresh
         seasons = sorted(set(seasons))
         if not seasons or any(not isinstance(year, int) or year < 2012 or year > datetime.now().year for year in seasons):
             raise ValueError("Choose NFL model seasons from 2012 through the current year.")
@@ -208,8 +225,7 @@ class NflModelData:
             manifest_path = prepared.with_suffix(".manifest.json")
             if prepared.exists() and manifest_path.exists() and not refresh:
                 manifest = json.loads(manifest_path.read_text())
-                age = datetime.now(timezone.utc) - datetime.fromisoformat(manifest["prepared_at"])
-                if manifest.get("version") == VERSION and age < timedelta(hours=24):
+                if manifest.get("version") == VERSION and source_fresh(prepared,'NFL',year,fetched_at=manifest['prepared_at']):
                     frames.append(pd.read_csv(prepared, dtype={"game_id": str}))
                     continue
             try:
@@ -221,7 +237,17 @@ class NflModelData:
                 box = pd.read_csv(box_path, dtype={"game_id": str}, low_memory=False)
                 snaps = pd.read_csv(snap_path, dtype={"game_id": str}, low_memory=False)
                 frame = aggregate_team_games(pbp, schedule[schedule["season"].eq(year)], box, snaps)
+                if year>=active_season('NFL') and 'result' in schedule:
+                    finals=schedule[schedule.season.eq(year)&pd.to_numeric(schedule.result,errors='coerce').notna()]
+                    if 'game_type' in finals:finals=finals[finals.game_type.ne('PRE')]
+                    if not set(finals.game_id.astype(str))<=set(frame.game_id.astype(str)):
+                        raise DataSourceError('NFL play-by-play inputs are missing completed games; current estimates will wait for published results.')
+                frame['available_at']=pd.to_datetime(frame.available_at,utc=True).clip(upper=pd.Timestamp.now(tz='UTC')).map(lambda t:t.isoformat())
+                if prepared.exists():
+                    from .history_freshness import retain_first_availability
+                    frame=retain_first_availability(frame,pd.read_csv(prepared,dtype={'game_id':str}),['game_id','team'])
             except DataSourceError as exc:
+                if year>=active_season('NFL'):raise
                 if prepared.exists():
                     frame = pd.read_csv(prepared, dtype={"game_id": str})
                     notices.append(f"{year}: saved modeling data used after a source error. {exc}")

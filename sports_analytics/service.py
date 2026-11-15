@@ -18,6 +18,7 @@ import pandas as pd
 from .data import DataSourceError, Query, SOURCES, fetch
 from .cache_refresh import RefreshQueue
 from .frame_cache import FrameCache
+from .history_freshness import ACTIVE_REFRESH_SECONDS, active_season
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE_VERSION = 1
@@ -83,7 +84,7 @@ class DataService:
 
     def fresh(self,query,cached):
         ttl=self.ttl_hours*3600
-        if query.sport=='NBA' and query.season>=date.today().year-(date.today().month<7):ttl=min(ttl,15*60)
+        if query.season>=active_season(query.sport):ttl=min(ttl,ACTIVE_REFRESH_SECONDS)
         age=datetime.now(timezone.utc)-datetime.fromisoformat(cached.fetched_at)
         return 0<=age.total_seconds()<ttl and self.compatible(query,cached)
 
@@ -132,6 +133,23 @@ class DataService:
             raise
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         source = frame.attrs.get("source", SOURCES[query.sport][0])
+        if cached is not None and cached.source==source and 'game_id' in cached.frame:
+            columns=['game_id','entity_id'] if 'entity_id' in frame and 'entity_id' in cached.frame else ['game_id']
+            before=set(cached.frame[columns].astype(str).itertuples(index=False,name=None))
+            after=set(frame[columns].astype(str).itertuples(index=False,name=None))
+            if not before<=after:
+                return replace(cached,status='stale cache',notice='The source returned an incomplete game history; the last valid dataset was preserved.')
+        # Complete box scores are known no later than this successful retrieval.
+        # Preserve older conservative proxies, while admitting newly published
+        # finals without an artificial overnight delay.
+        if 'available_at' not in frame:
+            dates=pd.to_datetime(frame.event_date,utc=True,errors='coerce',format='mixed')
+            proxy=(dates+pd.Timedelta(hours=8)).where(dates.ne(dates.dt.normalize()),dates+pd.Timedelta(days=1))
+            frame['available_at']=proxy.clip(upper=pd.Timestamp(stamp))
+        if cached is not None:
+            from .history_freshness import retain_first_availability
+            keys=['game_id','entity_id'] if 'entity_id' in frame else ['game_id']
+            frame=retain_first_availability(frame,cached.frame,keys)
         payload = zlib.compress(frame.to_json(orient="table", date_format="iso", index=False).encode())
         with self.connect() as db:
             db.execute("INSERT OR REPLACE INTO datasets VALUES (?, ?, ?, ?, ?)",

@@ -4,6 +4,29 @@ import re
 from .kalshi_analysis import threshold,player_subject,NBA_STATS,FOOTBALL_STATS
 
 
+def player_market(row, sport):
+    family=row['event_ticker'].split('-',1)[0].removeprefix('KX'+sport).removesuffix('PROT')
+    return (family in (NBA_STATS if sport=='NBA' else FOOTBALL_STATS) or
+            row.get('category') in {'Player Props','Passing Props','Receiving Props','Rushing Props'})
+
+
+def stat_label(stat):
+    from .market_view import MARKET_NAMES
+    return MARKET_NAMES.get('player_'+stat+'_alternate',MARKET_NAMES.get('player_'+stat,('',stat.replace('_',' ').title())))[1]
+
+
+def player_stat(row, sport):
+    """Keep the statistic on each selection, independently of its accordion."""
+    family=row['event_ticker'].split('-',1)[0].removeprefix('KX'+sport).removesuffix('PROT')
+    stat=(NBA_STATS if sport=='NBA' else FOOTBALL_STATS).get(family)
+    if stat:return stat_label(stat)
+    special={'STOCK':'Steals + Blocks','2D':'Double Double','DD':'Double Double','3D':'Triple Double'}
+    if family in special:return special[family]
+    event=row.get('event_title') or ''
+    detail=event.split(':',1)[1].strip() if ':' in event else ''
+    return detail if detail and not re.search(r'\d|\b(over|under|at least)\b',detail,re.I) else ''
+
+
 def selection(row, side, snapshot=None):
     """Return (label, ladder group, numeric line) for one actual contract side."""
     snapshot = snapshot or {}
@@ -47,17 +70,18 @@ def selection(row, side, snapshot=None):
     if strike and not family.endswith(('GAME', 'SPREAD')):
         line, direction = strike
         direction = direction if side == 'yes' else ('Under' if direction == 'Over' else 'Over')
-        event = row.get('event_title', '')
+        event = row.get('event_title') or ''
         # Keep player/team/period context when the provider puts it in the title.
         subject = event.split(':', 1)[0].strip() if ':' in event else ''
-        if family in (NBA_STATS if sport=='NBA' else FOOTBALL_STATS):subject=player_subject(row) or ''
+        if player_market(row,sport):subject=player_subject(row) or ''
         if re.search(r'\s(?:at|vs\.?|versus|@)\s', subject, re.I):
             subject = ''
         if family.endswith('TEAMTOTAL') and not subject:
             match = re.match(r'^(.+?)\s+(?:over|under|scores?)\b', yes, re.I)
             if match:subject = match[1].strip()
-        context = (subject + ' ') if subject else ''
-        return f'{context}{direction} {line:g}', context + direction, line
+        context = (subject + ' ') if subject else ('Player not identified · ' if player_market(row,sport) else '')
+        stat=player_stat(row,sport) if player_market(row,sport) else ''
+        return f'{context}{direction} {line:g}'+(' '+stat if stat else ''), context + direction, line
     # Preserve unusual settlement wording; never invent an opposite team/range.
     if side == 'yes':
         label = yes if yes.casefold() != 'yes' else title

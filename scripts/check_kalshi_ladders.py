@@ -11,6 +11,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update,Patch
 from sports_analytics.data import DataSourceError
 from sports_analytics.kalshi_labels import selection,selection_rows
+from sports_analytics import kalshi_view as view
 from sports_analytics.exchange_render import render
 from sports_analytics.lazy_markets import LazyMarkets
 import check_kalshi as fixtures
@@ -59,7 +60,7 @@ class KalshiLadderChecks(TestCase):
 
     def test_player_team_total_and_unknown_contracts_keep_context_and_rules(self):
         player=dict(self.total(20,'greater_or_equal','PASSYDS'),event_title='Player One: Passing yards')
-        self.assertEqual(selection(player,'yes',self.snapshot)[0],'Player One Over 19.5')
+        self.assertEqual(selection(player,'yes',self.snapshot)[0],'Player One Over 19.5 Passing Yards')
         team=dict(self.total(20.5,family='TEAMTOTAL'),event_title='Pittsburgh: Team points')
         self.assertEqual(selection(team,'no',self.snapshot)[0],'Pittsburgh Under 20.5')
         unknown=dict(player,cap_strike=30,strike_type='between',yes_label='20 to 30 yards',no_label='No')
@@ -68,6 +69,24 @@ class KalshiLadderChecks(TestCase):
         winner=dict(self.snapshot['rows'][0],no_label='No')
         self.assertEqual(selection(winner,'yes',self.snapshot)[0],'Pittsburgh Steelers')
         self.assertEqual(selection(winner,'no',self.snapshot)[0],'New Orleans Saints')
+
+    def test_each_player_selection_names_its_stat_including_combinations_and_refreshes(self):
+        cases=[('AST','Anthony Black',5.5,'Assists'),('PTS','Franz Wagner',29.5,'Points'),
+               ('REB','Franz Wagner',5.5,'Rebounds'),('PRA','Franz Wagner',29.5,'Points + Rebounds + Assists'),
+               ('3PT','Anthony Black',.5,'Threes'),('REBPROT','Anthony Black',5.5,'Rebounds')]
+        rows=[]
+        for family,name,line,stat in cases:
+            row=dict(self.total(line),event_ticker='KXNBA'+family+'-TEST',ticker='KXNBA'+family+'-PLAYER',
+                event_title='Orlando vs Utah: '+stat,title=f'{name}: {line}+',yes_label=f'{name}: {line}+',category='Player Props')
+            rows.append(row)
+            for side,direction in [('yes','Over'),('no','Under')]:
+                self.assertEqual(selection(row,side,dict(sport='NBA'))[0],f'{name} {direction} {line:g} {stat}')
+        snapshot=dict(sport='NBA',game_id='KXNBAGAME-TEST',category='Player Props',rows=rows)
+        before=render(snapshot);expand_sections(before[3])
+        revised=deepcopy(snapshot)
+        for row in revised['rows']:row.update(yes_ask=.7,yes_probability=.8,no_probability=.2,model_method='WHP')
+        after=render(revised,before[-1])
+        self.assertEqual(apply_patch(before[3],after[3]),normalized(expand_sections(view.market_sections(revised))))
 
     def test_price_patch_updates_the_separate_ladders_including_expanded_rows(self):
         snapshot=dict(self.snapshot,rows=[self.total(n+.5) for n in range(10)])

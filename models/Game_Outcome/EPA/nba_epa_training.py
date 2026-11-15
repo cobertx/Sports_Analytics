@@ -141,7 +141,8 @@ def reconcile_game(possessions, events, box):
     for team, other in [(int(h.entity_id), int(a.entity_id)), (int(a.entity_id), int(h.entity_id))]:
         own, opposing = totals[team], totals[other]
         rows.append({"game_id": str(h.game_id), "team": str(ids[team].team), "opponent": str(ids[other].team),
-                     "event_date": date.isoformat(), "available_at": (date.normalize()+pd.Timedelta(days=2)).isoformat(),
+                     "event_date": date.isoformat(), "available_at": (pd.to_datetime(box.available_at,utc=True).max()
+                        if 'available_at' in box else date.normalize()+pd.Timedelta(days=2)).isoformat(),
                      "is_home": int(team == int(h.entity_id)), "points": float(ids[team].pts),
                      "points_allowed": float(ids[other].pts), "possessions": shared_pace,
                      "offensive_possessions": own["count"], "defensive_possessions": opposing["count"],
@@ -161,13 +162,15 @@ class NBAEPAData:
     def _season(self, season, progress=None):
         paths = {kind: self.directory/"raw"/archive_source(kind, season)[0] for kind in ("possessions", "play_by_play")}
         for kind, path in paths.items():
-            if not path.exists():
-                if progress:progress(0,0,f'Downloading NBA {season} {kind} archive')
-                prepare_archive(self.directory, kind, season, download=True)
+            if progress:progress(0,0,f'Checking NBA {season} {kind} archive')
+            prepare_archive(self.directory, kind, season, download=True)
         boxes, source_ids = [], []
         for phase in ("regular", "postseason"):
             query = Query("NBA", season, "team", phase)
             cached = self.service.cached(self.service.key(query))
+            if cached is not None and not self.service.fresh(query,cached):
+                cached = self.service.load(query)
+                if cached.status=='stale cache':raise DataSourceError(cached.notice)
             if cached is None:
                 try:
                     cached = self.service.load(query)
@@ -248,16 +251,20 @@ class NBAEPAData:
         return result
 
     def prepare(self, seasons):
+        from sports_analytics.history_freshness import active_season
         datasets, notices = [], []
         cached_seasons = {season for season in seasons if all((self.directory/"raw"/archive_source(kind, season)[0]).exists()
                                                             for kind in ("possessions", "play_by_play"))}
         for season in sorted(set(seasons)):
             if cached_seasons and season not in cached_seasons:
+                if season>=active_season('NBA'):
+                    raise DataSourceError(f'NBA EPA {season} event archives are not yet available; current estimates require current-season event inputs.')
                 notices.append(f"NBA {season}-{str(season+1)[-2:]} event archives not cached; using reconciled available seasons.")
                 continue
             try:
                 dataset = self._season(season)
             except (DataSourceError, OSError, ValueError) as exc:
+                if season>=active_season('NBA'):raise DataSourceError(f'Current NBA EPA inputs could not be updated. {exc}') from exc
                 notices.append(f"NBA EPA {season} unavailable: {exc}")
                 continue
             datasets.append(dataset)

@@ -14,7 +14,7 @@ from .availability_adjustment import note as availability_note
 from . import quick_methods
 
 FILTER = 'Mispricing Filter'
-ADAPTER_VERSION = 2
+ADAPTER_VERSION = 4
 NBA_STATS = {'PTS':'points','REB':'rebounds','AST':'assists','3PT':'threes','STL':'steals',
              'BLK':'blocks','PRA':'points_rebounds_assists','PR':'points_rebounds',
              'PA':'points_assists','RA':'rebounds_assists'}
@@ -99,12 +99,28 @@ def threshold(row):
 
 def player_subject(row):
     """Read explicit player names from current contracts or older event titles."""
-    for text in (row.get('title',''),row.get('event_title','')):
+    for text in (row.get('title',''),row.get('yes_label',''),row.get('no_label',''),row.get('subtitle',''),row.get('event_title','')):
+        text=' '.join(str(text or '').split())
         match=re.fullmatch(r'([^:]+):\s*(.+)',text)
         if (match and len(match[1].split())>=2 and
                 not re.search(r'\b(vs\.?|at|versus)\b|@',match[1],re.I) and
                 match[1].strip().casefold() not in {'full game','first half','second half'}):
             return match[1].strip()
+    # Other provider variants explicitly name the player before a count/verb.
+    for text in (row.get('title',''),row.get('yes_label','')):
+        match=re.match(r'^(?:Will\s+)?(.+?)\s+(?:(?:over|under|records?|scores?|have|at least)\b|\d+(?:\.\d+)?\s*\+)',str(text or ''),re.I)
+        if match and len(match[1].split())>=2 and not re.search(r'\b(vs|at|versus)\b|@',match[1],re.I):
+            return match[1].strip()
+    return None
+
+
+def team_total_subject(row, sport, teams):
+    from .kalshi_view import team_identity
+    for value in (row.get('yes_label',''),row.get('title',''),row.get('subtitle','')):
+        match=re.match(r'^(?:Will\s+)?(.+?)(?:\s*:\s*|\s+(?:over|under|scores?|to score|at least|more than)\b)',value or '',re.I)
+        if match:
+            name=team_identity(match[1].strip(),sport)['name']
+            if name in teams:return name
     return None
 
 
@@ -133,6 +149,9 @@ def adapter(row, sport, teams):
     if not strike:return None
     line,side=strike
     if family=='TOTAL':return dict(base,market_key='alternate_totals',subject=side,selection=side,line=line),False
+    if family=='TEAMTOTAL':
+        team=team_total_subject(row,sport,teams)
+        return (dict(base,market_key='team_totals',subject=team,selection=side,line=line),False) if team else None
     stat=(NBA_STATS if sport=='NBA' else FOOTBALL_STATS).get(family)
     if not stat:return None
     # Current feeds put the player in the contract title and the matchup in the
@@ -181,9 +200,13 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
                     estimate=pf.selection(target) if pf else None
                     detail=pf.detail(target) if pf and hasattr(pf,'detail') else 'Player history or this forecast target is unavailable.'
                 else:
-                    estimate=(gf.total(target['line'],target['selection']) if target['market_key']=='alternate_totals' else
-                              gf.spread(gf.diagnostics.get('team_aliases',{}).get(target['subject']) or
-                                        (gf.home_team if target['subject']==source['home_team'] else gf.away_team),target['line'])) if gf else None
+                    estimate=None
+                    if gf:
+                        if target['market_key']=='alternate_totals':estimate=gf.total(target['line'],target['selection'])
+                        else:
+                            team=gf.diagnostics.get('team_aliases',{}).get(target['subject']) or (gf.home_team if target['subject']==source['home_team'] else gf.away_team)
+                            if target['market_key']=='team_totals':estimate=gf.team_total(team,target['line'],target['selection'])
+                            else:estimate=gf.spread(team,target['line'])
                     detail=f'{method} full-game forecast; historical cutoff {source["pulled_at"]}.'
                 if estimate is not None:probability=estimate.loss if invert else estimate.win
                 if probability is not None and not (math.isfinite(probability) and 0<=probability<=1):probability=None

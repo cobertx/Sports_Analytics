@@ -19,7 +19,7 @@ def prompt_key(row):
     key=row['market_key'].removesuffix('_alternate')
     if key=='alternate_spreads':key='winner' if row.get('line')==0 else 'spread'
     elif key=='alternate_totals':key='total'
-    subject=row.get('subject','') if key.startswith('player_') or key in {'winner','spread'} else ''
+    subject=row.get('subject','') if key.startswith('player_') or key in {'winner','spread','team_totals'} else ''
     return json.dumps([key,subject],ensure_ascii=False,separators=(',',':'))
 
 
@@ -29,7 +29,7 @@ def catalog(rows):
         key=prompt_key(row)
         if key in prompts:continue
         kind,subject=json.loads(key)
-        label=({'winner':'Game winner','spread':'Spread','total':'Total points'}.get(kind)
+        label=({'winner':'Game winner','spread':'Spread','total':'Total points','team_totals':'Team total'}.get(kind)
                or MARKET_NAMES.get(row['market_key'],MARKET_NAMES.get(kind+'_alternate',(row.get('market') or kind,)))[0])
         prompts[key]=dict(label=(subject+' — ' if subject else '')+label,player=kind.startswith('player_'))
     return dict(sorted(prompts.items(),key=lambda item:(item[1]['player'],item[1]['label'].casefold())))

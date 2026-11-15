@@ -59,13 +59,13 @@ class PolymarketLadderChecks(TestCase):
     def test_player_team_totals_and_saved_rows_without_a_line_retain_subject_and_boundary(self):
         player=dict(self.f.service.quotes(self.game,'Player Props'),game=self.game)
         row=player['rows'][0]
-        self.assertEqual(selection(row,'yes',player)[0],'Player One Over 20.5')
-        self.assertEqual(selection(row,'no',player)[0],'Player One Under 20.5')
-        self.assertEqual(exchange_target(player,row,'Polymarket','no')['prompt'],'Player One Under 20.5')
+        self.assertEqual(selection(row,'yes',player)[0],'Player One Over 20.5 Points')
+        self.assertEqual(selection(row,'no',player)[0],'Player One Under 20.5 Points')
+        self.assertEqual(exchange_target(player,row,'Polymarket','no')['prompt'],'Player One Under 20.5 Points')
         team=dict(row,sports_market_type='team_totals',title='Celtics: Team Total Over 110',line=110)
         self.assertEqual(selection(team,'no',player)[0],'Celtics Under 110')
         binary=dict(row,yes_label='Yes',no_label='No')
-        self.assertEqual(selection(binary,'no',player)[0],'Player One Under 20.5')
+        self.assertEqual(selection(binary,'no',player)[0],'Player One Under 20.5 Points')
         unknown=dict(row,yes_label='Yes',no_label='No',sports_market_type='custom',title='Player One records a triple double',line=None)
         self.assertEqual(selection(unknown,'no',player)[0],'Not: Player One records a triple double')
 
@@ -78,7 +78,7 @@ class PolymarketLadderChecks(TestCase):
         self.assertEqual(len(sections),1)
         self.assertEqual(sections[0].children[0].children[0].children,'Player One - Points')
         labels=[r['_display_label'] for r in selection_rows(snapshot['rows'],snapshot,'Polymarket')]
-        self.assertEqual(labels,[f'Player One {side} {line}' for side in ('Under','Over') for line in (10.5,15.5,20.5)])
+        self.assertEqual(labels,[f'Player One {side} {line} Points' for side in ('Under','Over') for line in (10.5,15.5,20.5)])
 
     def test_live_patches_update_both_ladders_and_expanded_rows_without_rebuilding(self):
         snapshot=self.totals();before=render(snapshot,provider='Polymarket');expand_sections(before[3])

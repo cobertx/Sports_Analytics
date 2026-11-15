@@ -148,6 +148,9 @@ def _market_probability(row, forecast):
     if row["market_key"] == "alternate_spreads":
         team = forecast.diagnostics.get('team_aliases',{}).get(row['subject']) or {**NFL_TEAM_CODES, **NBA_TEAM_CODES}.get(row["subject"])
         return forecast.spread(team, row["line"])
+    if row["market_key"] == "team_totals":
+        team = forecast.diagnostics.get('team_aliases',{}).get(row['subject']) or {**NFL_TEAM_CODES, **NBA_TEAM_CODES}.get(row['subject']) or row['subject']
+        return forecast.team_total(team, row['line'], row['selection'])
     return None
 
 

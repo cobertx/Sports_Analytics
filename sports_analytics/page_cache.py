@@ -34,7 +34,7 @@ def forecast_revision(service,sport):
                 for folder,children,names in walk(root):
                     children[:]=[name for name in children if name not in {'forecasts','evaluations','calibration','model_cache'}]
                     files.update(Path(folder)/name for name in names if Path(name).suffix in {'.csv','.json'})
-        for key in ('data','repository','players'):
+        for key in ('data','service','repository','players'):
             child=fields.get(key)
             if child is not None:inspect(child)
     inspect(service)

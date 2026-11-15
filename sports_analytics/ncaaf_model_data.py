@@ -142,8 +142,11 @@ class NcaafModelData:
         return next(iter(matches))
 
     def _raw(self,name,endpoint,params,refresh):
+        from .history_freshness import source_fresh
         path=self.directory/'raw'/name
-        if path.exists() and not refresh:return json.loads(path.read_text(encoding='utf-8'))
+        # Reference lookups have no season; only game-result feeds expire.
+        fresh=(source_fresh(path,'NCAAF',params['year']) if 'year' in params else path.exists())
+        if fresh and not refresh:return json.loads(path.read_text(encoding='utf-8'))
         rows=self._request(endpoint,params)
         atomic_text(path,json.dumps(rows,allow_nan=False))
         return rows
@@ -163,11 +166,15 @@ class NcaafModelData:
                 for year in seasons_for_start(start):
                     token=f'{year}_{school_token(school)}'
                     path=self.directory/f'player_team_games_{token}.csv'
-                    if path.exists() and not refresh:continue
+                    from .history_freshness import source_fresh, active_season
+                    if source_fresh(path,'NCAAF',year) and not refresh:continue
                     params={'year':year,'team':school,'seasonType':'both'}
                     games=self._raw('games_'+token+'.json','/games',params,refresh)
+                    expected={str(g['id']) for g in games if g.get('completed') is True}
                     boxes=self._raw('boxes_'+token+'.json','/games/teams',params,refresh)
                     frame=college_player_team_rows(games,boxes)
+                    if year>=active_season('NCAAF') and not expected<=set(frame.get('game_id',pd.Series(dtype=str)).astype(str)):
+                        raise DataSourceError(f'{school}: team opportunity statistics for completed games are not yet published.')
                     if not frame.empty:atomic_text(path,frame.to_csv(index=False))
 
     def player_team_frames(self,seasons=None):
@@ -179,6 +186,7 @@ class NcaafModelData:
         return rows.drop_duplicates(['game_id','team'],keep='last').reset_index(drop=True)
 
     def prepare_team(self,display,start,refresh=False,players=True):
+        from .history_freshness import source_fresh, active_season
         with LOCK:
             school=self.resolve_school(display)
             total=0;notices=[]
@@ -186,12 +194,15 @@ class NcaafModelData:
                 token=f'{year}_{school_token(school)}'
                 destination=self.team_path(year,school)
                 player_path=self.player_path(year,school)
-                if destination.exists() and (player_path.exists() or not players) and not refresh:
+                team_fresh=source_fresh(destination,'NCAAF',year)
+                player_fresh=source_fresh(player_path,'NCAAF',year)
+                if team_fresh and (player_fresh or not players) and not refresh:
                     continue
                 params={'year':year,'team':school,'seasonType':'both'}
                 try:
                     games=self._raw('games_'+token+'.json','/games',params,refresh)
-                    if not destination.exists() or refresh:
+                    expected={str(g['id']) for g in games if g.get('completed') is True}
+                    if not team_fresh or refresh:
                         advanced=[];boxes=[]
                         try:
                             advanced=self._raw('advanced_'+token+'.json','/stats/game/advanced',
@@ -201,21 +212,26 @@ class NcaafModelData:
                         if not advanced:
                             boxes=self._raw('boxes_'+token+'.json','/games/teams',params,refresh)
                         frame=aggregate_games(games,advanced,boxes)
+                        if year>=active_season('NCAAF') and not expected<=set(frame.get('game_id',pd.Series(dtype=str)).astype(str)):
+                            raise DataSourceError(f'{school}: team statistics for completed games are not yet published; automatic updates will retry.')
                         if not frame.empty:
                             atomic_text(destination,frame.to_csv(index=False));total+=len(frame)
                             atomic_text(destination.with_suffix('.manifest.json'),json.dumps(dict(version=VERSION,school=school,
                                 season=year,fetched_at=datetime.now(timezone.utc).isoformat(),
                                 games=int(frame.game_id.nunique()),source='CollegeFootballData scoped games / advanced / boxes',
                                 availability='Game start + 8 hours proxy; not an archived publication timestamp'),indent=2))
-                    if players and (not player_path.exists() or refresh):
+                    if players and (not player_fresh or refresh):
                         from models.Player_Stats.Weighted_Historical_Performance.historical_data import cfbd_player_rows,model_frame
                         boxes=self._raw('players_'+token+'.json','/games/players',params,refresh)
                         frame=cfbd_player_rows(games,boxes,school)
+                        if year>=active_season('NCAAF') and not expected<=set(frame.get('game_id',pd.Series(dtype=str)).astype(str)):
+                            raise DataSourceError(f'{school}: player statistics for completed games are not yet published; automatic updates will retry.')
                         if not frame.empty:
                             frame['season']=year
                             frame=model_frame(frame)
                             atomic_text(player_path,frame.to_csv(index=False))
                 except DataSourceError as exc:
+                    if year>=active_season('NCAAF'):raise
                     notices.append(f'{school} {year}: {exc}')
             if refresh and any((self.directory/f'player_team_games_{year}_{school_token(school)}.csv').exists()
                                for year in seasons_for_start(start)):
@@ -240,7 +256,7 @@ class NcaafModelData:
         notices=[]
         for team in teams:
             try:notices.append(self.prepare_team(team,start,refresh=refresh))
-            except DataSourceError as exc:notices.append(str(exc))
+            except DataSourceError:raise
         frame=self.team_frames(seasons_for_start(start))
         if frame.empty:raise DataSourceError('Load a college school in Historical Data to prepare game/player histories. '+' '.join(notices))
         return frame,notices

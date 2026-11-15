@@ -125,6 +125,27 @@ class PPPForecast:
         """Uncorrected section 4.1 formula, also useful for verifying its example."""
         return 1 - NormalDist(self.total_mean, self.total_sd).cdf(line)
 
+    def team_total(self, team, line, selection="Over"):
+        """Settle a team's score using its calibrated marginal score variance."""
+        if team not in (self.home_team, self.away_team):
+            raise PPPError("Team total selection does not match either forecast team.")
+        if selection not in ("Over", "Under"):
+            raise PPPError("Choose Over or Under for a team total market.")
+        try:
+            covariance = np.asarray(self.diagnostics.get("score_covariance"), dtype=float)
+        except (ValueError, TypeError):
+            raise PPPError("Team totals require calibrated home/away score covariance.") from None
+        if (covariance.shape != (2, 2) or not np.isfinite(covariance).all() or
+                not np.allclose(covariance, covariance.T) or
+                np.linalg.eigvalsh(covariance).min() < -1e-8):
+            raise PPPError("Team totals require valid calibrated home/away score covariance.")
+        index = 0 if team == self.home_team else 1
+        variance = float(covariance[index, index])
+        if variance <= 0:
+            raise PPPError("Historical residuals do not support nonzero team-score uncertainty.")
+        mean = self.home_mean if index == 0 else self.away_mean
+        return self._settlement(mean, math.sqrt(variance), float(line), selection == "Over", nonnegative=True)
+
 
 @dataclass(frozen=True)
 class PPPConfig:

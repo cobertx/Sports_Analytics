@@ -165,9 +165,10 @@ class InGameService:
         finally:
             db.close()
 
-    def _nfl_source(self, name, url, refresh=False):
+    def _nfl_source(self, name, url, refresh=False, season=None):
         path = self.nfl.directory / 'raw' / name
-        if path.is_file() and not refresh:
+        from .history_freshness import active_season, source_fresh
+        if path.is_file() and not refresh and season is not None and source_fresh(path,'NFL',season):
             return path, ''
         self.nfl._source_notices = []
         try:
@@ -184,6 +185,9 @@ class InGameService:
         if sport == 'NBA':
             query = Query(sport, season, season_type=phase)
             cached = None if refresh else self.data.cached(self.data.key(query))
+            if cached is not None and not self.data.fresh(query,cached):
+                loaded = self.data.load(query,local_first=True)
+                cached, notice = loaded, loaded.notice
             prepared = self.models / 'nba' / f'team_games_{season}_{phase}.csv'
             if cached is not None:
                 frame = cached.frame
@@ -204,7 +208,7 @@ class InGameService:
                                   teams=teams, matchup=matchup))
         else:
             with self._lock:
-                path, notice = self._nfl_source('games.csv', SCHEDULE, refresh)
+                path, notice = self._nfl_source('games.csv', SCHEDULE, refresh, season=season)
                 frame = pd.read_csv(path, dtype=str, keep_default_na=False)
             frame = frame[frame['season'].eq(str(season)) &
                           (frame['game_type'].eq('REG') if phase == 'regular' else frame['game_type'].isin(['WC', 'DIV', 'CON', 'SB']))]
@@ -307,7 +311,7 @@ class InGameService:
         notice = ''
         if sport == 'NFL':
             with self._lock:
-                path, notice = self._nfl_source(f'play_by_play_{season}.csv', f'{RELEASES}/pbp/play_by_play_{season}.csv', refresh)
+                path, notice = self._nfl_source(f'play_by_play_{season}.csv', f'{RELEASES}/pbp/play_by_play_{season}.csv', refresh, season=season)
                 events = self._indexed(path, sport, game_id)
                 events, charting_info = self.nfl_charting(events, season, game_id, download=charting)
             source = 'nflverse / nflfastR play-by-play'
@@ -325,7 +329,8 @@ class InGameService:
                         cached = None
                 except (ValueError, OSError):
                     cached = None
-            if cached and not refresh:
+            from .history_freshness import source_fresh
+            if cached and not refresh and source_fresh(saved,'NBA',season):
                 return cached
             events = self._indexed(archive, sport, game_id) if archive.is_file() and not refresh else []
             if events:

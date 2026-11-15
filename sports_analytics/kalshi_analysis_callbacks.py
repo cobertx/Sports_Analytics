@@ -74,7 +74,7 @@ def filter_snapshot(service,game,selected,pull=False,*,current=False):
     return snapshot,status
 
 
-def register(app,service,game_forecast,player_forecast,filtered_results=None,*,jobs=None,tasks=None):
+def register(app,service,game_forecast,player_forecast,filtered_results=None,*,jobs=None,tasks=None,source_revision=None):
     jobs=jobs or FilterJobs()
     prompt_fields=dict(type='kalshi-quick-prompt-method',scope=ALL,prompt=ALL)
 
@@ -101,8 +101,8 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
     @scoped_callback(app,'kalshi',Output('kalshi-models','data'),Input('kalshi-quotes','data'),Input('kalshi-filter-quotes','data'),Input('kalshi-context','data'),
                   Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),Input('kalshi-snapshot','value'),
                   Input('workspace-page','value'),Input('kalshi-category','value'),State('kalshi-models','data'),State('market-url','hash'),
-                  *([Input('kalshi-model-poll','n_intervals'),Input('kalshi-model-retry','n_clicks')] if tasks is not None else []))
-    def kalshi_models(snapshot,scan,game,method,player_method,selected,page,category,previous,location_hash=None,_model_tick=None,_retry=None):
+                  *([Input('kalshi-model-poll','n_intervals'),Input('kalshi-model-retry','n_clicks'),Input('history-update-poll','n_intervals')] if tasks is not None else []))
+    def kalshi_models(snapshot,scan,game,method,player_method,selected,page,category,previous,location_hash=None,_model_tick=None,_retry=None,_history_tick=None):
         if page!='kalshi' or not game:raise PreventUpdate
         if location_hash is not None and route(location_hash)!=(game['sport'],game['id']):raise PreventUpdate
         if category==FILTER:
@@ -114,7 +114,9 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
         if method not in GAME_METHODS or player_method not in PLAYER_METHODS:raise PreventUpdate
         before=previous
         context=identity(game,selected,method,player_method)
-        if (category==FILTER and previous and previous.get('context')==identity(game,selected,method,player_method)
+        if source_revision is not None:
+            context[7]=[context[7],source_revision(game,method,player_method)]
+        if (category==FILTER and previous and previous.get('context')==context
                 and previous.get('scan_sequence')!=scan.get('sequence')):
             # Deliberate rescans may retry missing history; routine price polls do not refit.
             previous={**previous,'predictions':{key:value for key,value in previous.get('predictions',{}).items()

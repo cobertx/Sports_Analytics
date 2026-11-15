@@ -100,21 +100,22 @@ class CareerService:
         self._locks = {}
         self._memory = OrderedDict()
 
-    def _cached_table(self, key, download):
+    def _cached_table(self, key, download, ttl_seconds=None):
+        ttl_seconds=self.ttl_hours*3600 if ttl_seconds is None else ttl_seconds
         with self._guard:
             lock = self._locks.setdefault(key, threading.Lock())
         with lock:
             now = time.monotonic()
             with self._guard:
                 saved = self._memory.get(key)
-                if saved and now - saved[0] < self.ttl_hours * 3600:
+                if saved and now - saved[0] < ttl_seconds:
                     self._memory.move_to_end(key)
                     return saved[1]
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with closing(sqlite3.connect(self.path, timeout=30)) as db, db:
                 db.execute("CREATE TABLE IF NOT EXISTS career_tables (key TEXT PRIMARY KEY, fetched_at TEXT, payload BLOB)")
                 row = db.execute("SELECT fetched_at, payload FROM career_tables WHERE key = ?", (key,)).fetchone()
-            fresh = row and (datetime.now(timezone.utc) - datetime.fromisoformat(row[0])).total_seconds() < self.ttl_hours * 3600
+            fresh = row and (datetime.now(timezone.utc) - datetime.fromisoformat(row[0])).total_seconds() < ttl_seconds
             stale = None
             if row:
                 try:
@@ -169,7 +170,9 @@ class CareerService:
                 return frame
             except (KeyError, ValueError, TypeError) as exc:
                 raise DataSourceError("The career source returned an unexpected season-summary schema.") from exc
-        return self._cached_table(f"summary:v1:{sport}:{year}:{phase}", download)
+        from .history_freshness import ACTIVE_REFRESH_SECONDS, active_season
+        ttl=ACTIVE_REFRESH_SECONDS if year>=active_season(sport) else self.ttl_hours*3600
+        return self._cached_table(f"summary:v1:{sport}:{year}:{phase}", download,ttl)
 
     def load(self, sport, entity, name, metric, phase):
         self._validate_sport(sport)

@@ -51,6 +51,8 @@ from .market_structure_view import layout as structure_layout, register as regis
 from .filtered_results import FilteredResults, route as filtered_results_route
 from .filtered_results_view import layout as filtered_results_layout, register as register_filtered_results
 from .page_cache import PageTasks,QuotePages,forecast_revision
+from .player_history_refresh import refresh_live_history
+from .history_updates import HistoryUpdater
 from .lazy_markets import register as register_lazy_markets
 from .filter_jobs import FilterJobs,request_key
 from .loading import configure as configure_loading,register as register_loading,indicator,loading as action_loading
@@ -320,6 +322,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                polymarket_service=None,information_service=None,ledger=None,structure_service=None,filtered_results_service=None,
                game_information_service=None,availability_service=None):
     service = service or DataService()
+    history_updater=HistoryUpdater(data=service)
     filtered_results_service = filtered_results_service or FilteredResults(service.path.with_name('filtered_results.sqlite3'))
     information_service=information_service or InformationService()
     availability_service=availability_service or AvailabilityAdjuster(data=service)
@@ -335,6 +338,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     exchange_pages={name:QuotePages(source) for name,source in [('Kalshi',kalshi_service),('Polymarket',polymarket_service)]
                     if getattr(source,'background',False) is True}
     backtesting_service=backtesting_service or BacktestingService(data=service,isolated=True)
+    if isinstance(backtesting_service,BacktestingService) and isinstance(service,DataService):
+        backtesting_service.history_updater=history_updater
     career_service = career_service or CareerService(service.path.with_name("career.sqlite3"))
     schedule_service = schedule_service or ScheduleService(service.path.with_name("schedules.sqlite3"),background=True)
     odds_service = odds_service or OddsApiService()
@@ -402,6 +407,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                    download_name=f'{model.folder}_README.md')
 
     app.layout = html.Div([
+        dcc.Interval(id='history-update-poll',interval=60_000,n_intervals=0),
+        html.Div(id='history-update-status',role='status',className='forecast-history'),
         dcc.Store(id="dataset"), dcc.Download(id="download"),
         dcc.Store(id='historical-cache-pending',data=False),dcc.Interval(id='historical-cache-poll',interval=500,disabled=True),
         dcc.Store(id='historical-render-scope'),dcc.Store(id='career-job'),
@@ -1331,6 +1338,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
               (category is None or row['group']==category)]
         if not rows:return None,None,{'latest_date':None,'category':'All player props' if category is None else category}
         try:
+            player_source={'WHP':whp_service,'UO':usage_opportunity_service,
+                           'OAM':opponent_adjusted_service,'PGE':pace_game_environment_service}[player_method]
+            refresh_live_history(snapshot,player_source)
             if snapshot['sport']=='NCAAF':
                 names=[snapshot['home_team'],snapshot['away_team']]
                 ncaaf_model_data.prepare(names,snapshot['commence_time'])
@@ -1356,7 +1366,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         return filter_jobs.forecast(forecast_identity(snapshot,method),lambda:calculate_game_markets(snapshot,method))
 
     def calculate_game_markets(snapshot,method):
-        if not any(row['market_key'] in {'alternate_spreads','alternate_totals'} for row in snapshot['rows']):return None,None
+        if not any(row['market_key'] in {'alternate_spreads','alternate_totals','team_totals'} for row in snapshot['rows']):return None,None
         try:
             if snapshot['sport']=='NCAAF':service=ncaaf_forecast_services[method]
             elif snapshot['sport']=='NBA':service={'PPP':nba_ppp_service,'EPA':nba_epa_service,'ELO':nba_elo_service}[method]
@@ -1456,8 +1466,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Input("market-category", "value"),
                   Input("market-snapshot", "value"), Input("market-url", "hash"), Input("market-applied-criteria", "data"),
                   Input("market-forecast-method", "value"), Input("player-forecast-method", "value"),
-                  State("market-forecast-history", "data"),State('workspace-page','value'),Input('market-model-poll','n_intervals'))
-    def show_saved_markets(category, selection, location_hash, criteria, method, player_method, previous_history,page=None,_model_tick=None):
+                  State("market-forecast-history", "data"),State('workspace-page','value'),Input('market-model-poll','n_intervals'),Input('history-update-poll','n_intervals'))
+    def show_saved_markets(category, selection, location_hash, criteria, method, player_method, previous_history,page=None,_model_tick=None,_history_tick=None):
         if (page is not None and page!='market') or not market_game_id(location_hash):raise PreventUpdate
         if category is None:
             raise PreventUpdate
@@ -1709,8 +1719,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   Input("college-team", "value"), Input("week", "value"), Input("workspace-page", "value"), State('dataset','data'),
                   Input('market-url','hash'),
                   Input('historical-cache-poll','n_intervals'),
+                  Input('history-update-poll','n_intervals'),
                   running=[(Output("load", "disabled"), True, False), (Output("refresh", "disabled"), True, False)])
-    def load_data(_load, _refresh, sport, season, kind, phase, team, week, page, previous=None,location_hash=None,_cache_tick=None):
+    def load_data(_load, _refresh, sport, season, kind, phase, team, week, page, previous=None,location_hash=None,_cache_tick=None,_history_tick=None):
         if page != "historical" or sport not in SOURCES:
             raise PreventUpdate
         if location_hash and not historical_route(location_hash):raise PreventUpdate
@@ -2008,8 +2019,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     @scoped_callback(app,'historical',Output("career-trend", "figure"), Output("career-status", "children"),
                   Input("dataset", "data"), Input("entity", "value"), Input("metric", "value"),
                   Input('workspace-page','value'),State('market-url','hash'),State('sport','value'),
-                  Input('career-poll','n_intervals'),State('career-job','data'),Input('career-retry','n_clicks'))
-    def analyze_career(dataset, entity, metric,page=None,location_hash=None,sport=None,_career_tick=None,previous_job=None,_career_retry=None):
+                  Input('career-poll','n_intervals'),State('career-job','data'),Input('career-retry','n_clicks'),Input('history-update-poll','n_intervals'))
+    def analyze_career(dataset, entity, metric,page=None,location_hash=None,sport=None,_career_tick=None,previous_job=None,_career_retry=None,_history_tick=None):
         if page is not None and page!='historical':raise PreventUpdate
         if location_hash and not historical_route(location_hash):raise PreventUpdate
         if dataset and sport is not None and dataset.get('sport')!=sport:raise PreventUpdate
@@ -2039,7 +2050,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 scope=career_scope(dataset,entity,metric,location_hash)
                 key=request_key(['career-v1',scope,dataset.get('revision') or dataset.get('fetched_at'),_career_retry])
                 cached=career_tasks.peek(key)
-                result,pending,error=career_tasks.read(key,load_career,refresh=bool(cached and time()-cached[1]>=86400))
+                result,pending,error=career_tasks.read(key,load_career,refresh=bool(cached and time()-cached[1]>=300))
                 job=dict(job=key,scope=scope,pending=pending,status='pending' if pending else 'error' if error else 'complete',error=error)
                 if job!=previous_job:set_props('career-job',{'data':job})
                 if pending:
@@ -2080,8 +2091,35 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     register_comparison_callbacks(app,backtesting_service)
     register_in_game_callbacks(app,in_game_service)
     register_kalshi_callbacks(app,kalshi_service,pages=exchange_pages.get('Kalshi'))
-    register_kalshi_analysis(app,kalshi_service,forecast_game_markets,forecast_player_markets,filtered_results_service,jobs=filter_jobs,tasks=market_page_tasks)
+    def exchange_source_revision(game,method,player_method):
+        sport=game['sport']
+        games=(ncaaf_forecast_services if sport=='NCAAF' else
+               {'PPP':nba_ppp_service,'EPA':nba_epa_service,'ELO':nba_elo_service} if sport=='NBA' else
+               {'PPP':ppp_service,'EPA':epa_service,'ELO':elo_service})
+        players={'WHP':whp_service,'UO':usage_opportunity_service,
+                 'OAM':opponent_adjusted_service,'PGE':pace_game_environment_service}
+        return [forecast_revision(games[method],sport),forecast_revision(players[player_method],sport)]
+    register_kalshi_analysis(app,kalshi_service,forecast_game_markets,forecast_player_markets,filtered_results_service,
+                            jobs=filter_jobs,tasks=market_page_tasks,source_revision=exchange_source_revision)
     register_kalshi_callbacks(app,polymarket_service,view=polymarket_view,provider='Polymarket',pages=exchange_pages.get('Polymarket'))
-    register_market_summary(app,schedule_service,market_services,kalshi_service,polymarket_service,forecast_game_markets,forecast_player_markets,pages=exchange_pages,tasks=market_page_tasks)
+    register_market_summary(app,schedule_service,market_services,kalshi_service,polymarket_service,forecast_game_markets,forecast_player_markets,
+                            pages=exchange_pages,tasks=market_page_tasks,source_revision=exchange_source_revision)
     register_filtered_results(app,filtered_results_service)
+    app._history_updates=history_updater
+
+    @app.server.get('/api/history-updates')
+    def history_update_health():
+        return history_updater.status()
+
+    @app.callback(Output('history-update-status','children'),Input('history-update-poll','n_intervals'))
+    def history_update_status(_tick):
+        state=history_updater.status()
+        if not state.get('checked_at'):return ''
+        failures=[name for name,record in state.get('sources',{}).items() if record.get('error')]
+        if failures:
+            return 'Historical data update needs attention: '+', '.join(failures)+'. Updates will retry automatically.'
+        if (pd.Timestamp.now(tz='UTC')-pd.Timestamp(state['checked_at'])).total_seconds()>900:
+            return 'Historical data updates are overdue. Last check '+format_eastern(state['checked_at'])+'.'
+        return 'Historical data updates every 5 minutes · Last checked '+format_eastern(state['checked_at'])+'.'
+
     return app

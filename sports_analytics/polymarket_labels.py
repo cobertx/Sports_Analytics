@@ -84,7 +84,10 @@ def selection(row, side, snapshot=None):
         if direction_name and line is not None:
             name = subject(title, kind)
             context = name+' ' if name else ''
-            return f'{context}{direction_name} {line:g}', context+direction_name, line
+            from .prompt_history import POLY_STATS
+            from .kalshi_labels import stat_label
+            stat=stat_label(POLY_STATS[kind]) if kind in POLY_STATS else ''
+            return f'{context}{direction_name} {line:g}'+(' '+stat if stat else ''), context+direction_name, line
     if label.casefold() in {'yes','no'}:
         label = title if label.casefold() == 'yes' else 'Not: '+title
     elif kind != 'moneyline' and not kind.endswith('spreads'):

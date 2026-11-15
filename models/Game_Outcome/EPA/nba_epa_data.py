@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+from collections.abc import Mapping
 
 import pandas as pd
 
@@ -46,14 +47,25 @@ def archive_columns(path, kind):
 
 
 def prepare_archive(directory, kind, season, *, download=False, refresh=False, client=None):
+    from sports_analytics.history_freshness import source_fresh
     filename, url = archive_source(kind, season)
     destination = directory / "raw" / filename
-    if destination.exists() and not refresh:
+    metadata=destination.with_suffix('.manifest.json')
+    previous=json.loads(metadata.read_text()) if metadata.exists() else {}
+    if destination.exists() and not refresh and (not download or source_fresh(destination,'NBA',season,fetched_at=previous.get('retrieved_at'))):
         archive_columns(destination, kind)
         return destination
     if not download:
         raise DataSourceError(f"Missing local {kind} archive for {season}-{str(season + 1)[-2:]}. Run with --download.")
-    response = (client or HttpClient()).get(url)
+    headers={key:value for key,value in [('If-None-Match',previous.get('etag')),
+             ('If-Modified-Since',previous.get('last_modified'))] if value}
+    http=client or HttpClient()
+    response = http.get(url,headers=headers) if headers else http.get(url)
+    if getattr(response,'status_code',200)==304 and destination.exists():
+        archive_columns(destination,kind)
+        previous['retrieved_at']=datetime.now(timezone.utc).isoformat()
+        atomic_text(metadata,json.dumps(previous,indent=2))
+        return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -67,9 +79,12 @@ def prepare_archive(directory, kind, season, *, download=False, refresh=False, c
                 pass
         digest = hashlib.sha256(temporary.read_bytes()).hexdigest()
         temporary.replace(destination)
-        atomic_text(destination.with_suffix(".manifest.json"), json.dumps({
+        response_headers=getattr(response,'headers',{})
+        response_headers=response_headers if isinstance(response_headers,Mapping) else {}
+        atomic_text(metadata, json.dumps({
             "source": url, "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "project_season": season, "archive_ending_year": season + 1, "sha256": digest,
+            'etag':response_headers.get('ETag'),'last_modified':response_headers.get('Last-Modified'),
         }, indent=2))
     finally:
         if temporary is not None:

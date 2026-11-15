@@ -61,7 +61,7 @@ def exchange_target(snapshot,row,provider,side='yes'):
     if not sport or not teams:return None
     target=dict(sport=sport,kind='team',name=teams[0],market='alternate_totals',push=False)
     if provider=='Kalshi':
-        from .kalshi_analysis import NBA_STATS,FOOTBALL_STATS,threshold
+        from .kalshi_analysis import NBA_STATS,FOOTBALL_STATS,threshold,player_subject,team_total_subject
         family=row['event_ticker'].split('-',1)[0].removeprefix('KX'+sport)
         label=row.get('yes_label','');title=row.get('title','')
         kind=row.get('strike_type');line=row.get('line')
@@ -83,14 +83,14 @@ def exchange_target(snapshot,row,provider,side='yes'):
                 if not name:return None
                 target.update(name=name,market='alternate_spreads')
             elif family=='TEAMTOTAL':
-                name=_team(re.split(r'\s+(?:over|under|scores?)\b',label,flags=re.I)[0],sport,teams)
+                name=team_total_subject(row,sport,teams)
                 if not name:return None
                 target.update(name=name,market='team_total')
             elif family!='TOTAL':
                 stat=(NBA_STATS if sport=='NBA' else FOOTBALL_STATS).get(family)
-                match=re.fullmatch(r'([^:]+):\s*(.+)',row.get('event_title',''))
-                if not stat or not match:return None
-                target.update(kind='player',name=match[1].strip(),market='player_'+stat)
+                name=player_subject(row)
+                if not stat or not name:return None
+                target.update(kind='player',name=name,market='player_'+stat)
         if side=='no':target['compare']=INVERSE[target['compare']]
     else:
         kind=row.get('sports_market_type') or row.get('section','').lower().replace(' ','_')

@@ -1,6 +1,7 @@
 """Kalshi game cards and exchange quotes, kept separate from sportsbook prices."""
 from .presentation import table_cell, table_header, signed_state
 import re
+import hashlib
 from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
@@ -21,7 +22,8 @@ from .prompt_history import button as history_button
 from .lazy_markets import markets as lazy_markets
 from .market_structure_link import button as structure_button
 from .loading import indicator
-from .kalshi_labels import selection, selection_rows
+from .kalshi_labels import selection, selection_rows, player_market
+from .kalshi_analysis import player_subject
 
 MULTIWORD_MASCOTS = {'Crimson Tide', 'Sun Devils', 'Red Wolves', 'Black Knights', 'Golden Bears',
     'Blue Devils', 'Yellow Jackets', 'Fighting Illini', "Ragin' Cajuns", 'Golden Gophers',
@@ -294,7 +296,12 @@ def filter_panel():
 def market_groups(snapshot):
     groups = OrderedDict()
     for row in (snapshot or {}).get('rows', []):
-        groups.setdefault(row['event_ticker'], []).append(row)
+        event=row['event_ticker']
+        sport=(snapshot or {}).get('sport','')
+        if not row.get('sports_market_type') and player_market(row,sport):
+            name=player_subject(row)
+            if name:event+='-PLAYER-'+hashlib.sha256(name.casefold().encode()).hexdigest()[:16]
+        groups.setdefault(event, []).append(row)
     return groups
 
 
@@ -364,6 +371,12 @@ def market_sections(snapshot, provider='Kalshi', *,lazy=True,view_id=None):
     for index,(event,rows) in enumerate(groups.items()):
         family = event.split('-',1)[0].removeprefix('KX'+snapshot['sport'])
         title = rows[0].get('section') or names.get(family) or (rows[0]['event_title'] or rows[0]['title']).replace(':',' -',1)
+        if not polymarket and player_market(rows[0],snapshot['sport']):
+            name=player_subject(rows[0])
+            if name:
+                stat=rows[0].get('event_title','').split(':',1)
+                stat=stat[1].strip() if len(stat)==2 else family.removesuffix('PROT').replace('_',' ').title()
+                title=name+' - '+stat+(' (Protected)' if family.endswith('PROT') else '')
         if polymarket:
             from .polymarket_labels import section_title
             title=section_title(title)

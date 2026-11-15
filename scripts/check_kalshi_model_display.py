@@ -198,8 +198,31 @@ class ModelDisplayChecks(TestCase):
             shown=decorate(snapshot,game,'live','PPP',method,ready)
             self.assertEqual(shown['rows'][0]['yes_probability'],.8)
             self.assertAlmostEqual(shown['rows'][0]['no_probability'],.2)
-            self.assertEqual(selection(row,'yes',snapshot)[0],'Player One Over 19.5')
+            self.assertEqual(selection(row,'yes',snapshot)[0],'Player One Over 19.5 Points')
             self.f.players[method].forecast.assert_called_once()
+
+    def test_saved_player_history_revision_recalculates_without_a_quote_or_method_change(self):
+        history=Path(self.f.tmp.name)/'player-history.csv'
+        history.write_text('old results',encoding='utf-8')
+        self.f.players['WHP'].repository=SimpleNamespace(data=SimpleNamespace(path=history))
+        row=dict(self.f.snapshot['rows'][0],ticker='KXNFLPASSYDS-PLAYER',
+            event_ticker='KXNFLPASSYDS-GAME',category='Passing Props',
+            event_title='Player One: Passing Yards',line=200,strike_type='greater_or_equal')
+        snapshot=dict(self.f.snapshot,category='Passing Props',rows=[row])
+        forecast=SimpleNamespace(forecasts={},selection=lambda row:MarketProbability(.97,.03,0))
+        self.f.players['WHP'].forecast.return_value=forecast
+        self.values.update({'kalshi-quotes':snapshot,'kalshi-category':'Passing Props'})
+        first=self.complete()
+        self.assertEqual(first['predictions'][row['ticker']]['probability'],.97)
+        history.write_text('new results including recent misses',encoding='utf-8')
+        self.f.players['WHP'].forecast.return_value=SimpleNamespace(
+            forecasts={},selection=lambda row:MarketProbability(.65,.35,0))
+        updated=self.complete()
+        self.assertEqual(updated['predictions'][row['ticker']]['probability'],.65)
+        self.assertNotEqual(first['context'][7],updated['context'][7])
+        self.assertEqual(self.f.players['WHP'].forecast.call_count,2)
+        self.complete()
+        self.assertEqual(self.f.players['WHP'].forecast.call_count,2)
 
 
 if __name__=='__main__':main()

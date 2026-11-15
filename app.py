@@ -19,6 +19,9 @@ def main(argv=None):
     parser.add_argument("--port", type=int, default=8050)
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args(argv)
+    # The Windows scheduled worker also covers periods when the dashboard is
+    # closed. This loop provides startup catch-up and other deployment support.
+    app._history_updates.start()
     app.run(host=args.host, port=args.port, debug=args.debug)
 
 

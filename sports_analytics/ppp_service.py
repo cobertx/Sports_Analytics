@@ -10,6 +10,7 @@ import threading
 
 from models.Game_Outcome.PPP.PPP import PPPError, PPPForecast, PPPModel
 from models import season_weights
+from models.replay import input_digest
 from .data import DataSourceError
 from .nfl_markets import NFL_TEAM_CODES
 from .nfl_model_data import NflModelData
@@ -46,7 +47,13 @@ class PPPMarketService:
             cutoff = min(pulled, kickoff).astimezone(timezone.utc)
         except (KeyError, ValueError, TypeError, AttributeError):
             raise DataSourceError(f"{self.method} requires recognized {self.sport} teams and timestamped saved game information.") from None
+        # Refresh/prepare before checking either forecast cache. A fixed quote
+        # cutoff must not conceal newly downloaded or corrected earlier results.
+        season = cutoff.year - (cutoff.month < self.season_start_month)
+        with self._prepare_lock:
+            frame, notices = self.data.prepare([season - 1, season])
         identity = {"version": self.model_version, "home": home, "away": away, "as_of": cutoff.isoformat(),
+                    "input_sha256": input_digest(frame),
                     "season_weighting": hashlib.sha256(Path(season_weights.__file__).read_bytes()).hexdigest(),
                     "config": asdict(self.model.config), "neutral": bool(snapshot.get("game", {}).get("neutral", False))}
         key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -57,7 +64,7 @@ class PPPMarketService:
                 return self._memory[key]
             self._pending.add(key)
         try:
-            forecast = self._forecast(snapshot, identity, key, pulled, kickoff, cutoff)
+            forecast = self._forecast(snapshot, identity, key, pulled, kickoff, cutoff, (frame,notices))
             with self._ready:
                 self._memory[key] = forecast
                 self._memory.move_to_end(key)
@@ -68,7 +75,7 @@ class PPPMarketService:
                 self._pending.remove(key)
                 self._ready.notify_all()
 
-    def _forecast(self, snapshot, identity, key, pulled, kickoff, cutoff):
+    def _forecast(self, snapshot, identity, key, pulled, kickoff, cutoff, prepared):
         path = self.data.directory / "forecasts" / f"{self.method.lower()}_{key}.json"
         saved = load_json(path,self.data.directory,identity)
         if saved is not None:
@@ -82,8 +89,7 @@ class PPPMarketService:
         try:
             # Preparation may refresh shared source files. Only that step
             # is serialized; independent game fits and cache hits can run.
-            with self._prepare_lock:
-                frame, notices = self.data.prepare([season - 1, season])
+            frame, notices = prepared
             forecast = self.model.predict(frame, identity['home'], identity['away'], cutoff.isoformat(), neutral=identity["neutral"])
         except (PPPError, DataSourceError, OSError, ValueError) as exc:
             raise DataSourceError(f"{self.method} estimate unavailable. {exc}") from None
