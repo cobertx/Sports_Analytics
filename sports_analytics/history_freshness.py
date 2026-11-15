@@ -37,7 +37,8 @@ def source_fresh(path, sport, season, *, fetched_at=None, now=None):
 def retain_first_availability(frame, previous, keys):
     """Rechecking the same completed result must not move its first-seen time."""
     import pandas as pd
-    if previous is None or 'available_at' not in previous or not set(keys)<=set(previous):return frame
+    if (previous is None or 'available_at' not in frame or 'available_at' not in previous or
+            not set(keys)<=set(previous) or not set(keys)<=set(frame)):return frame
     old=previous.drop_duplicates(keys).set_index(keys).available_at
     index=(pd.MultiIndex.from_frame(frame[keys]) if len(keys)>1 else pd.Index(frame[keys[0]]))
     known=pd.Series(pd.to_datetime(old.reindex(index),utc=True,errors='coerce').to_numpy(),index=frame.index)

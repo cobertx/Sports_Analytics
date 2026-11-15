@@ -199,7 +199,9 @@ class ComparisonChecks(TestCase):
         backend.phase_map=lambda sport:{}
         backend.player_service=lambda key:UsageOpportunityMarketService(repository=SimpleNamespace(
             root=backend.root/'model_cache'/key,load=lambda *args:(players,teams)))
-        manager=Comparisons(backend);context=dict(sport='NBA',group='player-stats')
+        # This test polls refresh itself. A second watcher can still be reading
+        # its manifest when TemporaryDirectory removes it on Windows.
+        manager=Comparisons(backend,watch=False);context=dict(sport='NBA',group='player-stats')
         with patch('requests.sessions.Session.request',side_effect=AssertionError('No HTTP')):
             manifest=manager.launch(context,['whp','uo'],market='player_points',team_filter='BOS',limit=2,line=20)
             deadline=time.monotonic()+40

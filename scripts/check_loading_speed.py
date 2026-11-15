@@ -104,7 +104,9 @@ class LoadingSpeedChecks(TestCase):
             with self.assertRaisesRegex(DataSourceError,'Source offline'):service.load(query,local_first=True)
         frame=pd.DataFrame(dict(entity_id=['1'],position=['G'],matchup=['A @ B'],pts=[20]))
         with patch('sports_analytics.service.fetch',return_value=frame):
-            self.assertEqual(service.load(query,refresh=True,local_first=True).status,'downloaded')
+            refreshed=service.load(query,refresh=True,local_first=True)
+            self.assertEqual(refreshed.status,'downloaded')
+            self.assertNotIn('available_at',refreshed.frame)
         self.assertEqual(service.load(query,local_first=True).frame.pts.iloc[0],20)
 
     def test_refresh_failure_preserves_original_timestamp_backs_off_and_manual_refresh_bypasses_it(self):

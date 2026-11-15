@@ -122,6 +122,13 @@ class ResponsivenessChecks(TestCase):
             data.prepare([2026]);self.assertEqual(aggregate.call_count,3)
         self.assertTrue(any(call.kwargs.get('refresh') for call in source.load.call_args_list))
 
+    def test_nba_preparation_still_rejects_explicitly_stale_current_results(self):
+        from sports_analytics.history_freshness import active_season
+        source=Mock()
+        source.load.return_value=SimpleNamespace(status='stale cache',notice='Source offline')
+        with self.assertRaisesRegex(DataSourceError,'Current NBA team results could not be refreshed'):
+            NbaModelData(self.root/'stale-nba',source).prepare([active_season('NBA')])
+
     def test_repeated_nba_season_preparation_is_identical_without_reaggregating_or_rewriting(self):
         rows=[]
         for game in range(300):

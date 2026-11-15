@@ -78,6 +78,31 @@ def _database(root):
     return Path(root)/'model_cache'/'result_recovery.sqlite3'
 
 
+def _retry_recovery_write(action):
+    """WAL/schema initialization can report BUSY before busy_timeout waits.
+
+    Retry the complete transaction on a fresh connection. Read-only, corrupt
+    and other permanent storage errors must still report failed persistence.
+    """
+    for attempt in range(len(_DELAYS)+1):
+        try:return action()
+        except sqlite3.OperationalError as exc:
+            code=getattr(exc,'sqlite_errorcode',None)
+            busy=((code is not None and code & 255 in {sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED}) or
+                  'database is locked' in str(exc).lower() or 'database table is locked' in str(exc).lower())
+            if not busy or attempt==len(_DELAYS):raise
+            sleep(_DELAYS[attempt])
+
+
+def _store_recovery(database, path, encoded):
+    with closing(sqlite3.connect(database,timeout=2)) as db:
+        db.execute('PRAGMA journal_mode=WAL')
+        with db:
+            db.execute('CREATE TABLE IF NOT EXISTS results (path TEXT PRIMARY KEY, payload TEXT NOT NULL, checksum TEXT NOT NULL)')
+            db.execute('INSERT INTO results VALUES (?,?,?) ON CONFLICT(path) DO UPDATE SET payload=excluded.payload, checksum=excluded.checksum',
+                       (_key(path),encoded,sha256(encoded.encode()).hexdigest()))
+
+
 def _read_recovery(path, root):
     database = _database(root)
     try:
@@ -112,12 +137,8 @@ def save_json(path, data, root):
         database = _database(root)
         try:
             database.parent.mkdir(parents=True,exist_ok=True)
-            with _lock(database), closing(sqlite3.connect(database,timeout=2)) as db:
-                db.execute('PRAGMA journal_mode=WAL')
-                with db:
-                    db.execute('CREATE TABLE IF NOT EXISTS results (path TEXT PRIMARY KEY, payload TEXT NOT NULL, checksum TEXT NOT NULL)')
-                    db.execute('INSERT INTO results VALUES (?,?,?) ON CONFLICT(path) DO UPDATE SET payload=excluded.payload, checksum=excluded.checksum',
-                               (_key(path),encoded,sha256(encoded.encode()).hexdigest()))
+            with _lock(database):
+                _retry_recovery_write(lambda:_store_recovery(database,path,encoded))
             return True
         except (OSError,sqlite3.Error):
             _LOG.warning('Model result is available in memory, but local result storage is unavailable: %s',path)

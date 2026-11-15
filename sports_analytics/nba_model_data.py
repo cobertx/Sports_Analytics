@@ -105,7 +105,7 @@ class NbaModelData:
                 query = Query("NBA", season, "team", phase)
                 try:
                     dataset = self.service.load(query, refresh=refresh)
-                    if dataset.status=='stale cache':
+                    if getattr(dataset,'status',None)=='stale cache':
                         if season>=active_season('NBA') and phase in active_phases('NBA'):
                             raise DataSourceError('Current NBA team results could not be refreshed. '+dataset.notice)
                     prepared = self._prepare_dataset(dataset,query)

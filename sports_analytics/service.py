@@ -136,13 +136,14 @@ class DataService:
         if cached is not None and cached.source==source and 'game_id' in cached.frame:
             columns=['game_id','entity_id'] if 'entity_id' in frame and 'entity_id' in cached.frame else ['game_id']
             before=set(cached.frame[columns].astype(str).itertuples(index=False,name=None))
-            after=set(frame[columns].astype(str).itertuples(index=False,name=None))
+            after=(set(frame[columns].astype(str).itertuples(index=False,name=None))
+                   if set(columns)<=set(frame) else set())
             if not before<=after:
                 return replace(cached,status='stale cache',notice='The source returned an incomplete game history; the last valid dataset was preserved.')
         # Complete box scores are known no later than this successful retrieval.
         # Preserve older conservative proxies, while admitting newly published
         # finals without an artificial overnight delay.
-        if 'available_at' not in frame:
+        if 'available_at' not in frame and 'event_date' in frame:
             dates=pd.to_datetime(frame.event_date,utc=True,errors='coerce',format='mixed')
             proxy=(dates+pd.Timedelta(hours=8)).where(dates.ne(dates.dt.normalize()),dates+pd.Timedelta(days=1))
             frame['available_at']=proxy.clip(upper=pd.Timestamp(stamp))

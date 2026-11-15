@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import time
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import TestCase, main
@@ -136,19 +137,53 @@ class ResultCacheChecks(TestCase):
 
     def test_separate_processes_share_the_recovery_store_without_losing_results(self):
         program="""from pathlib import Path
-import sys
+import sys, sqlite3, time
 from unittest.mock import patch
 from sports_analytics.result_cache import save_json
-with patch.object(Path, 'replace', side_effect=PermissionError(13, 'Access is denied')):
+root=Path(sys.argv[2])
+connect=sqlite3.connect
+def simultaneous_connect(*args,**kwargs):
+    db=connect(*args,**kwargs)
+    (root/(sys.argv[3]+'.ready')).touch()
+    deadline=time.monotonic()+15
+    while not (root/'release').exists():
+        if time.monotonic()>deadline:raise RuntimeError('Recovery writer gate timed out')
+        time.sleep(.005)
+    return db
+with patch.object(Path, 'replace', side_effect=PermissionError(13, 'Access is denied')), \\
+        patch('sports_analytics.result_cache.sqlite3.connect',side_effect=simultaneous_connect):
     assert save_json(Path(sys.argv[1]), {'identity':{'version':int(sys.argv[3])}}, Path(sys.argv[2]))
 """
         def writer(i):
             return subprocess.run([sys.executable,'-c',program,str(self.path.with_name(f'{i}.json')),str(self.root),str(i)],
                                   cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,timeout=20)
-        with ThreadPoolExecutor(max_workers=3) as pool:results=list(pool.map(writer,range(3)))
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            pending=[pool.submit(writer,i) for i in range(3)]
+            try:
+                deadline=time.monotonic()+10
+                while len(list(self.root.glob('*.ready')))<3:
+                    if all(future.done() for future in pending):break
+                    self.assertLess(time.monotonic(),deadline,'Recovery writers did not reach the shared database')
+                    time.sleep(.01)
+                self.assertEqual(len(list(self.root.glob('*.ready'))),3)
+            finally:(self.root/'release').touch()
+            results=[future.result() for future in pending]
         self.assertTrue(all(result.returncode==0 for result in results),[r.stderr for r in results])
         for i in range(3):
             self.assertEqual(load_json(self.path.with_name(f'{i}.json'),self.root,{'version':i}),{'identity':{'version':i}})
+
+    def test_temporary_sqlite_initialization_lock_is_retried_without_losing_the_result(self):
+        connect=sqlite3.connect
+        error=sqlite3.OperationalError('database is locked')
+        attempts=[]
+        def first_busy(*args,**kwargs):
+            attempts.append(True)
+            if len(attempts)==1:raise error
+            return connect(*args,**kwargs)
+        with self.block_replacements(),patch('sports_analytics.result_cache.sqlite3.connect',side_effect=first_busy):
+            self.assertTrue(save_json(self.path,self.data,self.root))
+            self.assertEqual(load_json(self.path,self.root,self.data['identity']),self.data)
+        self.assertGreaterEqual(len(attempts),2)
 
     def test_temporary_cleanup_lock_does_not_mask_a_successful_write(self):
         with patch.object(Path,'unlink',side_effect=denied()):atomic_json(self.path,self.data)
