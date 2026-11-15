@@ -105,8 +105,23 @@ class ConcurrencyChecks(TestCase):
 
     def test_dashboard_enables_cpu_isolation(self):
         with patch('sports_analytics.dashboard.BacktestingService', wraps=BacktestingService) as backend:
-            create_app()
+            application=create_app()
         self.assertTrue(backend.call_args.kwargs['isolated'])
+        self.assertIs(backend.call_args.kwargs['history_updater'],application._history_updates)
+
+    def test_injected_backtest_service_keeps_its_refresh_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            updater=Mock()
+            backend=BacktestingService(root=directory,history_updater=updater)
+            create_app(backtesting_service=backend)
+            self.assertIs(backend.history_updater,updater)
+
+    def test_offline_injected_backtest_service_does_not_gain_a_live_updater(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data=DataService(Path(directory)/'sports.sqlite3')
+            backend=BacktestingService(root=Path(directory)/'reports',data=data)
+            create_app(service=data,backtesting_service=backend)
+            self.assertIsNone(backend.history_updater)
 
     def test_player_workers_overlap_with_quick_filter_and_preserve_exact_results(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -147,6 +162,7 @@ class ConcurrencyChecks(TestCase):
             markets.history.return_value = [snapshot]
             application = create_app(service=data, backtesting_service=service,
                 nba_market_service=markets, whp_service=live)
+            self.assertIsNone(service.history_updater)
             callback = next(m['callback'].__wrapped__ for m in application.callback_map.values()
                 if m.get('callback') and m['callback'].__wrapped__.__name__ == 'quick_filter_markets')
             request = filter_context('#nba-game-123', snapshot['pulled_at'], ['PPP'], ['WHP'], criteria_values(0, -100))

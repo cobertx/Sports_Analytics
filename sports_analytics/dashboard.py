@@ -337,9 +337,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     filter_jobs=FilterJobs()
     exchange_pages={name:QuotePages(source) for name,source in [('Kalshi',kalshi_service),('Polymarket',polymarket_service)]
                     if getattr(source,'background',False) is True}
-    backtesting_service=backtesting_service or BacktestingService(data=service,isolated=True)
-    if isinstance(backtesting_service,BacktestingService) and isinstance(service,DataService):
-        backtesting_service.history_updater=history_updater
+    # Only configure the backend we create. Injected services own their inputs,
+    # clocks and refresh policy, including offline and historical replays.
+    backtesting_service=backtesting_service or BacktestingService(data=service,isolated=True,
+        history_updater=history_updater if isinstance(service,DataService) else None)
     career_service = career_service or CareerService(service.path.with_name("career.sqlite3"))
     schedule_service = schedule_service or ScheduleService(service.path.with_name("schedules.sqlite3"),background=True)
     odds_service = odds_service or OddsApiService()

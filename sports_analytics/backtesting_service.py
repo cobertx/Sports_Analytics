@@ -394,13 +394,14 @@ def player_quantile(forecast,q):
 
 
 class BacktestingService:
-    def __init__(self,root=None,data=None,now=None,*,isolated=False,publish_latest=True):
+    def __init__(self,root=None,data=None,now=None,*,isolated=False,publish_latest=True,history_updater=None):
         self.root=Path(root or ROOT/'data/backtesting')
         self.data=data or DataService()
         self.now=now or (lambda:pd.Timestamp.now(tz='UTC'))
         self._jobs={};self._jobs_lock=threading.RLock()
         self._report_lock=threading.Lock()
         self._publish_latest=publish_latest
+        self.history_updater=history_updater
         self._processes=None
         if isolated:
             from .backtest_process import BacktestProcesses
