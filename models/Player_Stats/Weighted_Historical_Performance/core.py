@@ -62,7 +62,7 @@ def eligible_history(frame, as_of):
         raise WHPError("History needs game IDs, dates, availability times and target values.")
     data = frame.copy()
     for key in ("event_date", "available_at"):
-        data[key] = pd.to_datetime(data[key], utc=True, errors="coerce")
+        data[key] = pd.to_datetime(data[key], utc=True, errors="coerce", format='mixed')
     cutoff = pd.Timestamp(as_of)
     if pd.isna(cutoff) or cutoff.tzinfo is None:
         raise WHPError("Prediction cutoff must include a timezone.")

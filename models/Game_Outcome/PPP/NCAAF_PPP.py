@@ -18,7 +18,7 @@ def college_history(frame,as_of):
     result=frame.copy()
     cutoff=pd.Timestamp(as_of)
     if cutoff.tzinfo is None:raise PPPError('College forecast cutoff must include a timezone.')
-    for c in ['event_date','available_at']:result[c]=pd.to_datetime(result[c],utc=True,errors='raise')
+    for c in ['event_date','available_at']:result[c]=pd.to_datetime(result[c],utc=True,errors='raise',format='mixed')
     result=result[result.event_date.lt(cutoff.normalize()) & result.available_at.lt(cutoff)
                   & result.available_at.ge(result.event_date)].copy()
     nums=['points','points_allowed','offensive_plays','defensive_plays','season','week','neutral','is_home']

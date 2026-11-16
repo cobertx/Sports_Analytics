@@ -73,7 +73,7 @@ class NBAPPPModel:
             raise PPPError("Prepare NBA team-game observations before fitting NBA PPP.")
         result = frame.copy()
         for column in ("event_date", "available_at"):
-            result[column] = pd.to_datetime(result[column], utc=True, errors="raise")
+            result[column] = pd.to_datetime(result[column], utc=True, errors="raise", format='mixed')
         cutoff = pd.Timestamp(as_of)
         if cutoff.tzinfo is None:
             raise PPPError("NBA forecast cutoff must include its timezone.")

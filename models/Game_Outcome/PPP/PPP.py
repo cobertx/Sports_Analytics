@@ -177,8 +177,8 @@ class PPPModel:
         if not required <= set(frame):
             raise PPPError("Prepare the NFL team/game modeling dataset before fitting PPP.")
         frame = frame.copy()
-        frame["event_date"] = pd.to_datetime(frame["event_date"], utc=True)
-        frame["available_at"] = pd.to_datetime(frame["available_at"], utc=True)
+        frame["event_date"] = pd.to_datetime(frame["event_date"], utc=True, format='mixed')
+        frame["available_at"] = pd.to_datetime(frame["available_at"], utc=True, format='mixed')
         cutoff = pd.Timestamp(as_of)
         cutoff = cutoff.tz_localize("UTC") if cutoff.tzinfo is None else cutoff.tz_convert("UTC")
         frame = frame[frame["available_at"].lt(cutoff) & frame["event_date"].lt(cutoff.normalize())].copy()

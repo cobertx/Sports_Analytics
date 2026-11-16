@@ -29,7 +29,7 @@ class NCAAFMarketForecastService:
             names=[snapshot['home_team'],snapshot['away_team']]
             frame,notices=self.data.prepare(names,snapshot['commence_time'])
             home,away=[self.data.resolve_school(t) for t in names]
-            for c in ['event_date','available_at']:frame[c]=pd.to_datetime(frame[c],utc=True)
+            for c in ['event_date','available_at']:frame[c]=pd.to_datetime(frame[c],utc=True,format='mixed')
             frame=frame[frame.event_date.lt(cutoff.normalize()) & frame.available_at.lt(cutoff)].reset_index(drop=True)
             root=Path(__file__).resolve().parents[1]
             files=[Path(__file__),root/'sports_analytics/ncaaf_model_data.py',root/'models/season_weights.py',

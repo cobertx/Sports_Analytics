@@ -55,6 +55,8 @@ jobs:
         run: python scripts/check_research.py
       - name: Check current-season model weighting and historical cutoffs
         run: python scripts/check_season_weights.py
+      - name: Check mixed timestamp formats and equivalent historical cutoffs
+        run: python scripts/check_mixed_timestamps.py
       - name: Check injury availability, historical comparisons and adjusted probability mass
         run: python scripts/check_availability.py
       - name: Check market links and relevant historical statistics

@@ -21,7 +21,7 @@ def aggregate_team_games(frame):
     if not required <= set(frame):
         raise DataSourceError("NBA PPP requires points, shot attempts, free throws, offensive rebounds and turnovers.")
     frame = frame.copy().reset_index(drop=True)
-    frame["event_date"] = pd.to_datetime(frame.event_date, utc=True, errors="coerce")
+    frame["event_date"] = pd.to_datetime(frame.event_date, utc=True, errors="coerce", format='mixed')
     frame["team"] = frame.team.replace({"BRK": "BKN", "CHO": "CHA", "PHO": "PHX"})
     frame["opponent"] = frame.opponent.replace({"BRK": "BKN", "CHO": "CHA", "PHO": "PHX"})
     if frame.duplicated(["game_id", "team"]).any():
@@ -50,7 +50,7 @@ def aggregate_team_games(frame):
                 or (pair.pts <= 0).any() or a.pts == b.pts):
             continue
         for own, opponent in ((a, b), (b, a)):
-            available=(pd.to_datetime(pair['available_at'],utc=True).max() if 'available_at' in pair else
+            available=(pd.to_datetime(pair['available_at'],utc=True,format='mixed').max() if 'available_at' in pair else
                        own.event_date.normalize()+pd.Timedelta(days=2))
             rows.append({"game_id": str(game_id), "team": own.team, "opponent": opponent.team,
                          "event_date": own.event_date.isoformat(),

@@ -13,7 +13,7 @@ def season_ids(frame, sport):
         supplied = pd.to_numeric(frame['season'], errors='coerce')
         if supplied.notna().all():
             return supplied
-    dates = pd.to_datetime(frame['event_date'], utc=True)
+    dates = pd.to_datetime(frame['event_date'], utc=True, format='mixed')
     inferred = dates.dt.year - dates.dt.month.lt(10 if sport == 'NBA' else 3).astype(int)
     if 'season' in frame:
         return supplied.fillna(inferred)

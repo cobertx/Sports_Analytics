@@ -242,7 +242,7 @@ class NflModelData:
                     if 'game_type' in finals:finals=finals[finals.game_type.ne('PRE')]
                     if not set(finals.game_id.astype(str))<=set(frame.game_id.astype(str)):
                         raise DataSourceError('NFL play-by-play inputs are missing completed games; current estimates will wait for published results.')
-                frame['available_at']=pd.to_datetime(frame.available_at,utc=True).clip(upper=pd.Timestamp.now(tz='UTC')).map(lambda t:t.isoformat())
+                frame['available_at']=pd.to_datetime(frame.available_at,utc=True,format='mixed').clip(upper=pd.Timestamp.now(tz='UTC')).map(lambda t:t.isoformat())
                 if prepared.exists():
                     from .history_freshness import retain_first_availability
                     frame=retain_first_availability(frame,pd.read_csv(prepared,dtype={'game_id':str}),['game_id','team'])

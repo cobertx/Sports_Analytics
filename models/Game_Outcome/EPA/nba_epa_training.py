@@ -141,7 +141,7 @@ def reconcile_game(possessions, events, box):
     for team, other in [(int(h.entity_id), int(a.entity_id)), (int(a.entity_id), int(h.entity_id))]:
         own, opposing = totals[team], totals[other]
         rows.append({"game_id": str(h.game_id), "team": str(ids[team].team), "opponent": str(ids[other].team),
-                     "event_date": date.isoformat(), "available_at": (pd.to_datetime(box.available_at,utc=True).max()
+                     "event_date": date.isoformat(), "available_at": (pd.to_datetime(box.available_at,utc=True,format='mixed').max()
                         if 'available_at' in box else date.normalize()+pd.Timedelta(days=2)).isoformat(),
                      "is_home": int(team == int(h.entity_id)), "points": float(ids[team].pts),
                      "points_allowed": float(ids[other].pts), "possessions": shared_pace,
