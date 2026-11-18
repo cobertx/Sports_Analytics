@@ -222,8 +222,12 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         # Forecast completion updates cells independently of the immediate quote view.
         if page!='market-summary' or not identities or not bundle or bundle.get('sport')!=sport or str(bundle['game']['id'])!=selected:
             raise PreventUpdate
-        clear=bool(models and models.get('clear') and models.get('bundle_id')==bundle['id']
-                   and models.get('method')==method and models.get('player_method')==player_method)
+        same_scope=bool(models and models.get('bundle_id')==bundle['id']
+                        and models.get('method')==method and models.get('player_method')==player_method)
+        # A completed result can become invalid after a policy or availability
+        # change. Clear its displayed values instead of retaining stale numbers.
+        clear=bool(same_scope and (models.get('clear') or not models.get('pending')
+                   and not analysis.current_models(models,bundle,method,player_method)))
         models=stored_models(models)
         ready=analysis.current_models(models,bundle,method,player_method)
         # The quote view already has pending placeholders. Do not dispatch

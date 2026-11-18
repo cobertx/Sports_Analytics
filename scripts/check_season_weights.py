@@ -181,9 +181,18 @@ class ProbabilityPolicyChecks(TestCase):
         self.assertTrue(current_models(models,bundle,'EPA','OAM'))
         old=deepcopy(models);old.pop('weighting_policy')
         self.assertFalse(current_models(old,bundle,'EPA','OAM'))
-        identity=dict(type='summary-model-cell',bundle=bundle['id'],provider='FanDuel',index=0,side='',metric='probability')
-        values,_=fixture.cb['summary_model_cells'](old,'EPA','OAM',[identity],'market-summary','NFL',bundle,'123')
-        self.assertNotIn('60.00%',str(values))
+        identity=dict(type='summary-model-cell',bundle=bundle['id'],provider='FanDuel',index=0,side='')
+        current=fixture.cb['summary_model_cells'](models,'EPA','OAM',[identity],'market-summary','NFL',bundle,'123')
+        values=fixture.cb['summary_model_cells'](old,'EPA','OAM',[identity],'market-summary','NFL',bundle,'123')
+        from check_kalshi import components
+        def displayed(value):
+            fields=[part.children.children for part in components(value) if part.__class__.__name__=='Dd']
+            return [(field[0],field[1].children) if isinstance(field,list) else field for field in fields]
+        self.assertEqual(displayed(current),[('66.67%','EPA'),'-200','+16.67 pp'])
+        self.assertEqual(displayed(values),[('—',''),'—','—'])
+        expired={**models,'availability_revision':['outdated']}
+        self.assertEqual(displayed(fixture.cb['summary_model_cells'](
+            expired,'EPA','OAM',[identity],'market-summary','NFL',bundle,'123')),[('—',''),'—','—'])
         fixture.engines['EPA'].forecast.reset_mock()
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
             fresh,_=fixture.cb['summary_models'](bundle,'EPA','OAM',0,'market-summary','NFL','123',old)
