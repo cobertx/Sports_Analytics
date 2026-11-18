@@ -50,8 +50,8 @@ def forecast_revision(service,sport):
 
 
 class PageTasks:
-    def __init__(self, capacity=4):
-        self.queue=RefreshQueue(workers=2)
+    def __init__(self, capacity=4, workers=2):
+        self.queue=RefreshQueue(workers=workers)
         self.lock=RLock();self.values=OrderedDict();self.generations={};self.capacity=capacity
         self.ready=Condition(self.lock)
         self.publish_locks={}
@@ -122,8 +122,9 @@ class QuotePages:
         key=self.key(game,category)
         self.tasks.put(key,dict(snapshot=snapshot,checked_at=self.now().isoformat()),lambda r:self.publish(key,r))
 
-    def read(self,game,category):
+    def read(self,game,category,*,poll=False):
         key=self.key(game,category);saved=self.tasks.peek(key)
+        first_read=saved is None
         if saved is None:
             try:
                 saved=json.loads((self.directory/(key+'.json')).read_text(encoding='utf-8'))
@@ -133,9 +134,14 @@ class QuotePages:
                 if saved is not None:self.tasks.put(key,saved)
             except (OSError,ValueError,KeyError,TypeError):saved=None
         checked=parse_time(saved.get('checked_at')) if saved else None
-        refresh=not checked or not 0 <= (self.now()-checked).total_seconds()<2 or bool(saved['snapshot'].get('updating'))
+        # A completion poll observes the current refresh. Starting another one
+        # here can keep a large, multi-batch market permanently pending.
+        refresh=(not poll or first_read) and (not checked or not 0 <= (self.now()-checked).total_seconds()<2 or bool(saved['snapshot'].get('updating')))
         def load():
-            snapshot=(self.service.all_quotes(game) if category=='All Markets' else self.service.quotes(game,category))
+            # PageTasks is already the background boundary. Finish one complete
+            # quote batch here instead of nesting the provider's stale reads and
+            # re-triggering their two-second refresh cycle on every page poll.
+            snapshot=(self.service.all_quotes(game,refresh=True) if category=='All Markets' else self.service.quotes(game,category,refresh=True))
             if (snapshot['sport'],snapshot['game_id'],snapshot['category'])!=(game['sport'],game['id'],category):
                 raise DataSourceError('The provider returned quotes for another game or category.')
             return dict(snapshot=snapshot,checked_at=self.now().isoformat())

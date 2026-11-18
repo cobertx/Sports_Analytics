@@ -165,7 +165,7 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
                 selected = 'live'
             archived = selected not in {None, 'live'} and not pull
             if archived:snapshot=service.saved(game,category,selected)
-            elif pages is not None and not pull:snapshot=pages.read(game,category)
+            elif pages is not None and not pull:snapshot=pages.read(game,category,poll=ctx.triggered_id==f'{prefix}-cache-poll')
             else:
                 snapshot=service.quotes(game,category,refresh=pull,save=pull)
                 if pages is not None:pages.remember(game,category,snapshot)

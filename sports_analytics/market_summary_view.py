@@ -1,5 +1,6 @@
 """Upcoming game cards and FanDuel-style quote ladders for all providers."""
 from collections import OrderedDict
+import math
 from dash import dcc,html
 
 from .display_time import format_eastern
@@ -9,10 +10,59 @@ from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
 from .market_summary import PROVIDERS
 from .lazy_markets import markets as lazy_markets
+from .nba_markets import NBA_MARKETS
+from .nfl_markets import NFL_MARKETS
+from .ncaaf_markets import NCAAF_MARKETS
 
 SUMMARY_BATCH = 6
 SUMMARY_STEP = 25
 EAGER_SELECTIONS = 100
+QUICK='Quick Filtering'
+METRICS=('probability','odds','edge')
+
+
+def provider_logo(provider):
+    return html.Img(src='/assets/providers/'+provider.lower()+'.ico',alt=provider,className='summary-provider-logo',title=provider)
+
+
+def quick_controls():
+    return html.Section([
+        dcc.Store(id='summary-quick-request'),dcc.Store(id='summary-quick-completed'),
+        dcc.Interval(id='summary-quick-poll',interval=1000,n_intervals=0,disabled=True),
+        html.H3(QUICK),html.P('Choose methods and thresholds, then run Quick Filtering. Each quote must pass both thresholds '
+            'under every selected method for its market type. Changing these controls does not start a calculation.',className='ppp-comparison-note'),
+        html.Div([
+            field('Game Outcome methods',dcc.Dropdown(id='summary-quick-game-methods',options=list(GAME_METHODS),value=['PPP'],multi=True)),
+            field('Player Forecast methods',dcc.Dropdown(id='summary-quick-player-methods',options=list(PLAYER_METHODS),value=['WHP'],multi=True)),
+        ],className='forecast-methods'),
+        html.Div([
+            field('Calculated probability above (%)',dcc.Input(id='summary-quick-probability',type='number',value=75,min=0,max=100,step='any')),
+            field('Edge above (percentage points)',dcc.Input(id='summary-quick-edge',type='number',value=5,min=-100,max=100,step='any')),
+            html.Button('Run Quick Filtering',id='summary-quick-run',n_clicks=0,className='apply-criteria-button'),
+        ],className='criteria-controls'),
+        html.Div(id='summary-quick-status',role='status',className='criteria-status'),
+        html.Div(id='summary-quick-results'),
+    ],id='summary-quick-panel',className='quick-filter-section',style={'display':'none'})
+
+
+def pull_estimate(sport,provider):
+    if provider!='FanDuel':return '0 Odds API credits · public market data'
+    package={'NBA':NBA_MARKETS,'NFL':NFL_MARKETS,'NCAAF':NCAAF_MARKETS}.get(sport)
+    return f'Estimated up to {len(package)} API credits' if package else 'Choose a sport to see the credit estimate'
+
+
+def source_pulls():
+    return html.Div([
+        html.Fieldset([
+            html.Legend(provider),
+            html.P('Select a game',id='summary-source-'+provider.lower()+'-status',className='summary-source-state',role='status'),
+            html.Button('Pull '+provider,id='summary-pull-'+provider.lower(),n_clicks=0,className='pull-markets-button',
+                title='Pull only '+provider+' quotes for this game'),
+            html.Small(pull_estimate(None,provider),id='summary-source-'+provider.lower()+'-cost',className='summary-source-cost',
+                title='The final charge depends on the markets returned.' if provider=='FanDuel' else 'This source does not use The Odds API.'),
+        ],id='summary-source-'+provider.lower(),disabled=True,className='summary-source-pull')
+        for provider in PROVIDERS
+    ],className='summary-source-pulls',role='group',**{'aria-label':'Pull individual market sources'})
 
 
 def field(label,control):
@@ -23,7 +73,7 @@ def layout():
     return html.Section([
         dcc.Store(id='summary-catalog'),dcc.Store(id='summary-quotes'),dcc.Store(id='summary-models'),dcc.Store(id='summary-rendered'),
         dcc.Store(id='summary-model-completed'),
-        dcc.Interval(id='summary-cache-poll',interval=1500,disabled=True),
+        dcc.Interval(id='summary-cache-poll',interval=1500,n_intervals=0,disabled=True),
         html.Section([
             html.Div([html.Div('MARKET DATA',className='eyebrow accent'),html.H2('Market Summary'),
                       html.P('Compare FanDuel, Kalshi and Polymarket quotes for one upcoming game.')],className='market-heading'),
@@ -46,7 +96,7 @@ def layout():
                 field('Game Outcome Forecast Method',dcc.Dropdown(id='summary-game-method',options=list(GAME_METHODS),value='PPP',clearable=False)),
                 field('Player Forecast Method',dcc.Dropdown(id='summary-player-method',options=list(PLAYER_METHODS),value='WHP',clearable=False)),
                 html.Button('Recalculate estimates',id='summary-recalculate',n_clicks=0,className='export-button'),
-            ],className='forecast-methods'),
+            ],id='summary-forecast-controls',className='forecast-methods'),
             html.P('Saved FanDuel quotes load without spending API credits. Kalshi and Polymarket use public quotes. '
                    'Pull Live Markets refreshes all three and saves their snapshots. Odds use American format; exchange buying prices '
                    'are also shown in cents per contract/share. Edge is before fees.',className='ppp-comparison-note'),
@@ -54,9 +104,11 @@ def layout():
                    'Equivalent integer thresholds share a row; hover over a quote for its original wording. '
                    'Lines with different push rules stay separate. A dash means no matching quote.',className='summary-comparison-note'),
             dcc.Loading(html.Div(id='summary-quote-status',className='load-status',role='status'),delay_show=500,color='#57dbc4',overlay_style={'visibility':'visible'}),
+            source_pulls(),
             html.Div(id='summary-model-status',className='forecast-history',role='status'),
-            dcc.Tabs(id='summary-category',value='All Markets',mobile_breakpoint=0,children=[dcc.Tab(label=value,value=value) for value in
-                     ['All Markets','Game Lines','Player Props','Other Markets']],className='market-category-tabs'),
+            dcc.Tabs(id='summary-category',value='Game Lines',mobile_breakpoint=0,children=[dcc.Tab(label=value,value=value) for value in
+                     ['Game Lines','Player Props',QUICK,'Other Markets']],className='market-category-tabs'),
+            quick_controls(),
             dcc.Loading(html.Div(id='summary-market-sections'),delay_show=500,color='#57dbc4',overlay_style={'visibility':'visible'}),
         ],id='summary-detail',style={'display':'none'}),
     ],id='market-summary-page',className='market-summary-page',style={'display':'none'})
@@ -92,6 +144,16 @@ def model_values(row):
     return values
 
 
+def metric_values(row,metric):
+    value,title=model_value(row,metric)
+    if metric=='edge':
+        return html.Span([html.Span(value,className='summary-edge '+('positive' if row['edge'] is not None and row['edge']>0 else
+                                                        'negative' if row['edge'] is not None and row['edge']<0 else '')),
+                          html.Small(row['edge_provider']) if row.get('edge_provider') else None],
+                         title='Calculated probability minus this provider’s implied probability, before fees.')
+    return html.Span(value,title=title)
+
+
 def comparison_rows(rows,category):
     groups=OrderedDict()
     for row in rows:
@@ -110,40 +172,92 @@ def comparison_rows(rows,category):
             for key,markets in groups.items()}
 
 
+def visible_comparisons(items,count):
+    """Keep every priced source represented when alternate ladders differ.
+
+    Preserve numeric line order within the visible window. Reserve up to two
+    rows per source, preferring shared comparisons, then fill from the full
+    ladder. Expanding the window eventually returns every original row.
+    """
+    if count<=0:return []
+    if count>=len(items):return items
+    priced=[{p for p,row in item['quotes'].items() if row.get('implied') is not None} for item in items]
+    required={p:min(2,sum(p in providers for providers in priced)) for p in PROVIDERS}
+    covered=dict.fromkeys(PROVIDERS,0);chosen=set()
+    for index in sorted(range(len(items)),key=lambda i:(-len(priced[i]),i)):
+        if not any(covered[p]<required[p] for p in priced[index]):continue
+        chosen.add(index)
+        for provider in priced[index]:covered[provider]+=1
+        if len(chosen)>=count or all(covered[p]>=required[p] for p in PROVIDERS):break
+    for index in range(len(items)):
+        if len(chosen)>=count:break
+        chosen.add(index)
+    return [items[index] for index in sorted(chosen)]
+
+
+def shared_estimate(quotes):
+    """Use one coherent, source-specific estimate and its corresponding edge."""
+    ranked=[(p,row) for p,row in quotes.items() if row.get('edge') is not None and math.isfinite(row['edge'])]
+    if ranked:
+        provider,row=max(ranked,key=lambda item:(item[1]['edge'],-PROVIDERS.index(item[0])))
+        return {**row,'edge_provider':provider}
+    modeled=[row for row in quotes.values() if row.get('probability') is not None]
+    available=modeled or list(quotes.values())
+    row=min(available,key=lambda row:row['implied'] if row.get('implied') is not None else math.inf)
+    return {**row,'edge_provider':None}
+
+
+def shared_cells(bundle,quotes):
+    anchor=next(quotes[p] for p in PROVIDERS if p in quotes)
+    row=shared_estimate(quotes)
+    return [html.Td(metric_values(row,metric),id=dict(type='summary-model-cell',bundle=bundle['id'],provider=anchor['provider'],
+        index=anchor['index'],side=anchor['side'] or '',metric=metric),className='summary-model-values summary-shared-cell'+
+        (' summary-model-start' if metric=='probability' else '')) for metric in METRICS]
+
+
 def quote_cell(bundle,row,snapshot,best):
     if row is None:
-        return html.Td(html.Span('—',title='No matching quote from this source'),className='summary-missing')
+        return [html.Td(html.Span('—',title='No matching quote from this source'),colSpan=2,className='summary-missing')]
     original=snapshot['rows'][row['index']]
-    return html.Td(html.Div([
+    price=html.Td(html.Div([
         html.Div([html.Strong(odds_text(row['odds'],row['implied']),className='summary-price'),
                   html.Span('Best price',className='summary-best-label') if best else None],className='summary-price-line'),
-        html.Div('Market implied '+probability_text(row['implied']),className='summary-implied'),
         html.Small(f"{100*row['ask']:.2f}¢ ask" if row['ask'] is not None else row['status'],className='summary-quote-detail'),
-        html.Dl(model_values(row),id=dict(type='summary-model-cell',bundle=bundle['id'],provider=row['provider'],
-            index=row['index'],side=row['side'] or ''),className='summary-model-values'),
-        history_button(snapshot,original,row['provider'],row['side'] or 'yes'),
-        structure_button(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary'),
-    ],title=row['selection'],className='summary-quote'+(' summary-best' if best else '')),className='summary-source-cell')
+        html.Details([html.Summary('Details',**{'aria-label':row['provider']+' history and market structure'}),
+            history_button(snapshot,original,row['provider'],row['side'] or 'yes'),
+            structure_button(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary'),
+        ],className='summary-quote-tools'),
+    ],title=row['selection'],className='summary-quote'+(' summary-best' if best else '')),className='summary-source-cell summary-provider-start',
+        **{'data-provider':row['provider']})
+    return [price,html.Td(probability_text(row['implied']),className='summary-source-cell summary-implied-cell',**{'data-provider':row['provider']})]
 
 
 def selection_table(bundle,items,title,snapshots,count):
     content=[]
-    for item in items[:count]:
+    for item in visible_comparisons(items,count):
         outcome=item['outcome'];quotes=item['quotes']
         priced=[row['implied'] for row in quotes.values() if row['implied'] is not None]
         best=min(priced) if len(priced)>1 else None
         content.append(html.Tr([
             html.Th([html.Span(outcome['label']),html.Small(outcome['note']) if outcome['note'] else None],scope='row',className='summary-selection'),
-            *[quote_cell(bundle,quotes.get(provider),snapshots.get(provider),best is not None and
-                         quotes.get(provider,{}).get('implied')==best) for provider in PROVIDERS],
+            *[cell for provider in PROVIDERS for cell in quote_cell(bundle,quotes.get(provider),snapshots.get(provider),best is not None and
+                         quotes.get(provider,{}).get('implied')==best)],
+            *shared_cells(bundle,quotes),
         ]))
-    return [html.Div(html.Table([
+    return [html.P('Scroll across the table to compare all sources and model columns.',className='summary-scroll-hint'),html.Div(html.Table([
         html.Caption(title+' — Market odds by source',className='summary-table-caption'),
-        html.Thead(html.Tr([html.Th('Market / Selection',scope='col'),*[html.Th(html.Span(provider,
-            className='summary-source-name summary-source-'+provider.lower()),scope='col') for provider in PROVIDERS]])),
+        html.Thead([
+            html.Tr([html.Th('Market / Selection',scope='col',rowSpan=2),*[html.Th(provider_logo(provider),
+                colSpan=2,scope='colgroup',className='summary-provider-head summary-source-'+provider.lower()) for provider in PROVIDERS],
+                html.Th('Model estimates',colSpan=3,scope='colgroup',className='summary-shared-head summary-model-start')]),
+            html.Tr([*[html.Th(label,scope='col') for provider in PROVIDERS for label in ['Market odds','Implied probability']],
+                     *[html.Th(label,scope='col',className='summary-shared-head'+(' summary-model-start' if i==0 else '')) for i,label in
+                       enumerate(['Calculated probability','Calculated odds','Best edge (pp)'])]]),
+        ]),
         html.Tbody(content),
     ],className='summary-table'),className='summary-table-scroll',tabIndex=0,role='region',**{'aria-label':title+' source comparison'}),
-        html.P(f'Showing {min(count,len(items))} of {len(items)} selections',className='summary-row-count')]
+        html.P(f'Showing {min(count,len(items))} of {len(items)} selections'+
+            (' · Includes prices from each available source. Show more to see additional lines.' if count<len(items) else ''),className='summary-row-count')]
 
 
 def sections(bundle,rows,category):
@@ -165,4 +279,36 @@ def sections(bundle,rows,category):
         categories.setdefault(group,[]).append(table);index+=1
     return [html.Section([html.H3(group,className='summary-category-heading'),*categories[group]],className='summary-category')
             for group in ('Game Lines','Player Props','Other Markets') if group in categories] or html.P(
+                'Loading source quotes. Each source appears here as soon as it is ready.' if bundle.get('updating') else
                 'No quoted selections are available in this category.',className='saved-market-empty')
+
+
+def quick_results(bundle,ranked,criteria):
+    snapshots={p:{**r['snapshot'],'game':r.get('game')} for p,r in bundle['providers'].items() if r.get('snapshot')}
+    def table(items,start):
+        content=[]
+        for rank,row in enumerate(items,start):
+            snapshot=snapshots[row['provider']];original=snapshot['rows'][row['index']]
+            details='; '.join(f"{v['method']}: {probability_text(v['probability'])}, {v['edge']*100:+.2f} pp" for v in row['estimates'])
+            content.append(html.Tr([html.Td(rank),html.Th([row['selection'],html.Div([
+                history_button(snapshot,original,row['provider'],row['side'] or 'yes'),
+                structure_button(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary')])],scope='row'),
+                html.Td(provider_logo(row['provider'])),html.Td(row['method'],title=details),
+                html.Td(odds_text(row['odds'],row['implied'])),html.Td(probability_text(row['implied'])),
+                html.Td(probability_text(row['probability'])),html.Td(metric_values(row,'odds')),html.Td(metric_values(row,'edge'))]))
+        return html.Div(html.Table([html.Thead(html.Tr([html.Th(label,scope='col') for label in
+            ['Rank','Selection','Source','Methods','Market odds','Implied probability','Lowest calculated probability','Calculated odds','Lowest edge (pp)']])),
+            html.Tbody(content or html.Tr(html.Td('No qualifying markets.',colSpan=9)))],className='summary-quick-table'),
+            className='summary-table-scroll',tabIndex=0,role='region',**{'aria-label':'Quick Filtering rankings'})
+    matches=ranked['matches']
+    return html.Div([
+        html.P(f"{len(matches)} qualifying quotes · {ranked['evaluated']} evaluated · {ranked['unavailable']} unavailable. "
+               f"Probability > {criteria['probability']*100:g}% and edge > {criteria['edge']*100:g} pp under every selected method.",
+               className='criteria-evaluation',role='status'),
+        *[html.P(error,className='mispricing-error',role='status') for error in ranked['errors']],
+        html.H3('Top 3 by edge'),table(matches[:3],1),
+        html.H3('Remaining qualifying quotes'),lazy_markets.panel(lazy_markets.view(),0,
+            lambda count:table(matches[3:3+count],4),max(0,len(matches)-3),size=25),
+        html.P('Ranking uses the lowest edge across the selected methods. Calculated odds use the lowest calculated probability. '
+               'Source prices and each contract’s settlement rules are preserved. Edge is before fees.',className='ppp-comparison-note'),
+    ],className='summary-quick-ranking')

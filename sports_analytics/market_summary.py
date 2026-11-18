@@ -137,7 +137,7 @@ def current_models(models,bundle,method,player_method):
                 [models.get('bundle_id'),models.get('method'),models.get('player_method')]==[bundle['id'],method,player_method])
 
 
-def calculate(bundle,method,player_method,game_forecast,player_forecast):
+def calculate(bundle,method,player_method,game_forecast,player_forecast,*,kinds=('game','player')):
     rows=entries(bundle);game=bundle['game'];sport=bundle['sport']
     stamps=[parse_time(record['snapshot'].get('pulled_at') or record['snapshot'].get('fetched_at') or
                        record['snapshot'].get('metadata_fetched_at')) for record in bundle['providers'].values() if record.get('snapshot')]
@@ -154,14 +154,15 @@ def calculate(bundle,method,player_method,game_forecast,player_forecast):
                 away_team=team_identity(game['away']['name'],sport)['name'],commence_time=start.isoformat(),
                 pulled_at=cutoff.isoformat(),game={'neutral':bool(game.get('neutral',False))},rows=list(unique.values()))
     tasks={}
-    if any(not target['market_key'].startswith('player_') for target in unique.values()):
+    if 'game' in kinds and any(not target['market_key'].startswith('player_') for target in unique.values()):
         tasks['game']=lambda:game_forecast(source,method)
-    if any(target['market_key'].startswith('player_') for target in unique.values()):
+    if 'player' in kinds and any(target['market_key'].startswith('player_') for target in unique.values()):
         tasks['player']=lambda:player_forecast(source,player_method)
     forecasts=run_forecasts(tasks,sport) if tasks else {}
     for row in rows:
         target=row['target']
         if not target:continue
+        if ('player' if target['market_key'].startswith('player_') else 'game') not in kinds:continue
         player=target['market_key'].startswith('player_');row['method']=player_method if player else method
         forecast=forecasts.get('player' if player else 'game',(None,None))[0]
         try:

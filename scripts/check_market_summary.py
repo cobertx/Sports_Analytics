@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 from threading import Barrier
+from time import perf_counter,sleep
 from types import SimpleNamespace
 from unittest import TestCase,main
 from unittest.mock import Mock,patch
@@ -18,7 +19,7 @@ from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.market_summary import calculate,entries,matching_game,polymarket_target,route
-from sports_analytics.market_summary_view import sections,comparison_rows,selection_table,SUMMARY_BATCH,SUMMARY_STEP
+from sports_analytics.market_summary_view import sections,comparison_rows,selection_table,pull_estimate,SUMMARY_BATCH,SUMMARY_STEP,visible_comparisons,shared_estimate
 from sports_analytics.lazy_markets import markets as lazy_markets
 from sports_analytics.mispricing import GAME_METHODS,PLAYER_METHODS
 from check_kalshi import components
@@ -76,6 +77,34 @@ class PlayerForecast:
 
 
 class SummaryAnalysisChecks(TestCase):
+    def test_fanduel_alternate_lines_cannot_push_all_kalshi_quotes_out_of_view(self):
+        source=bundle();source['providers'].pop('Polymarket')
+        source['providers']['FanDuel']['snapshot']['rows']=[dict(group='Game',market='Total',market_key='alternate_totals',
+            subject=side,selection=side,line=line+.5,odds=-110) for line in range(16,71) for side in ('Over','Under')]
+        source['providers']['Kalshi']['snapshot']['rows']=[{**binary(),'ticker':f'TOTAL-{line}','line':line} for line in range(20,63,3)]
+        items=comparison_rows(entries(source),'Game Lines')['Game Lines','Game Total']
+        self.assertTrue(all(set(item['quotes'])=={'FanDuel'} for item in items[:SUMMARY_BATCH]))
+        shown=visible_comparisons(items,SUMMARY_BATCH)
+        self.assertEqual(len(shown),SUMMARY_BATCH)
+        self.assertGreaterEqual(sum('Kalshi' in item['quotes'] for item in shown),2)
+        self.assertEqual([item['outcome']['line'] for item in shown],sorted(item['outcome']['line'] for item in shown))
+        models=calculate(source,'PPP','WHP',lambda *a:(GameForecast(),None),lambda *a:(PlayerForecast(),None,{}))
+        view=sections(source,models['rows'],'Game Lines')
+        prices=[c for c in components(view) if getattr(c,'className',None)=='summary-source-cell summary-implied-cell' and getattr(c,'data-provider',None)=='Kalshi']
+        self.assertGreaterEqual(len(prices),2);self.assertTrue(all('%' in str(c.children) for c in prices))
+        self.assertEqual(visible_comparisons(items,len(items)),items)
+        self.assertEqual(visible_comparisons(items,0),[])
+
+    def test_disjoint_source_ladders_all_have_prices_in_the_initial_window(self):
+        items=[dict(outcome=dict(line=i),quotes={provider:dict(implied=0 if i==0 else .5)})
+               for provider,lower in [('FanDuel',0),('Kalshi',100),('Polymarket',200)] for i in range(lower,lower+20)]
+        shown=visible_comparisons(items,SUMMARY_BATCH)
+        for provider in ('FanDuel','Kalshi','Polymarket'):
+            self.assertEqual(sum(provider in item['quotes'] for item in shown),2)
+        expanded=visible_comparisons(items,SUMMARY_BATCH+SUMMARY_STEP)
+        self.assertTrue(all(any(item is current for current in expanded) for item in shown))
+        self.assertEqual(len(expanded),SUMMARY_BATCH+SUMMARY_STEP)
+
     def test_large_summary_mounts_bounded_rows_and_keeps_every_selection_available(self):
         source=bundle();source['providers']={'Kalshi':source['providers']['Kalshi']}
         snapshot=source['providers']['Kalshi']['snapshot']
@@ -137,11 +166,16 @@ class SummaryAnalysisChecks(TestCase):
             rendered=sections(source,entries(source),'Game Lines')
             table=next(c for c in components(rendered) if c.__class__.__name__=='Table')
             header=next(c for c in components(table) if c.__class__.__name__=='Thead')
-            self.assertEqual(len(header.children.children),4)
+            self.assertEqual(len(header.children[0].children),5)
+            self.assertEqual(len(header.children[1].children),9)
+            self.assertEqual([c.colSpan for c in header.children[0].children[1:]],[2,2,2,3])
             self.assertIn('FanDuel',str(header));self.assertIn('Kalshi',str(header));self.assertIn('Polymarket',str(header))
             body=next(c for c in components(table) if c.__class__.__name__=='Tbody')
             self.assertEqual(len(body.children),2)
-            self.assertTrue(all(len(row.children)==4 for row in body.children))
+            self.assertTrue(all(sum(getattr(cell,'colSpan',1) for cell in row.children)==10 for row in body.children))
+            for row in body.children:
+                self.assertEqual(sum('summary-model-values' in getattr(cell,'className','') for cell in row.children),3)
+                self.assertTrue(all('summary-model-values' not in getattr(cell,'className','') for cell in row.children[1:7]))
             self.assertIn('summary-best',str(rendered));self.assertIn('Historical Data',str(rendered))
 
     def test_push_lines_and_unsupported_contracts_are_never_merged(self):
@@ -183,8 +217,22 @@ class SummaryAnalysisChecks(TestCase):
         self.assertIn(('Player Props','Another Quarterback - Alt Passing Yds'),groups)
         rendered=sections(source,entries(source),'Player Props')
         identities=[c.id for c in components(rendered) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-cell']
-        self.assertEqual(len(identities),8)
-        self.assertEqual(len({str(identity) for identity in identities}),8)
+        count=sum(len(items) for items in groups.values())*3
+        self.assertEqual(len(identities),count)
+        self.assertEqual(len({str(identity) for identity in identities}),count)
+
+    def test_shared_estimate_keeps_probability_odds_and_edge_from_one_quote(self):
+        quotes={'FanDuel':dict(provider='FanDuel',probability=.8,model_odds=-400,implied=.7,edge=.1),
+                'Kalshi':dict(provider='Kalshi',probability=.65,model_odds=-186,implied=.4,edge=.25)}
+        chosen=shared_estimate(quotes)
+        self.assertEqual((chosen['probability'],chosen['model_odds'],chosen['edge'],chosen['edge_provider']),(.65,-186,.25,'Kalshi'))
+        self.assertEqual(quotes['FanDuel']['probability'],.8)
+        self.assertNotIn('edge_provider',quotes['Kalshi'])
+
+    def test_shared_probability_uses_the_best_price_when_estimates_agree(self):
+        quotes={'FanDuel':dict(provider='FanDuel',probability=.7,model_odds=-233,implied=.6,edge=.1),
+                'Kalshi':dict(provider='Kalshi',probability=.7,model_odds=-233,implied=.4,edge=.3)}
+        self.assertEqual(shared_estimate(quotes)['edge_provider'],'Kalshi')
 
     def test_polymarket_team_handicaps_and_equality_rules_are_preserved(self):
         snapshot={**bundle()['providers']['Polymarket']['snapshot'],'game':exchange('Polymarket')}
@@ -251,7 +299,7 @@ class SummaryAnalysisChecks(TestCase):
         self.assertIn('PPP: No team history',models['errors'])
         rendered=sections(source,models['rows'],'All Markets')
         self.assertIn('FanDuel',str(rendered));self.assertIn('Kalshi',str(rendered));self.assertIn('Polymarket',str(rendered))
-        self.assertIn('Historical Data',str(rendered));self.assertIn('Model fair odds',str(rendered))
+        self.assertIn('Historical Data',str(rendered));self.assertIn('Calculated odds',str(rendered))
 
     def test_zero_and_one_probabilities_and_quote_endpoints_are_preserved(self):
         class Certain(PlayerForecast):
@@ -315,6 +363,113 @@ class SummaryCallbackChecks(TestCase):
         self.assertEqual(self.kalshi.all_quotes.call_args.kwargs,dict(refresh=True,save=True))
         self.assertEqual(self.poly.all_quotes.call_args.kwargs,dict(refresh=True,save=True))
 
+    def test_individual_pull_controls_show_costs_for_all_supported_sports(self):
+        ids={getattr(c,'id',None):c for c in components(self.app.layout) if isinstance(getattr(c,'id',None),str)}
+        for provider in ('FanDuel','Kalshi','Polymarket'):
+            self.assertEqual(ids['summary-pull-'+provider.lower()].children,'Pull '+provider)
+            self.assertTrue(ids['summary-source-'+provider.lower()].disabled)
+        for sport,cost in [('NBA',13),('NFL',17),('NCAAF',17)]:
+            self.assertEqual(pull_estimate(sport,'FanDuel'),f'Estimated up to {cost} API credits')
+            for provider in ('Kalshi','Polymarket'):self.assertIn('0 Odds API credits',pull_estimate(sport,provider))
+
+    def test_source_controls_enable_only_current_matched_sources_in_the_browser(self):
+        from check_navigation_pipeline import node,run_client
+        if not node():self.skipTest('Node unavailable')
+        refs=[]
+        for sport in ('NBA','NFL','NCAAF'):
+            catalog=dict(sport=sport,games=[dict(id='123')])
+            data=dict(sport=sport,game=dict(id='123'),providers={
+                'FanDuel':dict(game=dict(id='123'),snapshot=None,error='No saved snapshot'),
+                'Kalshi':dict(game=dict(id='KX'),snapshot=dict(rows=[{}])),
+                'Polymarket':dict(game=None,snapshot=None)})
+            refs.append(dict(output='summary-source-fanduel.disabled',args=['market-summary',sport,'123',catalog,data],
+                expected=[False,False,True,'Unavailable · ready to retry','1 market loaded',
+                          'No matching event · refresh upcoming games',pull_estimate(sport,'FanDuel')]))
+            refs.append(dict(output='summary-source-fanduel.disabled',args=['market-summary',sport,'other-game',catalog,data],
+                expected=[True,True,True,'Select a game','Select a game','Select a game',pull_estimate(sport,'FanDuel')]))
+        self.assertEqual(run_client(self.app,references=refs,steps=[])['checks'],len(refs))
+
+    def test_missing_fanduel_can_be_pulled_without_refreshing_other_sources(self):
+        self.fd.latest.return_value={};previous,_=self.quotes()
+        self.assertIsNone(previous['providers']['FanDuel']['snapshot'])
+        for service in (self.fd,self.kalshi,self.poly):service.reset_mock()
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
+            result,_=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,None,1,0,0)
+        self.fd.pull.assert_called_once();self.fd.latest.assert_not_called()
+        self.assertIn(':FanDuel:1',self.fd.pull.call_args.args[1])
+        for provider,service in [('Kalshi',self.kalshi),('Polymarket',self.poly)]:
+            service.all_quotes.assert_not_called();service.games.assert_not_called()
+            self.assertEqual(result['providers'][provider],previous['providers'][provider])
+        self.assertIsNotNone(result['providers']['FanDuel']['snapshot'])
+
+    def test_individual_exchange_pull_never_calls_fanduel_or_the_other_exchange(self):
+        previous,_=self.quotes()
+        for provider,service,counts in [('Kalshi',self.kalshi,(0,1,0)),('Polymarket',self.poly,(0,0,1))]:
+            with self.subTest(provider=provider):
+                for candidate in (self.fd,self.kalshi,self.poly):candidate.reset_mock()
+                with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-'+provider.lower())):
+                    result,_=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,None,*counts)
+                service.all_quotes.assert_called_once_with(exchange(provider),refresh=True,save=True)
+                self.fd.pull.assert_not_called();self.fd.latest.assert_not_called()
+                other=self.poly if provider=='Kalshi' else self.kalshi
+                other.all_quotes.assert_not_called()
+                for name in ('FanDuel','Kalshi','Polymarket'):
+                    if name!=provider:self.assertEqual(result['providers'][name],previous['providers'][name])
+
+    def test_fanduel_pull_keeps_exchange_snapshots_when_schedule_metadata_changes(self):
+        previous=self.quotes()[0];catalog=deepcopy(self.catalog)
+        catalog['games'][0]['venue']='Updated venue'
+        catalog['games'][0]['home']['id']='18'
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
+            result,_=self.cb['summary_quotes']('123',catalog,0,'market-summary','NFL',previous,None,1,0,0)
+        for provider in ('Kalshi','Polymarket'):
+            self.assertEqual(result['providers'][provider],previous['providers'][provider])
+
+    def test_expired_reference_cannot_erase_other_sources_or_spend_credits(self):
+        previous=dict(id='expired',quote_ref='released',sport='NFL',game=game())
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
+            result,status=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,None,1,0,0)
+        self.assertIs(result,no_update);self.fd.pull.assert_not_called();self.assertIn('No pull was made',str(status))
+
+    def test_failed_individual_pull_keeps_saved_quotes_and_model_identity(self):
+        previous,_=self.quotes();before=deepcopy(previous)
+        self.fd.pull.side_effect=DataSourceError('Credit allowance exhausted')
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
+            result,status=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,None,1,0,0)
+        self.assertEqual(result['id'],previous['id'])
+        self.assertEqual(result['providers']['FanDuel']['snapshot'],previous['providers']['FanDuel']['snapshot'])
+        self.assertIn('Saved quotes kept',str(status));self.assertIn('Credit allowance exhausted',result['providers']['FanDuel']['error'])
+        self.assertEqual(previous,before)
+        result['updating']=True
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+            unchanged,status=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',result,1,1,0,0)
+        self.assertIs(unchanged,no_update);self.assertIn('Credit allowance exhausted',str(status))
+        self.fd.pull.assert_called_once()
+
+    def test_individual_pull_without_previous_bundle_does_not_load_other_sources(self):
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
+            result,_=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',None,None,1,0,0)
+        self.fd.pull.assert_called_once();self.fd.latest.assert_not_called()
+        self.kalshi.all_quotes.assert_not_called();self.poly.all_quotes.assert_not_called()
+        self.assertIsNone(result['providers']['Kalshi']['snapshot'])
+        self.assertIsNone(result['providers']['Polymarket']['snapshot'])
+
+    def test_unmatched_exchange_pull_keeps_other_sources_and_spends_no_credits(self):
+        previous,_=self.quotes();catalog={**self.catalog,'Kalshi':dict(games=[])}
+        for service in (self.fd,self.kalshi,self.poly):service.reset_mock()
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-kalshi')):
+            result,status=self.cb['summary_quotes']('123',catalog,0,'market-summary','NFL',previous,None,0,1,0)
+        self.kalshi.all_quotes.assert_not_called();self.poly.all_quotes.assert_not_called();self.fd.pull.assert_not_called()
+        self.assertIn('No unambiguous matching event',str(status))
+        self.assertEqual(result['providers']['Polymarket'],previous['providers']['Polymarket'])
+
+    def test_previous_source_click_count_cannot_trigger_another_paid_pull_on_poll(self):
+        self.kalshi.all_quotes.return_value['updating']=True
+        previous,_=self.quotes()
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+            self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,1,1,0,0)
+        self.fd.pull.assert_not_called()
+
     def test_provider_failures_and_wrong_games_do_not_hide_other_quotes(self):
         self.kalshi.all_quotes.side_effect=DataSourceError('Provider offline')
         self.poly.all_quotes.return_value=dict(self.poly.all_quotes.return_value,game_id='another-game')
@@ -337,6 +492,35 @@ class SummaryCallbackChecks(TestCase):
             with self.assertRaises(PreventUpdate):
                 self.cb['summary_catalog']('market-summary','NFL',7,0,{**self.catalog,'updating':False},3)
         self.fd.pull.assert_not_called()
+
+    def test_pending_source_poll_does_not_restart_sources_that_already_completed(self):
+        previous=self.quotes()[0]
+        previous['updating']=True
+        previous['providers']['Polymarket']['snapshot']={**previous['providers']['Polymarket']['snapshot'],'updating':True}
+        self.fd.latest.reset_mock();self.kalshi.all_quotes.reset_mock();self.poly.all_quotes.reset_mock()
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+            completed,_=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,1)
+        self.fd.latest.assert_not_called();self.kalshi.all_quotes.assert_not_called()
+        self.poly.all_quotes.assert_called_once()
+        self.assertEqual(completed['providers']['Kalshi'],previous['providers']['Kalshi'])
+
+    def test_overlapping_completion_polls_publish_one_forecast_identity(self):
+        self.kalshi.all_quotes.return_value['updating']=True
+        previous=self.quotes()[0]
+        self.kalshi.all_quotes.return_value={**self.kalshi.all_quotes.return_value,'updating':False,
+            'fetched_at':'2026-10-24T12:05:00Z'}
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+            a=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',deepcopy(previous),1)[0]
+            b=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',deepcopy(previous),2)[0]
+        self.assertEqual(a['id'],b['id']);self.assertNotEqual(a['id'],previous['id'])
+
+    def test_refresh_notices_do_not_invalidate_forecasts_for_identical_prices(self):
+        self.kalshi.all_quotes.return_value['updating']=True
+        previous=self.quotes()[0]
+        self.kalshi.all_quotes.return_value={**self.kalshi.all_quotes.return_value,'updating':False,'notices':['Refresh complete']}
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+            completed=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,1)[0]
+        self.assertEqual(completed['id'],previous['id']);self.assertFalse(completed['updating'])
 
     def test_pending_catalog_poll_bypasses_recent_check_and_stops_after_refresh(self):
         self.schedule.load.return_value.updating=True
@@ -418,11 +602,20 @@ class SummaryCallbackChecks(TestCase):
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
             catalog,status=self.cb['summary_catalog']('market-summary','NFL',7,0,None)
         self.assertEqual(len(catalog['games']),1)
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id={'type':'summary-game-choice','game':'123'})):
-            options,selected=self.cb['summary_choose'](catalog,[1],0,None)
-        self.assertEqual(selected,'123');self.assertEqual(len(options),1)
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-back')):
-            self.assertIsNone(self.cb['summary_choose'](catalog,[],1,'123')[1])
+        self.assertEqual(len(self.cb['summary_options'](catalog)),1)
+
+    def test_late_catalog_response_cannot_overwrite_a_newer_game_click(self):
+        from check_navigation_pipeline import node,run_client
+        if not node():self.skipTest('Node unavailable')
+        refs=[]
+        for trigger,clicks,previous,expected in [
+            (dict(type='summary-game-choice',game='123'),[1],None,'123'),
+            ('summary-catalog',[1],'123',{'_dash_no_update':'_dash_no_update'}),
+            ('summary-catalog',[],None,{'_dash_no_update':'_dash_no_update'}),
+            ('summary-catalog',[],'old-game',None),('summary-back',[],'123',None)]:
+            refs.append(dict(output='summary-game.value',args=[self.catalog,clicks,1,previous],
+                context=dict(triggered_id=trigger),expected=expected))
+        self.assertEqual(run_client(self.app,references=refs,steps=[])['checks'],len(refs))
 
     def test_real_dash_http_quote_model_and_table_callbacks_serialize(self):
         values={'summary-game':'123','summary-catalog':self.catalog,'summary-pull':0,'workspace-page':'market-summary','sport':'NFL',
@@ -431,15 +624,28 @@ class SummaryCallbackChecks(TestCase):
         with self.app.server.test_client() as client:
             for name in ['summary_quotes','summary_models','summary_sections']:
                 key,meta=next((k,m) for k,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__==name)
-                response=client.post('/_dash-update-component',json=dict(output=key,
-                    outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                    inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
-                    state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['summary-game.value']))
+                def send(trigger):
+                    return client.post('/_dash-update-component',json=dict(output=key,
+                        outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
+                        inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+                        state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=[trigger]))
+                response=send('summary-game.value')
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 result=response.get_json()['response']
-                if name=='summary_quotes':values['summary-quotes']=result['summary-quotes']['data']
+                if name=='summary_quotes':
+                    values['summary-quotes']=result['summary-quotes']['data'];deadline=perf_counter()+5
+                    while values['summary-quotes']['updating'] and perf_counter()<deadline:
+                        values['summary-cache-poll']+=1
+                        response=send('summary-cache-poll.n_intervals')
+                        self.assertEqual(response.status_code,200,response.get_data(as_text=True))
+                        update=response.get_json()['response'].get('summary-quotes')
+                        if update:values['summary-quotes']=update['data']
+                        sleep(.005)
+                    self.assertFalse(values['summary-quotes']['updating'])
+                    self.assertIn('quote_ref',values['summary-quotes'])
+                    self.assertNotIn('rows',values['summary-quotes']['providers']['Kalshi']['snapshot'])
                 elif name=='summary_models':values['summary-models']=result['summary-models']['data']
-                else:self.assertIn('Model fair odds',str(result));self.assertIn('Polymarket',str(result))
+                else:self.assertIn('Calculated odds',str(result));self.assertIn('Polymarket',str(result))
         self.fd.pull.assert_not_called()
 
     def test_quote_view_is_independent_of_forecasts_and_model_completion_only_updates_cells(self):
@@ -449,7 +655,8 @@ class SummaryCallbackChecks(TestCase):
         quoted,_=self.quotes()
         raw,_=self.cb['summary_sections'](quoted,None,'All Markets','PPP','WHP','123','market-summary','NFL')
         identities=[c.id for c in components(raw) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-cell']
-        self.assertEqual(len(identities),10);self.assertIn('Market odds',str(raw))
+        row_count=sum(len(c.children) for c in components(raw) if c.__class__.__name__=='Tbody')
+        self.assertEqual(len(identities),3*row_count);self.assertIn('Market odds',str(raw))
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             models,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None)
         key,meta=next((key,meta) for key,meta in self.app.callback_map.items() if meta.get('callback') and
@@ -464,10 +671,24 @@ class SummaryCallbackChecks(TestCase):
                 state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['summary-models.data']))
         self.assertEqual(response.status_code,200,response.get_data(as_text=True))
         data=response.get_json()['response']
-        self.assertEqual(len(data),10);self.assertIn('70.00%',str(data));self.assertNotIn('summary-market-sections',data)
+        self.assertEqual(len(data),3*row_count);self.assertIn('70.00%',str(data));self.assertNotIn('summary-market-sections',data)
         with self.assertRaises(PreventUpdate):
             self.cb['summary_model_cells'](models,'EPA','OAM',identities,'market-summary','NFL',quoted,'123')
         self.fd.pull.assert_not_called()
+
+    def test_shared_cells_update_to_best_edge_source_without_changing_row_identity(self):
+        self.poly.all_quotes.return_value['rows'][0]['yes_ask']=.4
+        quoted,_=self.quotes()
+        raw,_=self.cb['summary_sections'](quoted,None,'Game Lines','PPP','WHP','123','market-summary','NFL')
+        identities=[c.id for c in components(raw) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-cell'
+                    and c.id['provider']=='Kalshi' and c.id['index']==0 and c.id['side']=='yes']
+        self.assertEqual(len(identities),3)
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
+            models,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None)
+        values=self.cb['summary_model_cells'](models,'PPP','WHP',identities,'market-summary','NFL',quoted,'123')
+        by_metric={identity['metric']:str(value) for identity,value in zip(identities,values)}
+        self.assertIn('70.00%',by_metric['probability']);self.assertIn('-233',by_metric['odds'])
+        self.assertIn('+30.00 pp',by_metric['edge']);self.assertIn('Polymarket',by_metric['edge'])
 
 
 if __name__=='__main__':main()

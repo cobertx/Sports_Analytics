@@ -130,6 +130,8 @@ jobs:
         run: python scripts/check_polymarket.py
       - name: Check combined market summary, matching and forecast settlement
         run: python scripts/check_market_summary.py
+      - name: Check Market Summary method consensus and button-triggered filtering
+        run: python scripts/check_summary_filtering.py
       - name: Check cross-provider market structure and activity accounting
         run: python scripts/check_market_structure.py
       - name: Check market structure dialog keyboard support syntax

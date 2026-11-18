@@ -1,5 +1,6 @@
 """Isolated navigation, quote collection and forecast callbacks for Market Summary."""
 from concurrent.futures import ThreadPoolExecutor
+import json
 from time import time
 from uuid import uuid4
 
@@ -7,6 +8,7 @@ from .navigation import scoped_callback,register_visibility,summary_visibility
 
 from dash import ALL,Input,Output,State,ctx,html,no_update
 from dash.exceptions import PreventUpdate
+from flask import has_request_context
 
 from .data import DataSourceError,SOURCES
 from .display_time import format_eastern
@@ -17,6 +19,8 @@ from .ncaaf_markets import NCAAF_MARKETS
 from .mispricing import GAME_METHODS,PLAYER_METHODS
 from .filter_jobs import request_key
 from .availability import revision as availability_revision
+from .summary_quote_jobs import SummaryQuoteJobs
+from .page_cache import PageTasks
 from . import market_summary as analysis
 from . import market_summary_view as view
 
@@ -26,7 +30,43 @@ def attempt(function):
     except (DataSourceError,OSError,ValueError,TypeError) as exc:return None,str(exc)
 
 
+def quote_version(sport,game,providers):
+    """Forecast inputs, excluding refresh notices and other presentation state."""
+    transient={'notices','updating','page_pending','saved'}
+    return request_key([sport,game,[[p,r.get('game'),
+        {k:v for k,v in r['snapshot'].items() if k not in transient} if r.get('snapshot') else None]
+        for p,r in sorted(providers.items())]])
+
+
 def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast,pages=None,tasks=None,source_revision=None):
+    quote_jobs=SummaryQuoteJobs()
+    quick_jobs=PageTasks(capacity=8)
+    from .summary_filter_callbacks import register as register_quick
+    register_quick(app,quote_jobs,quick_jobs,game_forecast,player_forecast,source_revision)
+    costs={sport:view.pull_estimate(sport,'FanDuel') for sport in SOURCES}
+    app.clientside_callback('''function(page,sport,selected,catalog,bundle){
+        const costs='''+json.dumps(costs)+''';
+        const valid=page==='market-summary'&&catalog?.sport===sport&&
+            (catalog.games||[]).some(game=>String(game.id)===selected);
+        const current=valid&&bundle?.sport===sport&&String(bundle.game?.id)===selected;
+        const disabled=[],labels=[];
+        for(const provider of ['FanDuel','Kalshi','Polymarket']){
+            const record=current?bundle.providers?.[provider]:null,snapshot=record?.snapshot;
+            const count=snapshot?.row_count??(snapshot?.rows||[]).length,markets=count===1?'market':'markets';
+            const matched=provider==='FanDuel'||!!record?.game;
+            disabled.push(!valid||!matched);
+            labels.push(!valid?'Select a game':!current?'Checking source availability…':!matched?
+                'No matching event · refresh upcoming games':record?.error?
+                (count?'Pull failed · saved quotes shown':'Unavailable · ready to retry'):!snapshot?'No quotes loaded':
+                snapshot.updating?(count?`${count} saved ${markets} · updating`:'Loading source quotes…'):
+                count?`${count} ${markets} loaded`:'No markets returned');
+        }
+        return [...disabled,...labels,costs[sport]||'Choose a sport to see the credit estimate'];
+    }''',*[Output('summary-source-'+p.lower(),'disabled') for p in analysis.PROVIDERS],
+        *[Output('summary-source-'+p.lower()+'-status','children') for p in analysis.PROVIDERS],
+        Output('summary-source-fanduel-cost','children'),Input('workspace-page','value'),Input('sport','value'),
+        Input('summary-game','value'),Input('summary-catalog','data'),Input('summary-quotes','data'))
+
     def stored_models(models):
         if not models:return None
         if 'rows' in models:return models
@@ -82,16 +122,22 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         record=dict(sport=sport,days=days,games=games,Kalshi=k_games,Polymarket=p_games,checked_at=time(),updating=updating)
         return record,[html.Span(f'{len(games)} upcoming games. '),*[html.Span(message+' ') for message in errors]]
 
-    @app.callback(Output('summary-game','options'),Output('summary-game','value'),
-                  Input('summary-catalog','data'),Input({'type':'summary-game-choice','game':ALL},'n_clicks'),
-                  Input('summary-back','n_clicks'),State('summary-game','value'),prevent_initial_call=True)
-    def summary_choose(catalog,clicks,back,previous):
+    @app.callback(Output('summary-game','options'),Input('summary-catalog','data'),prevent_initial_call=True)
+    def summary_options(catalog):
         games=(catalog or {}).get('games',[])
-        options=[dict(label=f"{format_eastern(game['start'])} · {game['away']['name']} at {game['home']['name']}",value=str(game['id'])) for game in games]
-        identities={o['value'] for o in options};clicked=ctx.triggered_id
-        chosen=(clicked['game'] if isinstance(clicked,dict) and any(clicks or []) and clicked.get('game') in identities else
-                None if clicked=='summary-back' else previous if previous in identities else None)
-        return options,chosen
+        return [dict(label=f"{format_eastern(game['start'])} · {game['away']['name']} at {game['home']['name']}",value=str(game['id'])) for game in games]
+
+    # Select immediately in the browser. A catalog poll must not supersede an
+    # in-flight server response containing the user's newer game-card click.
+    app.clientside_callback('''function(catalog,clicks,back,previous){
+        const identities=new Set((catalog?.games||[]).map(game=>String(game.id)));
+        const clicked=window.dash_clientside.callback_context.triggered_id;
+        if(clicked?.type==='summary-game-choice'&&(clicks||[]).some(Boolean)&&identities.has(clicked.game))return clicked.game;
+        if(clicked==='summary-back'||previous!=null&&!identities.has(previous))return null;
+        return window.dash_clientside.no_update;
+    }''',Output('summary-game','value'),Input('summary-catalog','data'),
+        Input({'type':'summary-game-choice','game':ALL},'n_clicks'),Input('summary-back','n_clicks'),
+        State('summary-game','value'),prevent_initial_call=True)
 
     @scoped_callback(app,'market-summary',Output('summary-game-cards','children'),Output('summary-game-cards','style'),
                   Output('summary-detail','style'),Output('summary-game-header','children'),
@@ -106,51 +152,116 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
     @scoped_callback(app,'market-summary',Output('summary-quotes','data'),Output('summary-quote-status','children'),
                   Input('summary-game','value'),Input('summary-catalog','data'),Input('summary-pull','n_clicks'),
                   Input('workspace-page','value'),Input('sport','value'),State('summary-quotes','data'),
-                  Input('summary-cache-poll','n_intervals'),prevent_initial_call=True,
-                  running=[(Output('summary-pull','disabled'),True,False)])
-    def summary_quotes(selected,catalog,clicks,page,sport,previous,_cache_tick=None):
+                  Input('summary-cache-poll','n_intervals'),
+                  *[Input('summary-pull-'+p.lower(),'n_clicks') for p in analysis.PROVIDERS],prevent_initial_call=True,
+                  running=[(Output(identity,'disabled'),True,False) for identity in
+                           ['summary-pull',*['summary-pull-'+p.lower() for p in analysis.PROVIDERS]]])
+    def summary_quotes(selected,catalog,clicks,page,sport,previous,_cache_tick=None,fd_clicks=0,k_clicks=0,p_clicks=0):
         if page!='market-summary' or not catalog or catalog.get('sport')!=sport:raise PreventUpdate
         game=next((g for g in catalog['games'] if str(g['id'])==selected),None)
         if not game:raise PreventUpdate
+        incoming=previous
+        previous=quote_jobs.resolve(previous)
         linked={provider:analysis.matching_game(game,sport,catalog.get(provider)) for provider in ('Kalshi','Polymarket')}
+        source_clicks=dict(zip(analysis.PROVIDERS,(fd_clicks,k_clicks,p_clicks)))
+        targeted=next((p for p in analysis.PROVIDERS if ctx.triggered_id=='summary-pull-'+p.lower() and source_clicks[p]),None)
+        if targeted and incoming and previous is None:
+            # An expired server reference must never turn a single-source pull
+            # into an empty replacement for the other sources, or spend credits.
+            return no_update,[html.P('The saved market view expired. Reselect the game before pulling '+targeted+'. No pull was made.')]
         scope=[sport,game,linked];pull=ctx.triggered_id=='summary-pull' and bool(clicks)
-        polling=ctx.triggered_id=='summary-cache-poll'
+        requested=set(analysis.PROVIDERS) if pull else {targeted} if targeted else set()
+        same_game=bool(previous and previous.get('sport')==sport and str(previous.get('game',{}).get('id'))==selected)
+        polling=ctx.triggered_id=='summary-cache-poll' and previous is not None
         if polling and not (previous or {}).get('updating'):raise PreventUpdate
-        if not pull and not polling and previous and previous.get('scope')==scope:raise PreventUpdate
+        if not requested and not polling and previous and previous.get('scope')==scope:raise PreventUpdate
         def fanduel():
-            if pull:
+            if 'FanDuel' in requested:
                 token=(previous or {}).get('id') or uuid4().hex
-                snapshot=markets[sport].pull({**game,'sport':sport},f'summary:{sport}:{selected}:{token}:{clicks}')
+                action='FanDuel' if targeted else 'all'
+                count=source_clicks['FanDuel'] if targeted else clicks
+                snapshot=markets[sport].pull({**game,'sport':sport},f'summary:{sport}:{selected}:{token}:{action}:{count}')
             else:snapshot=markets[sport].latest([selected]).get(selected)
-            if not snapshot:raise DataSourceError('No saved snapshot. Pull Live Markets to load FanDuel quotes.')
+            if not snapshot:raise DataSourceError('No saved snapshot. Use Pull FanDuel to load this source.')
             return {**snapshot,'sport':sport}
-        tasks={'FanDuel':fanduel}
+        retained={p for p in analysis.PROVIDERS if targeted and p!=targeted}
+        if polling and same_game:
+            retained.update(p for p,record in previous.get('providers',{}).items()
+                            if not (record.get('snapshot') or {}).get('updating') or record.get('error'))
+        work={'FanDuel':fanduel} if 'FanDuel' not in retained else {}
         for provider,service in [('Kalshi',kalshi),('Polymarket',polymarket)]:
+            if provider in retained:continue
             if linked[provider]:
                 def exchange_quotes(service=service,provider=provider):
+                    refresh=provider in requested
                     cache=(pages or {}).get(provider)
-                    if cache is not None and not pull:return cache.read(linked[provider],'All Markets')
-                    snapshot=service.all_quotes(linked[provider],refresh=pull,save=pull)
+                    if cache is not None and not refresh:return cache.read(linked[provider],'All Markets',poll=polling)
+                    snapshot=service.all_quotes(linked[provider],refresh=refresh,save=refresh)
                     if cache is not None:cache.remember(linked[provider],'All Markets',snapshot)
                     return snapshot
-                tasks[provider]=exchange_quotes
-        with ThreadPoolExecutor(max_workers=3,thread_name_prefix='summary-quotes') as pool:
-            pending={provider:pool.submit(attempt,function) for provider,function in tasks.items()}
-            loaded={provider:task.result() for provider,task in pending.items()}
+                work[provider]=exchange_quotes
+        jobs=dict(previous.get('source_jobs',{})) if same_game else {}
+        # A disabled Dash interval can initially be None. Detect the actual web
+        # request as well, so its first click can never take the synchronous
+        # compatibility path used by direct analytical callers.
+        if (has_request_context() or _cache_tick is not None) and not requested:
+            loaded={}
+            for provider,function in work.items():
+                job=jobs.get(provider) if polling else None
+                if not job:
+                    job=dict(key=uuid4().hex,started_at=time());jobs[provider]=job
+                prior=(previous or {}).get('providers',{}).get(provider,{}) if same_game else {}
+                result,pending,error=quote_jobs.read(job['key'],lambda f=function:attempt(f),started_at=job['started_at'],
+                    repeat=bool(polling and (prior.get('snapshot') or {}).get('updating')))
+                snapshot,source_error=result or (None,None)
+                error=error or source_error
+                if error and not snapshot and (prior.get('snapshot') or {}).get('rows'):
+                    snapshot=prior['snapshot']
+                if not snapshot and not error:
+                    provider_game=game if provider=='FanDuel' else linked[provider]
+                    snapshot=dict(sport=sport,game_id=str(provider_game['id']),rows=[],notices=[],fetched_at=None)
+                if snapshot and (pending or error):
+                    snapshot={**snapshot,'updating':bool((pending or snapshot.get('updating')) and not error),
+                              'page_pending':bool((pending or snapshot.get('page_pending')) and not error)}
+                loaded[provider]=(snapshot,error)
+        else:
+            with ThreadPoolExecutor(max_workers=3,thread_name_prefix='summary-quotes') as pool:
+                pending={provider:pool.submit(attempt,function) for provider,function in work.items()}
+                loaded={provider:task.result() for provider,task in pending.items()}
         providers={};status=[]
         for provider in analysis.PROVIDERS:
-            snapshot,error=loaded.get(provider,(None,'No unambiguous matching event in the provider catalog.'))
-            provider_game=game if provider=='FanDuel' else linked[provider]
+            prior=previous.get('providers',{}).get(provider,{}) if same_game else {}
+            if provider in retained:
+                snapshot,error=prior.get('snapshot'),prior.get('error')
+                provider_game=prior.get('game') or (game if provider=='FanDuel' else linked[provider])
+            else:
+                snapshot,error=loaded.get(provider,(None,'No unambiguous matching event in the provider catalog.'))
+                provider_game=game if provider=='FanDuel' else linked[provider]
             if snapshot and (snapshot.get('sport')!=sport or str(snapshot.get('game_id'))!=str(provider_game['id'])):
                 snapshot,error=None,'The provider returned quotes for another game.'
-            providers[provider]=dict(snapshot=snapshot,game=provider_game)
+            if targeted==provider and error and prior.get('snapshot'):
+                snapshot=prior['snapshot'];provider_game=prior['game']
+                error='Saved quotes kept. '+error
+            if provider=='FanDuel' and provider not in requested and prior.get('error') and snapshot==prior.get('snapshot'):
+                error=prior['error']
+            providers[provider]=dict(snapshot=snapshot,game=provider_game,error=error)
             stamp=(snapshot or {}).get('pulled_at') or (snapshot or {}).get('fetched_at') or (snapshot or {}).get('metadata_fetched_at')
-            status.append(html.P(provider+': '+(error if error else f"{len(snapshot['rows'])} markets · {format_eastern(stamp) if stamp else 'Quote time unavailable'}")))
+            message=error or (f"{len(snapshot['rows'])} markets · {format_eastern(stamp) if stamp else 'Quote time unavailable'}"
+                              if snapshot else 'No quotes loaded. Use Pull '+provider+'.')
+            status.append(html.P(provider+': '+message))
             status.extend(html.P(provider+': '+notice) for notice in (snapshot or {}).get('notices',[]))
-        if not pull and previous and previous.get('scope')==scope and previous.get('providers')==providers:
+        if not requested and previous and previous.get('scope')==scope and previous.get('providers')==providers:
             return no_update,status
-        return dict(id=uuid4().hex,sport=sport,game=game,scope=scope,providers=providers,
-                    updating=any((item['snapshot'] or {}).get('updating') for item in providers.values())),status
+        version=quote_version(sport,game,providers)
+        prior_version=(previous.get('version') or quote_version(sport,game,previous['providers'])) if same_game else None
+        session=(previous.get('session_id') or previous['id']) if same_game else uuid4().hex
+        # Overlapping completion polls can all carry the same pending browser
+        # State. Identical finished prices must receive the same ID, otherwise
+        # each response restarts forecasts and invalidates the rendered table.
+        identity=previous['id'] if version==prior_version else request_key([session,version])
+        bundle=dict(id=identity,session_id=session,version=version,sport=sport,game=game,scope=scope,providers=providers,source_jobs=jobs,
+                    updating=any((item['snapshot'] or {}).get('updating') and not item.get('error') for item in providers.values()))
+        return quote_jobs.wire(bundle) if has_request_context() else bundle,status
 
     @scoped_callback(app,'market-summary',Output('summary-models','data'),Output('summary-model-status','children'),
                   Input('summary-quotes','data'),Input('summary-game-method','value'),Input('summary-player-method','value'),
@@ -159,9 +270,10 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                   *([Input('summary-model-completed','data'),Input('history-update-poll','n_intervals')] if tasks is not None else []),prevent_initial_call=True,
                   running=[(Output('summary-recalculate','disabled'),True,False)])
     def summary_models(bundle,method,player_method,clicks,page,sport,selected,previous,_model_tick=None,_history_tick=None):
+        bundle=quote_jobs.resolve(bundle)
         if page!='market-summary' or not bundle or bundle.get('sport')!=sport or str(bundle['game']['id'])!=selected:raise PreventUpdate
-        if any((record.get('snapshot') or {}).get('page_pending') and not (record.get('snapshot') or {}).get('rows')
-               for record in bundle.get('providers',{}).values()):raise PreventUpdate
+        if not any((record.get('snapshot') or {}).get('rows') for record in bundle.get('providers',{}).values()) and any(
+                (record.get('snapshot') or {}).get('page_pending') for record in bundle.get('providers',{}).values()):raise PreventUpdate
         if method not in GAME_METHODS or player_method not in PLAYER_METHODS:raise PreventUpdate
         revision=source_revision(dict(sport=sport),method,player_method) if source_revision else []
         if (analysis.current_models(previous,bundle,method,player_method) and stored_models(previous) is not None
@@ -201,7 +313,13 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                   Input('summary-game-method','value'),Input('summary-player-method','value'),Input('summary-game','value'),
                   Input('workspace-page','value'),Input('sport','value'),State('summary-rendered','data'),prevent_initial_call=True)
     def summary_sections(bundle,models,category,method,player_method,selected,page,sport,previous=None):
+        reference=bundle
+        bundle=quote_jobs.resolve(bundle)
         if page!='market-summary':raise PreventUpdate
+        if category==view.QUICK:return [],None
+        if reference and reference.get('quote_ref') and bundle is None:
+            return html.P('This saved market view expired. Select the game again to reload it.',className='saved-market-empty'),\
+                [reference['id'],method,player_method,category,analysis.POLICY_VERSION]
         if not bundle or bundle.get('sport')!=sport or str(bundle['game']['id'])!=selected:
             return html.P('Select a game to load its provider quotes.',className='saved-market-empty'),None
         models=stored_models(models)
@@ -210,15 +328,17 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         if signature==previous:raise PreventUpdate
         rows=models['rows'] if ready else analysis.clean(analysis.entries(bundle))
         return [html.P('Sportsbook probabilities exclude pushes. Exchange probabilities keep each binary contract’s equality outcome. '
-                       'Different settlement rules can produce different estimates for similar-looking lines. Unsupported targets remain visible without estimates.',
+                       'Different settlement rules can produce different estimates for similar-looking lines. The right-hand estimates use the quote '
+                       'with the highest calculated edge; its provider is named below the edge. Unsupported targets remain visible without estimates.',
                        className='ppp-comparison-note'),*view.sections(bundle,rows,category)],signature
 
-    cells=dict(type='summary-model-cell',bundle=ALL,provider=ALL,index=ALL,side=ALL)
+    cells=dict(type='summary-model-cell',bundle=ALL,provider=ALL,index=ALL,side=ALL,metric=ALL)
     @scoped_callback(app,'market-summary',Output(cells,'children'),Input('summary-models','data'),
                   Input('summary-game-method','value'),Input('summary-player-method','value'),Input(cells,'id'),
                   Input('workspace-page','value'),Input('sport','value'),State('summary-quotes','data'),State('summary-game','value'),
                   prevent_initial_call=False)
     def summary_model_cells(models,method,player_method,identities,page,sport,bundle,selected):
+        bundle=quote_jobs.resolve(bundle)
         # Forecast completion updates cells independently of the immediate quote view.
         if page!='market-summary' or not identities or not bundle or bundle.get('sport')!=sport or str(bundle['game']['id'])!=selected:
             raise PreventUpdate
@@ -234,9 +354,13 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         # redundant writes to every mounted number while the forecast runs.
         if not ready and not clear:raise PreventUpdate
         rows=models['rows'] if ready else analysis.clean(analysis.entries(bundle))
-        lookup={(row['provider'],row['index'],row['side'] or ''):row for row in rows}
+        lookup={}
+        for items in view.comparison_rows(rows,'All Markets').values():
+            for item in items:
+                shared=view.shared_estimate(item['quotes'])
+                for row in item['quotes'].values():lookup[row['provider'],row['index'],row['side'] or '']=shared
         values=[]
         for identity in identities:
             row=lookup.get((identity['provider'],identity['index'],identity['side'])) if identity['bundle']==bundle['id'] else None
-            values.append(view.model_values(row) if row else no_update)
+            values.append(view.metric_values(row,identity['metric']) if row and identity.get('metric') else view.model_values(row) if row else no_update)
         return values

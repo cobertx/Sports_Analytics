@@ -134,14 +134,22 @@ be rerun once. Refreshing this page does not spend credits or recalculate models
 
 **Market Summary** (`#nba-market-summary`, `#nfl-market-summary`, `#ncaaf-market-summary`)
 shows upcoming games with team logos, then compares selections in tables grouped by
-Game Lines, Player Props and Other Markets. FanDuel, Kalshi and Polymarket each have a
-column; each row is a selection at a particular line. Each quote shows American odds,
-market implied probability, calculated probability, model fair odds and edge. Green highlights
+Game Lines, Player Props and Other Markets. **Game Lines** is the default; there is no
+All Markets tab. FanDuel, Kalshi and Polymarket use locally served logos above grouped
+columns for market odds and implied probability. A single model group on the right
+shows calculated probability, calculated odds and the best edge in percentage points.
+Those three values come from the same quote: the one with the highest calculated edge;
+its provider is named under Edge. Equivalent estimates therefore use the best available
+price, while differing settlement probabilities are never mixed. Each row is a selection at a particular line. Green highlights
 the lowest implied probability among matching source quotes. Missing quotes show a dash.
 Equivalent integer thresholds share a row; different push rules and unverified contracts stay
-separate. Original wording and Historical Data links remain available for each source.
+separate. Original wording remains in the quote tooltip; each source's **Details**
+disclosure contains its Historical Data and Market Structure controls.
 Large summaries mount six selections in each of the first two groups; other groups
-load when expanded. **Show more selections** adds 25 rows at a time. Group headings
+load when expanded. Each visible window reserves up to two priced comparisons per
+available source, preferring shared lines, then fills the remaining places from the
+numeric ladder. Adding FanDuel's wider alternate lines cannot hide every Kalshi or
+Polymarket price in the initial window. **Show more selections** adds 25 rows at a time. Group headings
 retain the full selection count, and every quote remains available. Forecasts still
 cover the complete bundle; completed results update each displayed selection together
 without rebuilding the quote tables. Pending forecasts do not rewrite existing cells.
@@ -152,8 +160,23 @@ Choose PPP/EPA/ELO for game outcomes and
 WHP/UO/OAM/PGE for player props. Exchange buying prices are also shown in cents.
 Saved FanDuel quotes load without spending credits; **Pull Live Markets** refreshes all providers
 and saves snapshots, with the FanDuel credit cost shown beside the button. Public exchange
-quotes require no paid connection. **Recalculate estimates** reruns the selected methods without
+quotes require no paid connection. The individual **Pull FanDuel**, **Pull Kalshi** and
+**Pull Polymarket** buttons refresh only that source and retain the other saved quotes.
+FanDuel displays the estimated maximum before the pull: 13 API credits for NBA or
+17 for NFL/NCAAF; the final charge depends on the markets returned. Exchange buttons
+show 0 Odds API credits. A source without a matching event is disabled until the game
+list is refreshed and a match is found. Failed individual pulls retain saved quotes.
+**Recalculate estimates** reruns the selected methods without
 pulling odds. Each method runs once for the combined game rather than once per provider.
+The parallel **Quick Filtering** tab accepts multiple game and player methods, a
+calculated-probability threshold and an edge threshold. Only **Run Quick Filtering**
+starts a scan; editing controls retains the last applied result. Every selected method
+for a quote's market type must strictly exceed both thresholds. Missing estimates from
+any selected method exclude the quote. Results show the top three edges and all remaining
+matches, loaded in bounded batches. Ranking uses the lowest edge across methods; displayed
+calculated odds use the lowest calculated probability, and individual method values are
+available on hover over Methods. Changed quotes or historical inputs require a new run.
+Scanning uses the current snapshots without a paid market pull and runs outside the web callback.
 Providers are matched by both teams and scheduled start; ambiguous matches stay unavailable.
 Models share the earliest quote timestamp, capped at game start, so older saved prices do not
 use newer history. Sportsbook estimates exclude pushes; binary exchange estimates retain
@@ -999,6 +1022,14 @@ preserving the rule that duplicate opposing quotes are ambiguous.
 
 Market pages reuse unchanged saved snapshots across callbacks. New live pulls,
 CSV/database edits, account changes and credit-log changes invalidate those reads.
+Exchange quote completion polls finish the current refresh instead of starting a
+new one after the two-second quote TTL. A selected game's Market Summary keeps
+completed sources while slower sources finish, allowing probabilities to settle
+against one complete snapshot. Saved quotes stay visible during that refresh.
+Initial Summary source reads, including local files and SQLite, run independently
+outside the web callback. Sources that exceed 20 seconds show an explicit retry
+message while the other sources remain usable. Full contract records stay in a
+bounded server cache; the browser carries only scoped references, counts and status.
 Page navigation only updates the sport/workspace when they actually change, avoiding
 unrelated page callbacks. Hidden historical selectors and career charts skip loading.
 Reopening unchanged historical data preserves its selectors/charts while still checking

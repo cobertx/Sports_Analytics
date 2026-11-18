@@ -12,6 +12,7 @@ function run(config){
   };
   let checks=0;
   for(const item of config.references||[]){
+    window.dash_clientside.callback_context=item.context||{};
     const value=callback(item.output)(...item.args);
     if(JSON.stringify(value)!==JSON.stringify(item.expected))throw Error('Client/reference mismatch: '+item.output+' '+JSON.stringify(item.args));
     checks++;
