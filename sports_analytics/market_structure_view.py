@@ -5,6 +5,7 @@ from dash.exceptions import PreventUpdate
 
 from .display_time import format_eastern
 from .market_structure import PROVIDERS, validate
+from .presentation import PALETTE, chart_style
 
 
 def layout():
@@ -25,10 +26,9 @@ def layout():
                         className='structure-window', searchable=False),
                     dcc.Checklist(id='structure-live', options=[dict(label='Refresh every 30 seconds', value='live')], value=['live'])],
                     className='structure-controls'),
-                html.P('Compare the number of executed purchases and the amount paid for each outcome. '
-                       'An exchange purchase is a matched fill, not a unique bettor or sportsbook ticket; one order may fill several times. '
-                       'Sales, current holdings and unfilled orders are shown separately. '
-                       'Equivalent contracts and related contracts with different settlement rules are labeled separately.', className='structure-note'),
+                html.P('Read executed flow, traded prices and resting liquidity separately. '
+                       'Exchange executions count fills, not unique bettors or sportsbook tickets. '
+                       'Related contracts with different settlement rules are labeled separately.', className='structure-note'),
                 html.Div(id='structure-content'),
             ], className='structure-dialog', role='dialog', tabIndex=-1,
                **{'aria-modal':'true', 'aria-labelledby':'structure-title'}),
@@ -48,28 +48,78 @@ def stamp(value):
 
 def table(labels, metrics):
     return html.Div(html.Table([
-        html.Thead(html.Tr([html.Th('Measure'), *[html.Th(labels[side]) for side in ('yes','no')]])),
-        html.Tbody([html.Tr([html.Th(label), *[html.Td(amount(values.get(side), money)) for side in ('yes','no')]])
+        html.Thead(html.Tr([html.Th('Measure', scope='col'), *[html.Th(labels[side], scope='col') for side in ('yes','no')]])),
+        html.Tbody([html.Tr([html.Th(label, scope='row'), *[html.Td(amount(values.get(side), money)) for side in ('yes','no')]])
                     for label, values, money in metrics]),
     ]), className='structure-table-scroll', tabIndex=0, role='region',
         **{'aria-label':'Market activity measures by outcome'})
 
 
+def price(value):
+    return 'Unavailable' if value is None else f'{value*100:,.2f}'.rstrip('0').rstrip('.')+'¢'
+
+
+def quotes(book, provider):
+    sides = (book or {}).get('sides', {})
+    bid = {s:max((r['price'] for r in sides.get(s, {}).get('levels', [])), default=None) for s in ('yes','no')}
+    if provider == 'Kalshi':
+        ask = {s:round(1-bid['no' if s == 'yes' else 'yes'], 10)
+               if bid['no' if s == 'yes' else 'yes'] is not None else None for s in ('yes','no')}
+    else:
+        ask = {s:min((r['price'] for r in sides.get(s, {}).get('asks', [])), default=None) for s in ('yes','no')}
+    return bid, ask
+
+
+def price_history(trades, labels):
+    rows = trades.get('price_history') or []
+    if not rows:
+        return html.P('Trade-price history unavailable for this snapshot.', className='structure-note')
+    figure = dict(data=[dict(type='scatter',mode='markers',x=[r['time'] for r in rows],
+        y=[r['yes_price']*100 for r in rows],marker=dict(color=PALETTE['probability'],size=5),
+        customdata=[[stamp(r['time']),amount(r['contracts'])] for r in rows],
+        hovertemplate='%{customdata[0]}<br>YES price: %{y:.2f}¢<br>%{customdata[1]} contracts<extra></extra>')],
+        layout=chart_style(height=230,margin=dict(l=52,r=20,t=15,b=45),showlegend=False,
+            xaxis=dict(title=dict(text='Trade time (UTC)'),type='date',gridcolor=PALETTE['line']),
+            yaxis=dict(title=dict(text='YES price (¢)'),range=[0,100],gridcolor=PALETTE['line']),
+            uirevision='structure-trade-prices'))
+    return html.Div([
+        html.H5('Executed YES prices · '+labels['yes']),
+        html.P('Returned trade sample · first '+price(rows[0]['yes_price'])+' → latest '+price(rows[-1]['yes_price'])+
+               '. Dots are individual executions, not continuous quotes or model probabilities.',className='structure-note'),
+        dcc.Graph(figure=figure,responsive=True,style={'height':'260px'},
+            config=dict(displayModeBar=False,scrollZoom=False),className='structure-price-chart'),
+        html.Details([html.Summary('Trade-price table · latest 20 returned executions'),
+            html.Div(html.Table([html.Thead(html.Tr([html.Th(x,scope='col') for x in ('Time','YES price','Contracts','Taker direction')])),
+                html.Tbody([html.Tr([html.Td(stamp(r['time'])),html.Td(price(r['yes_price'])),
+                    html.Td(amount(r['contracts'])),html.Td(r['side'].upper())]) for r in rows[-20:][::-1]])]),
+                className='structure-table-scroll',tabIndex=0,role='region',**{'aria-label':'Returned trade prices'})])],className='structure-history')
+
+
 def activity(market, provider):
     labels = market['labels'];trades = market.get('trades');book = market.get('book');holders = market.get('holders')
-    content = [html.H4(market['title']), html.Small(market['ticker'], className='structure-contract'),
-        html.P('Quote data: '+stamp(market.get('quote_time')), className='structure-time')]
+    content = [html.Div([html.H4(market['title']),html.Span('Related contract' if market.get('match') == 'related' else
+        'Equivalent contract' if market.get('match') == 'equivalent' else 'Selected contract',className='structure-badge')],className='structure-contract-heading'),
+        html.Small(market['ticker'], className='structure-contract')]
     if market.get('match') == 'related':
         content.append(html.P('Related contract · settlement or refund rules differ, or exact equivalence is unverified. '
             'Its activity is shown separately and is not combined with the selected contract.', className='structure-note'))
     if market.get('rules'):
         content.append(html.Details([html.Summary('Settlement rules'), html.P(market['rules'],className='structure-note')]))
     is_kalshi = provider == 'Kalshi'
-    details = [html.P(
-        'Lifetime volume: '+amount(market.get('volume'), not is_kalshi)+(' contracts' if is_kalshi else '')+
-        ' · 24h volume: '+amount(market.get('volume_24h'), not is_kalshi)+(' contracts' if is_kalshi else '')+
-        (' · Open interest: '+amount(market.get('open_interest'))+' contracts' if is_kalshi else
-         ' · Priced gross open interest: '+amount((market.get('interest') or {}).get('dollars'), True)))]
+    content += [html.Div([html.Div([html.Small(label),html.Strong(amount(value,money)),html.Span(unit)])
+        for label,value,money,unit in [
+            ('24h volume',market.get('volume_24h'),not is_kalshi,'contracts' if is_kalshi else 'USD turnover'),
+            ('Lifetime volume',market.get('volume'),not is_kalshi,'contracts' if is_kalshi else 'USD turnover'),
+            ('Open interest',market.get('open_interest') if is_kalshi else (market.get('interest') or {}).get('dollars'),
+             not is_kalshi,'contracts outstanding' if is_kalshi else 'USD · gross priced interest')]],className='structure-kpis'),
+        html.P('Volume snapshot: '+stamp(market.get('quote_time'))+
+            ('' if is_kalshi else ' · Open interest: '+stamp((market.get('interest') or {}).get('fetched_at'))),className='structure-time')]
+    details = []
+    count_label = 'Taker executions by direction' if is_kalshi else 'Purchase count (taker executions)'
+    value_label = 'Direction-priced traded value' if is_kalshi else 'Amount paid for this outcome'
+    contract_label = 'Executed contracts' if is_kalshi else 'Purchased shares'
+    window = 'last 24 hours' if market.get('window') == '24h' else 'available API history'
+    content.append(html.H5(('Executed directional flow' if is_kalshi else 'Purchases by outcome')+' · '+window))
     if trades:
         sides = trades['sides']
         def values(field):
@@ -77,21 +127,39 @@ def activity(market, provider):
         def percentages(field):
             total = sum(sides[side][field] for side in ('yes','no'))
             return {side:100*sides[side][field]/total if total else None for side in ('yes','no')}
-        metrics = [('Purchase count (taker executions)', values('buys'), False),
-                   ('Amount paid for this outcome', values('buy_dollars'), True),
-                   ('Purchased contracts / shares', values('buy_contracts'), False)]
+        metrics = [(count_label, values('buys'), False),
+                   (value_label, values('buy_dollars'), True),
+                   (contract_label, values('buy_contracts'), False)]
         # A capped sample's percentages are not market-wide betting splits.
         if trades['complete'] and not (trades['invalid'] or trades['unclassified']):
-            metrics.extend([('Share of purchase count (%)', percentages('buys'), False),
-                            ('Share of amount paid (%)', percentages('buy_dollars'), False)])
-        window = 'last 24 hours' if market.get('window') == '24h' else 'available API history'
-        content += [html.H5('Purchases by outcome · '+window),
-            html.P(('Complete returned window' if trades['complete'] else 'Partial sample · up to 2,000 trade records; counts and amounts are lower bounds, not market totals')+
-                (' · '+stamp(trades['start']) if market.get('window') == '24h' else '')+
-                ' · Through '+stamp(trades['end']), className='structure-time'), table(labels, metrics)]
+            metrics.extend([('Share of taker executions (%)' if is_kalshi else 'Share of purchase count (%)', percentages('buys'), False),
+                            ('Share of direction-priced value (%)' if is_kalshi else 'Share of amount paid (%)', percentages('buy_dollars'), False)])
+        clean = trades['complete'] and not (trades['invalid'] or trades['unclassified'])
+        content += [html.Div([html.Span('Complete API window' if clean else 'Partial sample',
+                className='structure-badge '+('structure-badge--complete' if clean else 'structure-badge--partial')),
+            html.Span(('Requested '+stamp(trades['start'])+' · ' if market.get('window') == '24h' else '')+
+                      'Through '+stamp(trades['end']),className='structure-time')],className='structure-coverage'),
+            html.P('Fetched '+stamp(trades.get('fetched_at')),className='structure-time'),
+            html.Div([html.Div([html.Small(side.upper()+' DIRECTION' if is_kalshi else side.upper()+' PURCHASES'),
+                html.Strong(labels[side]),html.Div([html.B(amount(sides[side]['buy_dollars'],True)),html.Span(value_label)]),
+                html.P(amount(sides[side]['buys'])+' executions · '+amount(sides[side]['buy_contracts'])+
+                       (' contracts' if is_kalshi else ' shares'))],className='structure-outcome structure-outcome--'+side)
+                for side in ('yes','no')],className='structure-outcomes')]
+        if clean and sum(values('buys').values()):
+            shares = percentages('buys')
+            content.append(html.Div([
+                html.P(f"Taker execution share · YES {shares['yes']:.1f}% / NO {shares['no']:.1f}%"),
+                html.Div([html.Span(style={'width':f"{shares['yes']}%"}),html.Span(style={'width':f"{shares['no']}%"})],
+                    className='structure-share-bar',**{'aria-hidden':'true'})],className='structure-share'))
+        if not clean:
+            content.append(html.P('Counts and values are lower bounds from the returned sample; market-wide shares are unavailable. '
+                'Reads are limited to 2,000 records across live and archived trades.',className='structure-note'))
+        content.append(html.Details([html.Summary('Executed flow · full measures'),table(labels,metrics)]))
         if is_kalshi:
-            content.append(html.P('Kalshi counts each taker execution once under its outcome. Amount paid uses that outcome’s price '
-                '(No = $1 − Yes price), before fees. This is executed directional purchase value, not current holdings or new deposits.', className='structure-note'))
+            content.append(html.P('Each trade is counted once by taker direction. YES exposure includes buying YES or selling NO; '
+                'NO exposure includes buying NO or selling YES. Direction-priced value = contracts × outcome price '
+                '(NO = $1 − YES price), before fees. It measures directional flow, not cash deposited, unique bets or holdings.',className='structure-note'))
+            content.append(price_history(trades,labels))
         else:
             content.append(html.P('Polymarket counts taker BUY fills and their purchase value. SELL fills are excluded from these '
                 'purchase totals and listed below. Purchases can include resales; this is not current money held.', className='structure-note'))
@@ -102,9 +170,18 @@ def activity(market, provider):
         if trades.get('error'):
             content.append(html.P('Trade coverage: '+trades['error'], className='structure-error'))
     else:
-        content += [html.H5('Purchases by outcome'), table(labels,[
-            ('Purchase count (taker executions)',{},False),('Amount paid for this outcome',{},True)])]
+        content += [html.P('Trade data unavailable. Refresh to retry.',className='structure-note'),table(labels,[
+            (count_label,{},False),(value_label,{},True)])]
     if book:
+        bid, ask = quotes(book,provider)
+        content += [html.H5('Current bid / ask'),html.P('Order book fetched '+stamp(book['fetched_at']),className='structure-time'),
+            html.Div([html.Div([html.Strong(side.upper()+' · '+labels[side]),html.P([
+                html.Span('Bid '+price(bid[side])),html.Span('Ask '+price(ask[side])),
+                html.Span('Spread '+price(round(ask[side]-bid[side],10)) if bid[side] is not None and ask[side] is not None else 'Spread unavailable')])],
+                className='structure-quote') for side in ('yes','no')],className='structure-outcomes')]
+        if is_kalshi:
+            content.append(html.P('Asks are derived from opposite-side bids: YES ask = $1 − best NO bid. '
+                'Displayed prices are unfilled orders; the trade chart shows past executions.',className='structure-note'))
         details += [html.H5('Resting buy liquidity'), html.P('Fetched '+stamp(book['fetched_at']), className='structure-time'),
             table(labels, [('Available contracts / shares', {s:book['sides'][s]['contracts'] for s in ('yes','no')}, False),
                            ('Unfilled bid value', {s:book['sides'][s]['dollars'] for s in ('yes','no')}, True)]),
@@ -115,6 +192,8 @@ def activity(market, provider):
                 html.Tbody([html.Tr([html.Td(f"${level['price']:.4f}"), html.Td(amount(level['size'])),
                     html.Td(amount(level['price']*level['size'], True))]) for level in book['sides'][side]['levels']])])])
                 for side in ('yes','no')], className='structure-depth')]))
+    else:
+        content += [html.H5('Current bid / ask'),html.P('Order book unavailable. Prices and depth are not inferred from past trades.',className='structure-note')]
     if holders:
         details += [html.H5('Current Polymarket holdings · returned wallets'),
             html.P(('All returned holder pages fit in this snapshot' if holders['complete'] else 'Partial snapshot · first 100 holders per outcome')+
@@ -124,16 +203,18 @@ def activity(market, provider):
                                          ('Reported entry cost','entry_cost',True), ('Current position value','current_value',True)]]),
             html.P('Wallets are not unique people. A wallet can hold both outcomes. These are gross positions for the '
                 'returned holders; a partial holder snapshot is not a market-wide money split.', className='structure-note')]
-    content.append(html.Details([html.Summary('Volume, sell activity, holdings and order-book depth'), *details]))
+    if details:
+        content.append(html.Details([html.Summary('Resting liquidity, depth and holdings'), *details]))
     content.extend(html.P(error, className='structure-error') for error in market.get('errors', []))
     return html.Section(content, className='structure-contract-detail')
 
 
 def render(data):
     cards = []
-    for provider in PROVIDERS:
+    selected = data.get('request',{}).get('provider','Kalshi')
+    for provider in sorted(PROVIDERS,key=lambda p:p != selected):
         state = data['providers'][provider];record = state.get('data') or {}
-        content = [html.H3(provider), html.P('Updating…' if state.get('pending') else
+        content = [html.Div([html.H3(provider),html.Span('Selected source' if provider == selected else 'Other source',className='structure-source-label')],className='structure-source-heading'), html.P(('Updating · saved snapshot shown' if record.get('fetched_at') else 'Loading activity…') if state.get('pending') else
             'Fetched '+stamp(record['fetched_at']) if record.get('fetched_at') else
             'Not supplied by the connected odds feed' if provider == 'FanDuel' else 'Data unavailable', className='structure-time')]
         if record.get('notice'):
@@ -156,7 +237,7 @@ def render(data):
             content.append(html.A('Official data documentation', href='https://docs.kalshi.com/api-reference/market/get-trades'
                 if provider == 'Kalshi' else 'https://docs.polymarket.com/api-reference/feeds/list-trades',
                 target='_blank', rel='noopener noreferrer'))
-        cards.append(html.Article(content, className='structure-source'))
+        cards.append(html.Article(content, className='structure-source'+(' structure-source--primary' if provider == selected else '')))
     return html.Div(cards, className='structure-sources')
 
 

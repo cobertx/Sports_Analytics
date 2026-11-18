@@ -8,6 +8,11 @@ from .mispricing import GAME_METHODS,PLAYER_METHODS
 from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
 from .market_summary import PROVIDERS
+from .lazy_markets import markets as lazy_markets
+
+SUMMARY_BATCH = 6
+SUMMARY_STEP = 25
+EAGER_SELECTIONS = 100
 
 
 def field(label,control):
@@ -17,6 +22,7 @@ def field(label,control):
 def layout():
     return html.Section([
         dcc.Store(id='summary-catalog'),dcc.Store(id='summary-quotes'),dcc.Store(id='summary-models'),dcc.Store(id='summary-rendered'),
+        dcc.Store(id='summary-model-completed'),
         dcc.Interval(id='summary-cache-poll',interval=1500,disabled=True),
         html.Section([
             html.Div([html.Div('MARKET DATA',className='eyebrow accent'),html.H2('Market Summary'),
@@ -78,6 +84,14 @@ def model_value(row,metric):
     return f"{100*row['edge']:+.2f} pp" if row['edge'] is not None else '—',''
 
 
+def model_values(row):
+    values=[]
+    for metric,label in [('probability','Calculated probability'),('odds','Model fair odds'),('edge','Edge')]:
+        value,title=model_value(row,metric)
+        values.append(html.Div([html.Dt(label),html.Dd(html.Span(value,title=title))]))
+    return values
+
+
 def comparison_rows(rows,category):
     groups=OrderedDict()
     for row in rows:
@@ -105,36 +119,48 @@ def quote_cell(bundle,row,snapshot,best):
                   html.Span('Best price',className='summary-best-label') if best else None],className='summary-price-line'),
         html.Div('Market implied '+probability_text(row['implied']),className='summary-implied'),
         html.Small(f"{100*row['ask']:.2f}¢ ask" if row['ask'] is not None else row['status'],className='summary-quote-detail'),
-        html.Dl([html.Div([html.Dt(label),html.Dd(html.Span(model_value(row,metric)[0],title=model_value(row,metric)[1],
-            id=dict(type='summary-model-cell',bundle=bundle['id'],provider=row['provider'],index=row['index'],side=row['side'] or '',metric=metric)))])
-            for metric,label in [('probability','Calculated probability'),('odds','Model fair odds'),('edge','Edge')]],className='summary-model-values'),
+        html.Dl(model_values(row),id=dict(type='summary-model-cell',bundle=bundle['id'],provider=row['provider'],
+            index=row['index'],side=row['side'] or ''),className='summary-model-values'),
         history_button(snapshot,original,row['provider'],row['side'] or 'yes'),
         structure_button(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary'),
     ],title=row['selection'],className='summary-quote'+(' summary-best' if best else '')),className='summary-source-cell')
 
 
+def selection_table(bundle,items,title,snapshots,count):
+    content=[]
+    for item in items[:count]:
+        outcome=item['outcome'];quotes=item['quotes']
+        priced=[row['implied'] for row in quotes.values() if row['implied'] is not None]
+        best=min(priced) if len(priced)>1 else None
+        content.append(html.Tr([
+            html.Th([html.Span(outcome['label']),html.Small(outcome['note']) if outcome['note'] else None],scope='row',className='summary-selection'),
+            *[quote_cell(bundle,quotes.get(provider),snapshots.get(provider),best is not None and
+                         quotes.get(provider,{}).get('implied')==best) for provider in PROVIDERS],
+        ]))
+    return [html.Div(html.Table([
+        html.Caption(title+' — Market odds by source',className='summary-table-caption'),
+        html.Thead(html.Tr([html.Th('Market / Selection',scope='col'),*[html.Th(html.Span(provider,
+            className='summary-source-name summary-source-'+provider.lower()),scope='col') for provider in PROVIDERS]])),
+        html.Tbody(content),
+    ],className='summary-table'),className='summary-table-scroll',tabIndex=0,role='region',**{'aria-label':title+' source comparison'}),
+        html.P(f'Showing {min(count,len(items))} of {len(items)} selections',className='summary-row-count')]
+
+
 def sections(bundle,rows,category):
     groups=comparison_rows(rows,category);categories=OrderedDict();index=0
     snapshots={name:{**record['snapshot'],'game':record.get('game')} for name,record in bundle['providers'].items() if record.get('snapshot')}
+    # Keep all comparisons and forecasts. Bound only the mounted quote view:
+    # native collapsed details still mount every child unless we defer them.
+    lazy=sum(len(items) for items in groups.values())>EAGER_SELECTIONS
+    scope=lazy_markets.view() if lazy else None
     for (group,title),items in groups.items():
-        content=[]
-        for item in items:
-            outcome=item['outcome'];quotes=item['quotes']
-            priced=[row['implied'] for row in quotes.values() if row['implied'] is not None]
-            best=min(priced) if len(priced)>1 else None
-            content.append(html.Tr([
-                html.Th([html.Span(outcome['label']),html.Small(outcome['note']) if outcome['note'] else None],scope='row',className='summary-selection'),
-                *[quote_cell(bundle,quotes.get(provider),snapshots.get(provider),best is not None and
-                             quotes.get(provider,{}).get('implied')==best) for provider in PROVIDERS],
-            ]))
+        def render(count,items=items,title=title):
+            return selection_table(bundle,items,title,snapshots,count)
+        body=(lazy_markets.panel(scope,index,render,len(items),initial=index<2,size=SUMMARY_BATCH,step=SUMMARY_STEP,loading=False)
+              if lazy else render(len(items)))
         table=html.Details([
             html.Summary([html.Strong(title),html.Span(f'{len(items)} selections',className='market-chevron')]),
-            html.Div(html.Table([
-                html.Caption(title+' — Market odds by source',className='summary-table-caption'),
-                html.Thead(html.Tr([html.Th('Market / Selection',scope='col'),*[html.Th(html.Span(provider,
-                    className='summary-source-name summary-source-'+provider.lower()),scope='col') for provider in PROVIDERS]])),
-                html.Tbody(content),
-            ],className='summary-table'),className='summary-table-scroll',tabIndex=0,role='region',**{'aria-label':title+' source comparison'}),
+            body,
         ],open=index<2,key=group+'-'+title,className='sportsbook-market summary-market')
         categories.setdefault(group,[]).append(table);index+=1
     return [html.Section([html.H3(group,className='summary-category-heading'),*categories[group]],className='summary-category')

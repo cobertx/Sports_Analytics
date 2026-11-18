@@ -140,6 +140,14 @@ market implied probability, calculated probability, model fair odds and edge. Gr
 the lowest implied probability among matching source quotes. Missing quotes show a dash.
 Equivalent integer thresholds share a row; different push rules and unverified contracts stay
 separate. Original wording and Historical Data links remain available for each source.
+Large summaries mount six selections in each of the first two groups; other groups
+load when expanded. **Show more selections** adds 25 rows at a time. Group headings
+retain the full selection count, and every quote remains available. Forecasts still
+cover the complete bundle; completed results update each displayed selection together
+without rebuilding the quote tables. Pending forecasts do not rewrite existing cells.
+Background model polls carry only the game-scoped job reference. Complete forecast
+rows stay in the bounded server cache, and source revisions preserve exact file
+timestamps across browser requests so unchanged results can be reused.
 Choose PPP/EPA/ELO for game outcomes and
 WHP/UO/OAM/PGE for player props. Exchange buying prices are also shown in cents.
 Saved FanDuel quotes load without spending credits; **Pull Live Markets** refreshes all providers
@@ -843,17 +851,29 @@ Kalshi's public REST API supplies trade prints, fractional contract volume,
 Yes/No taker-direction turnover, open interest and order-book depth. Polymarket's
 public Data API v2 and CLOB API supply BUY/SELL fills by outcome, buy and sell
 turnover, current holder position costs/values, priced gross open interest and
-resting liquidity. The main table shows purchase execution counts and the amount
-paid for each outcome. Kalshi No purchases use the complementary No price, not
-the reported common Yes-price basis. Polymarket SELL fills stay separate from
+resting liquidity. Kalshi counts each execution by taker direction: buying YES
+and selling NO both create YES exposure; buying NO and selling YES both create
+NO exposure. Direction-priced traded value multiplies contracts by the outcome
+price (NO = $1 minus the reported YES price); it is not cash deposited or a count
+of unique bets. Polymarket shows BUY counts and amounts paid; SELL fills stay separate from
 BUY purchase totals. No account key or trading connection is needed. Neither
 exchange's execution counts are sportsbook tickets or unique bettors. One order
 can produce multiple fills, and unfilled orders are labeled separately.
 
+The selected source occupies the main panel, with separate YES/NO flow cards,
+volume and open-interest measures, best bid/ask prices and spreads, and expandable
+depth tables. Kalshi asks are derived from opposite-side bids. The price chart
+plots actual returned YES trade prices, with a table of the latest 20 returned
+executions; it does not reconstruct continuous quotes or model probabilities.
+
 The panel refreshes in the background every 30 seconds while open, can be paused,
 and offers manual refresh. Timestamped snapshots are cached locally under
 `data/market_structure/`, independently of model/backtest inputs. Each read scans
-up to 2,000 trade records. Select **All available API history** (default) or
+up to 2,000 trade records across four pages. Kalshi's historical trade cutoff is
+checked (cached for five minutes), and both live and archived trades are read
+when the requested window spans the archive. Duplicate trade IDs are counted
+once. An unavailable archive cutoff leaves coverage unverified, even if the live
+endpoint finishes. Select **All available API history** (default) or
 **Last 24 hours**; Polymarket's market feed is filtered locally for the latter.
 The windows use separate caches. Capped/failed pagination is marked partial with
 counts and amounts labeled as lower bounds; percentages are omitted for partial

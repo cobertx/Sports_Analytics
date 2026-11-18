@@ -19,7 +19,7 @@ from .polymarket import CLOB, PolymarketService
 DATA = 'https://data-api.polymarket.com/v2'
 PROVIDERS = ('FanDuel', 'Kalshi', 'Polymarket')
 MAX_PAGES = 4
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 def validate(value):
@@ -101,7 +101,7 @@ def trade_summary(rows, provider, market, lower, upper):
                        buy_dollars=Decimal(0), sell_dollars=Decimal(0),
                        buy_contracts=Decimal(0), sell_contracts=Decimal(0)) for side in ('yes','no')}
     unknown = outside = invalid = 0
-    seen = set()
+    seen = set(); history = []
     for row in rows:
         if provider == 'Kalshi':
             if row.get('ticker') != market['ticker']:
@@ -113,7 +113,14 @@ def trade_summary(rows, provider, market, lower, upper):
                 continue
             seen.add(identity)
             stamp = parse_time(row.get('created_time'))
-            side = row.get('taker_outcome_side') or {'bid':'yes','ask':'no'}.get(row.get('taker_book_side')) or row.get('taker_side')
+            outcome = row.get('taker_outcome_side')
+            book_side = row.get('taker_book_side')
+            book_outcome = {'bid':'yes','ask':'no'}.get(book_side)
+            if ((outcome is not None and outcome not in {'yes','no'})
+                    or (book_side is not None and book_outcome is None)
+                    or (outcome and book_outcome and outcome != book_outcome)):
+                invalid += 1; continue
+            side = outcome or book_outcome or row.get('taker_side')
             size = decimal(row.get('count_fp', row.get('count')))
             # Canonical trade direction does not flip its Yes-price basis.
             price = decimal(row.get('yes_price_dollars'))
@@ -138,15 +145,19 @@ def trade_summary(rows, provider, market, lower, upper):
         if side not in totals:
             unknown += 1; continue
         total = totals[side];total['prints'] += 1;total['contracts'] += size;total['dollars'] += price*size
+        if provider == 'Kalshi':
+            history.append(dict(time=stamp.isoformat(), yes_price=float(price), contracts=float(size), side=side))
         if action:
             # Kalshi reports a common Yes-price basis, including No takers.
-            # Express No exposure at its complementary outcome purchase price.
+            # Direction can also represent selling the opposite outcome. These
+            # legacy buy_* keys store direction-priced value, not cash paid.
             outcome_price = 1-price if provider == 'Kalshi' and side == 'no' else price
             total['buys' if action == 'BUY' else 'sells'] += 1
             total['buy_dollars' if action == 'BUY' else 'sell_dollars'] += outcome_price*size
             total['buy_contracts' if action == 'BUY' else 'sell_contracts'] += size
     return dict(sides={side:{key:float(value) if isinstance(value, Decimal) else value for key,value in total.items()}
-                       for side,total in totals.items()}, unclassified=unknown, invalid=invalid, outside=outside)
+                       for side,total in totals.items()}, unclassified=unknown, invalid=invalid, outside=outside,
+                price_history=sorted(history, key=lambda row:row['time']))
 
 
 class MarketStructure:
@@ -158,6 +169,7 @@ class MarketStructure:
         self.now = now or (lambda:datetime.now(timezone.utc))
         self.queue = RefreshQueue(workers=3)
         self.lock = RLock(); self.memory = OrderedDict()
+        self._trade_cutoff = None
 
     @staticmethod
     def key(request, provider):
@@ -220,39 +232,66 @@ class MarketStructure:
     def json(self, url, params=None):
         return self.client.json(url, params=params)
 
+    def trade_cutoff(self):
+        cached = self._trade_cutoff
+        if cached and 0 <= (self.now()-cached[0]).total_seconds() < 300:
+            return cached[1]
+        data = self.json(BASE+'/historical/cutoff')
+        cutoff = parse_time(data.get('trades_created_ts'))
+        if not cutoff:
+            raise DataSourceError('Kalshi omitted its historical trade cutoff.')
+        self._trade_cutoff = (self.now(), cutoff)
+        return cutoff
+
     def pages(self, provider, market, lower, upper):
-        cursor = '';seen = set();rows = [];error = None;complete = False
-        for _ in range(MAX_PAGES):
-            params = (dict(ticker=market['ticker'], min_ts=int(lower.timestamp()), max_ts=int(upper.timestamp()), limit=500)
-                if provider == 'Kalshi' else dict(condition=market['condition_id'], taker_only='true', limit=500))
-            if cursor:
-                params['cursor'] = cursor
+        rows = []; errors = []; completed = 0; scanned_pages = 0; successful_pages = 0
+        routes = [BASE+'/markets/trades'] if provider == 'Kalshi' else [DATA+'/trades']
+        if provider == 'Kalshi':
             try:
-                data = self.json(BASE+'/markets/trades' if provider == 'Kalshi' else DATA+'/trades', params)
-                page = data.get('trades') if provider == 'Kalshi' else data.get('data')
-                if not isinstance(page, list) or not all(isinstance(row, dict) for row in page):
-                    raise DataSourceError('The exchange returned an invalid trade page.')
-                if len(page) > 500:
-                    raise DataSourceError('The exchange exceeded the requested trade-page size.')
-                rows.extend(page)
-                if provider == 'Kalshi' and 'cursor' not in data:
-                    raise DataSourceError('Kalshi omitted its trade coverage cursor.')
-                if provider == 'Polymarket' and not isinstance(data.get('pagination'), dict):
-                    raise DataSourceError('Polymarket omitted its trade coverage information.')
-                cursor = data.get('cursor') if provider == 'Kalshi' else (data.get('pagination') or {}).get('next_cursor')
-                if provider == 'Polymarket' and data['pagination'].get('has_more') and not cursor:
-                    raise DataSourceError('Polymarket omitted the next trade-page cursor.')
-                if not cursor:
-                    complete = True; break
-                if not isinstance(cursor, str) or cursor in seen:
-                    raise DataSourceError('The exchange repeated its pagination cursor.')
-                seen.add(cursor)
+                cutoff = self.trade_cutoff()
+                if lower <= cutoff:
+                    routes.append(BASE+'/historical/trades')
             except (DataSourceError, OSError, ValueError, TypeError) as exc:
-                if not rows:
-                    raise
-                error = str(exc);break
+                errors.append('Archive coverage unverified: '+str(exc))
+        # The same requested range goes to both tiers. Overlap is deduplicated by
+        # trade_id, avoiding a gap at fractional-second archive boundaries.
+        for route in routes:
+            cursor = ''; seen = set()
+            while scanned_pages < MAX_PAGES:
+                params = (dict(ticker=market['ticker'], min_ts=max(0,int(lower.timestamp())-1), max_ts=int(upper.timestamp())+1, limit=500)
+                    if provider == 'Kalshi' else dict(condition=market['condition_id'], taker_only='true', limit=500))
+                if cursor:
+                    params['cursor'] = cursor
+                scanned_pages += 1
+                try:
+                    data = self.json(route, params)
+                    page = data.get('trades') if provider == 'Kalshi' else data.get('data')
+                    if not isinstance(page, list) or not all(isinstance(row, dict) for row in page):
+                        raise DataSourceError('The exchange returned an invalid trade page.')
+                    if len(page) > 500:
+                        raise DataSourceError('The exchange exceeded the requested trade-page size.')
+                    rows.extend(page); successful_pages += 1
+                    if provider == 'Kalshi' and 'cursor' not in data:
+                        raise DataSourceError('Kalshi omitted its trade coverage cursor.')
+                    if provider == 'Polymarket' and not isinstance(data.get('pagination'), dict):
+                        raise DataSourceError('Polymarket omitted its trade coverage information.')
+                    cursor = data.get('cursor') if provider == 'Kalshi' else data['pagination'].get('next_cursor')
+                    if provider == 'Polymarket' and data['pagination'].get('has_more') and not cursor:
+                        raise DataSourceError('Polymarket omitted the next trade-page cursor.')
+                    if cursor is None or cursor == '':
+                        completed += 1; break
+                    if not isinstance(cursor, str) or cursor in seen:
+                        raise DataSourceError('The exchange repeated its pagination cursor.')
+                    seen.add(cursor)
+                except (DataSourceError, OSError, ValueError, TypeError) as exc:
+                    errors.append(str(exc)); break
+        if not successful_pages:
+            raise DataSourceError('; '.join(errors) or 'Trade data unavailable.')
+        complete = completed == len(routes) and not errors
+        if not complete and scanned_pages == MAX_PAGES:
+            errors.append('The four-page trade limit was reached before all requested history was checked.')
         result = trade_summary(rows, provider, market, lower, upper)
-        result.update(complete=complete, error=error, fetched_at=self.now().isoformat(),
+        result.update(complete=complete, error='; '.join(errors) or None, fetched_at=self.now().isoformat(),
                       start=lower.isoformat(), end=upper.isoformat(), scanned=len(rows))
         return result
 

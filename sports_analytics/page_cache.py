@@ -42,7 +42,9 @@ def forecast_revision(service,sport):
     for path in sorted(files):
         try:
             stat=path.stat()
-            revision.append((str(path),stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns,stat.st_ino))
+            # Store revisions use JSON arrays and opaque strings for large
+            # filesystem integers, so browser round trips preserve equality.
+            revision.append([str(path),stat.st_size,str(stat.st_mtime_ns),str(stat.st_ctime_ns),str(stat.st_ino)])
         except OSError:pass
     return revision
 

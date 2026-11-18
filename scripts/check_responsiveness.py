@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
+import json
 from os import utime
 import sys
 import tempfile
@@ -21,12 +22,28 @@ from sports_analytics.loading import MESSAGES,indicator
 from sports_analytics.nba_model_data import NbaModelData,aggregate_team_games
 from sports_analytics.ppp_service import PPPMarketService
 from sports_analytics.page_cache import forecast_revision
+from sports_analytics.availability import AvailabilityStore
 from sports_analytics.backtesting_service import source_revisions,implementation_signature,file_revision
 import check_mispricing as fixtures
 from check_mispricing import components
 
 
 class ResponsivenessChecks(TestCase):
+    def test_browser_round_trip_preserves_source_revisions_and_precise_invalidation(self):
+        directory=self.root/'revision';directory.mkdir()
+        path=directory/'nba.json';path.write_text('{}')
+        exact=1_795_000_000_123_456_700
+        utime(path,ns=(exact,exact))
+        source=SimpleNamespace(path=path)
+        availability=AvailabilityStore(directory=directory)
+        versions=[forecast_revision(source,'NBA'),availability.revision('NBA')]
+        browser=json.loads(json.dumps(versions),parse_int=lambda value:int(float(value)))
+        self.assertEqual(browser,versions)
+        before=path.stat().st_mtime_ns
+        utime(path,ns=(before+10000,before+10000))
+        self.assertNotEqual(forecast_revision(source,'NBA'),browser[0])
+        self.assertNotEqual(availability.revision('NBA'),browser[1])
+
     def setUp(self):
         temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
         self.root=Path(temporary.name)

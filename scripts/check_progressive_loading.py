@@ -101,7 +101,7 @@ class ProgressiveLoadingChecks(TestCase):
         work,entered,release=self.blocked(expected)
         values={'workspace-page':'market-summary','sport':'NFL','market-url':'#nfl-market-summary',
             'summary-quotes':f.data,'summary-game':'123','summary-game-method':'PPP','summary-player-method':'WHP',
-            'summary-recalculate':0,'summary-model-poll':0,'summary-category':'All Markets'}
+            'summary-recalculate':0,'summary-model-poll':0,'history-update-poll':0,'summary-category':'All Markets'}
         with patch('sports_analytics.market_summary_callbacks.analysis.calculate',side_effect=work) as fit:
             start=perf_counter();pending=post(f.app,'summary_models',values,'summary-quotes.data')['response']['summary-models']['data']
             elapsed=(perf_counter()-start)*1000
@@ -109,10 +109,14 @@ class ProgressiveLoadingChecks(TestCase):
             self.assertNotIn('rows',pending);values['summary-models']=pending
             rendered=post(f.app,'summary_sections',values,'summary-quotes.data')
             self.assertIn('summary-market-sections',rendered['response'])
-            post(f.app,'summary_models',values,'summary-model-poll.n_intervals');self.assertEqual(fit.call_count,1)
+            self.assertFalse(post(f.app,'summary_model_poll',values,'summary-model-poll.n_intervals').get('response'))
+            self.assertEqual(fit.call_count,1)
             release.set();f.app._page_tasks.queue.tasks.join()
-            completed=post(f.app,'summary_models',values,'summary-model-poll.n_intervals')['response']['summary-models']['data']
-            self.assertEqual(completed['rows'],expected['rows']);self.assertFalse(completed['pending'])
+            event=post(f.app,'summary_model_poll',values,'summary-model-poll.n_intervals')['response']['summary-model-completed']['data']
+            values['summary-model-completed']=event
+            completed=post(f.app,'summary_models',values,'summary-model-completed.data')['response']['summary-models']['data']
+            self.assertNotIn('rows',completed);self.assertFalse(completed['pending'])
+            self.assertEqual(f.app._page_tasks.peek(completed['job'])['rows'],expected['rows'])
             print(f'Market Summary HTTP submit: {elapsed:.1f} ms while forecast blocked; quote sections remained available.')
 
     def test_career_http_is_independent_and_deduplicates_pending_work(self):
@@ -162,18 +166,21 @@ class ProgressiveLoadingChecks(TestCase):
         expected=f.cb['summary_models'](f.data,'PPP','WHP',0,'market-summary','NFL','123',None)[0]
         values={'workspace-page':'market-summary','sport':'NFL','market-url':'#nfl-market-summary','summary-quotes':f.data,
             'summary-game':'123','summary-game-method':'PPP','summary-player-method':'WHP',
-            'summary-recalculate':0,'summary-model-poll':0}
+            'summary-recalculate':0,'summary-model-poll':0,'history-update-poll':0}
         with patch('sports_analytics.market_summary_callbacks.analysis.calculate',side_effect=RuntimeError('Controlled fit failure')):
             first=post(f.app,'summary_models',values,'summary-quotes.data');values['summary-models']=first['response']['summary-models']['data']
             f.app._page_tasks.queue.tasks.join()
-            failed=post(f.app,'summary_models',values,'summary-model-poll.n_intervals')['response']['summary-models']['data']
+            values['summary-model-completed']=post(f.app,'summary_model_poll',values,'summary-model-poll.n_intervals')['response']['summary-model-completed']['data']
+            failed=post(f.app,'summary_models',values,'summary-model-completed.data')['response']['summary-models']['data']
             self.assertFalse(failed['pending']);self.assertEqual(failed['status'],'error')
         values.update({'summary-models':failed,'summary-recalculate':1})
         retried=post(f.app,'summary_models',values,'summary-recalculate.n_clicks')['response']['summary-models']['data']
         self.assertNotEqual(failed['job'],retried['job']);values['summary-models']=retried
         f.app._page_tasks.queue.tasks.join()
-        complete=post(f.app,'summary_models',values,'summary-model-poll.n_intervals')['response']['summary-models']['data']
-        self.assertFalse(complete['pending']);self.assertEqual(complete['rows'],expected['rows'])
+        values['summary-model-completed']=post(f.app,'summary_model_poll',values,'summary-model-poll.n_intervals')['response']['summary-model-completed']['data']
+        complete=post(f.app,'summary_models',values,'summary-model-completed.data')['response']['summary-models']['data']
+        self.assertFalse(complete['pending']);self.assertNotIn('rows',complete)
+        self.assertEqual(f.app._page_tasks.peek(complete['job'])['rows'],expected['rows'])
 
 
 if __name__=='__main__':main()

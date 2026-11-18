@@ -1,5 +1,6 @@
 """Cross-provider scope, probability semantics, navigation and Dash integration."""
 from copy import deepcopy
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -10,13 +11,15 @@ from unittest.mock import Mock,patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
+from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 from models.Game_Outcome.PPP.PPP import MarketProbability
 from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.market_summary import calculate,entries,matching_game,polymarket_target,route
-from sports_analytics.market_summary_view import sections,comparison_rows
+from sports_analytics.market_summary_view import sections,comparison_rows,selection_table,SUMMARY_BATCH,SUMMARY_STEP
+from sports_analytics.lazy_markets import markets as lazy_markets
 from sports_analytics.mispricing import GAME_METHODS,PLAYER_METHODS
 from check_kalshi import components
 
@@ -73,6 +76,47 @@ class PlayerForecast:
 
 
 class SummaryAnalysisChecks(TestCase):
+    def test_large_summary_mounts_bounded_rows_and_keeps_every_selection_available(self):
+        source=bundle();source['providers']={'Kalshi':source['providers']['Kalshi']}
+        snapshot=source['providers']['Kalshi']['snapshot']
+        snapshot['rows']=[{**binary(),'ticker':f'TOTAL-{i}','line':i} for i in range(80)]
+        for name in ('First Player','Second Player'):
+            snapshot['rows'].extend({**binary(True),'ticker':f'{name}-{i}','line':i,
+                'event_title':name+': Passing Yards','title':name+': Passing Yards Over '+str(i+.5)} for i in range(60))
+        rows=entries(source)
+        for row in rows:
+            row.update(probability=.625,model_odds=-167,edge=.125,method='WHP',detail='Recorded model result')
+        expected=comparison_rows(rows,'All Markets')
+        shown=sections(source,rows,'All Markets')
+        tables=[c for c in components(shown) if c.__class__.__name__=='Tbody']
+        self.assertEqual(sum(len(t.children) for t in tables),2*SUMMARY_BATCH)
+        self.assertLess(len(to_json(shown)),500_000)
+        bodies=[c for c in components(shown) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='lazy-market-body']
+        self.assertEqual(len(bodies),len(expected))
+        snapshots={'Kalshi':{**snapshot,'game':source['providers']['Kalshi']['game']}}
+        # Every deferred outcome, quote, model value and history/structure link
+        # must be identical to an eager rendering of that complete group.
+        for body in bodies:
+            (group,title),items=list(expected.items())[body.id['section']]
+            full,ready,more,_=lazy_markets.read(body.id,10_000)
+            self.assertEqual(to_json(full),to_json(selection_table(source,items,title,snapshots,len(items))))
+            self.assertEqual(ready,'true');self.assertEqual(more,{'display':'none'})
+            self.assertIn('62.50%',str(full))
+        self.assertEqual(sum(len(items) for items in expected.values()),len(rows))
+
+    def test_lazy_batches_do_not_change_thresholds_prices_or_model_values(self):
+        source=bundle();source['providers']={'Kalshi':source['providers']['Kalshi']}
+        snapshot=source['providers']['Kalshi']['snapshot']
+        snapshot['rows']=[{**binary(),'ticker':f'TOTAL-{i}','line':i} for i in range(75)]
+        rows=entries(source);original=deepcopy(rows)
+        shown=sections(source,rows,'All Markets')
+        body=next(c for c in components(shown) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='lazy-market-body')
+        first,_,_,_=lazy_markets.read(body.id,0)
+        second,_,_,_=lazy_markets.read(body.id,1)
+        def count(value):return sum(len(c.children) for c in components(value) if c.__class__.__name__=='Tbody')
+        self.assertEqual(count(first),SUMMARY_BATCH);self.assertEqual(count(second),SUMMARY_BATCH+SUMMARY_STEP)
+        self.assertEqual(rows,original)
+
     def test_equivalent_totals_align_in_source_columns_for_each_sport(self):
         for sport,away,home in [('NFL','Pittsburgh Steelers','New Orleans Saints'),
                                 ('NBA','Miami Heat','Charlotte Hornets'),('NCAAF','Texas Longhorns','Oklahoma Sooners')]:
@@ -139,8 +183,8 @@ class SummaryAnalysisChecks(TestCase):
         self.assertIn(('Player Props','Another Quarterback - Alt Passing Yds'),groups)
         rendered=sections(source,entries(source),'Player Props')
         identities=[c.id for c in components(rendered) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-cell']
-        self.assertEqual(len(identities),24)
-        self.assertEqual(len({str(identity) for identity in identities}),24)
+        self.assertEqual(len(identities),8)
+        self.assertEqual(len({str(identity) for identity in identities}),8)
 
     def test_polymarket_team_handicaps_and_equality_rules_are_preserved(self):
         snapshot={**bundle()['providers']['Polymarket']['snapshot'],'game':exchange('Polymarket')}
@@ -315,8 +359,55 @@ class SummaryCallbackChecks(TestCase):
         self.assertIn('Calculated probability',str(shown))
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
             with self.assertRaises(PreventUpdate):self.cb['summary_models'](quoted,'EPA','OAM',0,'market-summary','NFL','123',models)
+            # Simulate JSON.parse's Number precision, then a callback POST.
+            # Unchanged revisions must still reuse this completed forecast.
+            browser=json.loads(to_json(models),parse_int=lambda value:int(float(value)))
+            with self.assertRaises(PreventUpdate):self.cb['summary_models'](quoted,'EPA','OAM',0,'market-summary','NFL','123',browser)
+        self.engines['EPA'].forecast.assert_called_once();self.players['OAM'].forecast.assert_called_once()
         with self.assertRaises(PreventUpdate):self.cb['summary_sections'](quoted,models,'All Markets','EPA','OAM','123','market-summary','NFL',signature)
         with self.assertRaises(PreventUpdate):self.cb['summary_quotes']('123',self.catalog,1,'market','NFL',None)
+
+    def test_background_result_uses_small_scoped_reference_and_recovers_after_eviction(self):
+        quoted,_=self.quotes();tasks=self.app._page_tasks
+        self.addCleanup(tasks.queue.shutdown)
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
+            pending,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None,1)
+        tasks.queue.tasks.join()
+        event=self.cb['summary_model_poll'](1,pending,'123','market-summary','NFL',None)
+        self.assertEqual(event['status'],'complete');self.assertLess(len(to_json(event)),256)
+        with self.assertRaises(PreventUpdate):self.cb['summary_model_poll'](2,pending,'123','market-summary','NFL',event)
+        with self.assertRaises(PreventUpdate):self.cb['summary_model_poll'](2,pending,'another-game','market-summary','NFL',None)
+        poll=next(meta for meta in self.app.callback_map.values() if meta.get('callback') and meta['callback'].__wrapped__.__name__=='summary_model_poll')
+        self.assertNotIn('summary-quotes',{item['id'] for item in poll['inputs']+poll['state']})
+        request=next(meta for meta in self.app.callback_map.values() if meta.get('callback') and meta['callback'].__wrapped__.__name__=='summary_models')
+        self.assertNotIn('summary-model-poll',{item['id'] for item in request['inputs']})
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-model-poll')):
+            result,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',pending,event)
+            self.assertNotIn('rows',result);self.assertLess(len(to_json(result)),3000)
+            browser=json.loads(to_json(result),parse_int=lambda value:int(float(value)))
+            with self.assertRaises(PreventUpdate):
+                self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',browser,3)
+        shown,_=self.cb['summary_sections'](quoted,browser,'All Markets','PPP','WHP','123','market-summary','NFL')
+        identities=[c.id for c in components(shown) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-cell']
+        cells=self.cb['summary_model_cells'](browser,'PPP','WHP',identities,'market-summary','NFL',quoted,'123')
+        self.assertIn('70.00%',str(cells));self.engines['PPP'].forecast.assert_called_once()
+        wrong={**browser,'bundle_id':'another-game'}
+        with self.assertRaises(PreventUpdate):self.cb['summary_model_cells'](wrong,'PPP','WHP',identities,'market-summary','NFL',quoted,'123')
+        with tasks.lock:tasks.values.pop(browser['job'])
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-model-poll')):
+            retry,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',browser,4)
+        self.assertTrue(retry['pending']);self.assertTrue(retry['clear'])
+        cleared=self.cb['summary_model_cells'](retry,'PPP','WHP',identities,'market-summary','NFL',quoted,'123')
+        self.assertNotIn('70.00%',str(cleared))
+        tasks.queue.tasks.join();self.assertIsNotNone(tasks.peek(browser['job']))
+        self.engines['PPP'].forecast.assert_called_once()
+        with patch.object(tasks,'read',return_value=(None,False,'History unavailable')),\
+                patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-recalculate')):
+            failed,_=self.cb['summary_models'](quoted,'PPP','WHP',1,'market-summary','NFL','123',browser,5)
+        self.assertEqual(failed['status'],'error')
+        self.assertNotIn('70.00%',str(self.cb['summary_model_cells'](failed,'PPP','WHP',identities,'market-summary','NFL',quoted,'123')))
+        with self.assertRaises(PreventUpdate):
+            self.cb['summary_model_cells']({**failed,'bundle_id':'old-game'},'PPP','WHP',identities,'market-summary','NFL',quoted,'123')
 
     def test_catalogs_load_in_parallel_and_game_cards_select_and_return_to_list(self):
         barrier=Barrier(3,timeout=5)
@@ -358,7 +449,7 @@ class SummaryCallbackChecks(TestCase):
         quoted,_=self.quotes()
         raw,_=self.cb['summary_sections'](quoted,None,'All Markets','PPP','WHP','123','market-summary','NFL')
         identities=[c.id for c in components(raw) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-cell']
-        self.assertEqual(len(identities),30);self.assertIn('Market odds',str(raw))
+        self.assertEqual(len(identities),10);self.assertIn('Market odds',str(raw))
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             models,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None)
         key,meta=next((key,meta) for key,meta in self.app.callback_map.items() if meta.get('callback') and
@@ -368,14 +459,15 @@ class SummaryCallbackChecks(TestCase):
                 'workspace-page':'market-summary','sport':'NFL','summary-quotes':quoted,'summary-game':'123'}
         with self.app.server.test_client() as client:
             response=client.post('/_dash-update-component',json=dict(output=key,
-                outputs=[[dict(id=identity,property=output.component_property) for identity in identities] for output in meta['output']],
+                outputs=[dict(id=identity,property=meta['output'].component_property) for identity in identities],
                 inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
                 state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['summary-models.data']))
         self.assertEqual(response.status_code,200,response.get_data(as_text=True))
         data=response.get_json()['response']
-        self.assertEqual(len(data),30);self.assertIn('70.00%',str(data));self.assertNotIn('summary-market-sections',data)
-        outdated=self.cb['summary_model_cells'](models,'EPA','OAM',identities,'market-summary','NFL',quoted,'123')
-        self.assertNotIn('70.00%',str(outdated));self.fd.pull.assert_not_called()
+        self.assertEqual(len(data),10);self.assertIn('70.00%',str(data));self.assertNotIn('summary-market-sections',data)
+        with self.assertRaises(PreventUpdate):
+            self.cb['summary_model_cells'](models,'EPA','OAM',identities,'market-summary','NFL',quoted,'123')
+        self.fd.pull.assert_not_called()
 
 
 if __name__=='__main__':main()

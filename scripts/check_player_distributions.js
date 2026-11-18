@@ -11,7 +11,7 @@ let scans=0;
 const root={contains:()=>true,querySelectorAll:selector=>{scans++;return selector.includes('.lazy-market-body')?lazyPanels:buttons;}};
 const window={dash_clientside:{no_update:noUpdate,set_props:(id,props)=>writes.push({id,props})},
   addEventListener:(name,handler)=>events[name]=handler};
-const document={documentElement:{},getElementById:id=>id==='app-shell'?shell:id==='market-game-detail'?root:null,
+const document={documentElement:{},getElementById:id=>id==='app-shell'?shell:['market-game-detail','summary-detail'].includes(id)?root:null,
   addEventListener:(name,handler)=>events[name]=handler};
 let observerIndex=0;
 function MutationObserver(handler){if(observerIndex++===0){contentObserver=handler;observer=()=>handler([{target:{closest:()=>null},addedNodes:[{matches:()=>true}]}]);}
@@ -81,4 +81,13 @@ observer();events.hashchange();
 check(scans===beforeScans,'Hidden market pages perform no scans');
 shell.className='app-shell market-screen market-screen-market market-screen-detail';visibilityObserver();
 check(scans>beforeScans,'Returning to a market resumes its own pending mounts');
+shell.className='app-shell market-screen market-screen-summary';
+body.dataset.ready='false';trigger=makeControl('lazy-market-trigger');
+const beforeSummary=writes.length;visibilityObserver();
+check(writes.length===beforeSummary+1&&writes.at(-1).id.type==='lazy-market-trigger','Market Summary mounts its expanded lazy groups');
+events.toggle({target:{open:true,matches:()=>true,querySelectorAll:root.querySelectorAll}});
+check(writes.length===beforeSummary+1,'Repeated summary toggles do not duplicate pending row requests');
+shell.className='app-shell workspace-screen workspace-screen-historical';visibilityObserver();
+const hiddenSummaryScans=scans;observer();
+check(scans===hiddenSummaryScans,'Leaving Market Summary stops its row scans');
 console.log(`Passed ${checks} player distribution and lazy row checks.`);

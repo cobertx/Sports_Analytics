@@ -55,6 +55,7 @@ class StructureChecks(TestCase):
         self.temp = tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.service = MarketStructure(directory=self.temp.name, client=Mock(), now=lambda:NOW)
         self.addCleanup(self.service.queue.shutdown)
+        self.service._trade_cutoff = (NOW,NOW-timedelta(days=90))
         self.source = fixture()
         for name, service in [('Kalshi',self.service.kalshi), ('Polymarket',self.service.polymarket)]:
             record = self.source['providers'][name]
@@ -145,7 +146,7 @@ class StructureChecks(TestCase):
         from sports_analytics.market_structure_view import activity
         market = dict(ticker='TEST',title='Test',labels=dict(yes='Over 47.5',no='Under 47.5'),errors=[])
         rendered = json.dumps(activity(market,'Kalshi'),cls=PlotlyJSONEncoder)
-        self.assertIn('Amount paid for this outcome',rendered)
+        self.assertIn('Direction-priced traded value',rendered)
         self.assertIn('Unavailable',rendered)
         source = self.source['providers']['Kalshi']['snapshot']['rows'][0]
         market['trades'] = dict(trade_summary([kalshi_trade('no',quantity='10',price='.7')],
@@ -154,6 +155,101 @@ class StructureChecks(TestCase):
         self.assertIn('$3.00',rendered)
         self.assertIn('lower bounds',rendered)
         self.assertNotIn('Share of amount paid',rendered)
+        self.assertNotIn('structure-share-bar',rendered)
+        self.assertNotIn('Share of direction-priced value',rendered)
+
+    def test_archive_history_is_combined_deduplicated_and_bounded(self):
+        market = self.source['providers']['Kalshi']['snapshot']['rows'][0]
+        cutoff = NOW-timedelta(days=90)
+        old = {**kalshi_trade('no','old',quantity='5',price='.7'),'created_time':(cutoff-timedelta(seconds=1)).isoformat()}
+        boundary = {**kalshi_trade(identity='boundary'),'created_time':cutoff.isoformat()}
+        self.service.client.json.side_effect = [dict(trades=[kalshi_trade(),boundary],cursor=''),dict(trades=[boundary,old],cursor='')]
+        result = self.service.pages('Kalshi',market,NOW-timedelta(days=120),NOW)
+        self.assertTrue(result['complete']);self.assertEqual(result['scanned'],4)
+        self.assertEqual(result['sides']['yes']['prints'],2)
+        self.assertEqual(result['sides']['no']['buy_dollars'],1.5)
+        self.assertEqual([r['time'] for r in result['price_history']],sorted(r['time'] for r in result['price_history']))
+        calls=self.service.client.json.call_args_list
+        self.assertEqual([c.args[0] for c in calls],[BASE+'/markets/trades',BASE+'/historical/trades'])
+        self.assertEqual(calls[0].kwargs['params'],calls[1].kwargs['params'])
+        self.service.client.json.side_effect=[dict(trades=[kalshi_trade()],cursor=''),DataSourceError('Archive offline')]
+        result=self.service.pages('Kalshi',market,NOW-timedelta(days=120),NOW)
+        self.assertFalse(result['complete']);self.assertIn('Archive offline',result['error'])
+        self.assertEqual(result['sides']['yes']['prints'],1)
+        self.service.client.json.side_effect=[dict(trades=[],cursor='')]*2
+        # Only two routes with empty cursors are required, not four arbitrary pages.
+        result=self.service.pages('Kalshi',market,NOW-timedelta(days=120),NOW)
+        self.assertTrue(result['complete']);self.assertEqual(result['scanned'],0)
+        self.service.client.json.side_effect=[dict(trades=[kalshi_trade(identity=str(i))],cursor=str(i)) for i in range(4)]
+        result=self.service.pages('Kalshi',market,NOW-timedelta(days=120),NOW)
+        self.assertFalse(result['complete']);self.assertIn('four-page',result['error'])
+
+    def test_unknown_archive_cutoff_never_claims_complete_history(self):
+        market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
+        self.service._trade_cutoff=None
+        self.service.client.json.side_effect=[DataSourceError('Cutoff offline'),dict(trades=[kalshi_trade()],cursor='')]
+        result=self.service.pages('Kalshi',market,NOW-timedelta(days=1),NOW)
+        self.assertFalse(result['complete']);self.assertIn('Archive coverage unverified',result['error'])
+        self.service.client.json.side_effect=[dict(trades_created_ts=(NOW-timedelta(days=90)).isoformat()),dict(trades=[],cursor='')]
+        result=self.service.pages('Kalshi',market,NOW-timedelta(days=1),NOW)
+        self.assertTrue(result['complete'])
+        calls_before=self.service.client.json.call_count
+        self.assertEqual(self.service.trade_cutoff(),NOW-timedelta(days=90))
+        self.assertEqual(self.service.client.json.call_count,calls_before)
+
+    def test_direction_conflicts_are_excluded_and_zero_shares_are_not_invented(self):
+        from sports_analytics.market_structure_view import activity
+        market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
+        rows=[{**kalshi_trade(),'taker_book_side':'ask'},
+              {**kalshi_trade(identity='2'),'taker_outcome_side':'invalid'},
+              {**kalshi_trade(identity='3'),'taker_outcome_side':None,'taker_side':'no'}]
+        result=trade_summary(rows,'Kalshi',market,NOW,NOW)
+        self.assertEqual(result['invalid'],2)
+        self.assertEqual(result['sides']['no']['prints'],1)
+        self.assertEqual(len(result['price_history']),1)
+        empty=dict(trade_summary([],'Kalshi',market,NOW,NOW),complete=True,start=NOW.isoformat(),end=NOW.isoformat())
+        record=dict(ticker='TEST',title='Test',labels=dict(yes='Yes',no='No'),trades=empty)
+        rendered=json.dumps(activity(record,'Kalshi'),cls=PlotlyJSONEncoder)
+        self.assertNotIn('structure-share-bar',rendered)
+        self.assertIn('Trade-price history unavailable',rendered)
+
+    def test_quotes_use_best_levels_complementary_asks_and_explicit_missing_prices(self):
+        from sports_analytics.market_structure_view import quotes,price
+        book=dict(sides=dict(yes=dict(levels=[dict(price=.5),dict(price=.6005)]),no=dict(levels=[dict(price=.3)])))
+        bid,ask=quotes(book,'Kalshi')
+        self.assertEqual(bid,dict(yes=.6005,no=.3));self.assertEqual(ask,dict(yes=.7,no=.3995))
+        self.assertEqual(price(ask['no']),'39.95¢')
+        bid,ask=quotes(dict(sides=dict(yes=dict(levels=[]),no=dict(levels=[dict(price=.3)]))),'Kalshi')
+        self.assertIsNone(bid['yes']);self.assertIsNone(ask['no']);self.assertEqual(ask['yes'],.7)
+        self.assertEqual(price(None),'Unavailable')
+        self.assertEqual(quotes(None,'Kalshi'),(dict(yes=None,no=None),dict(yes=None,no=None)))
+        # Polymarket asks come from the actual outcome book, not an opposite token.
+        book['sides']['yes']['asks']=[dict(price=.72),dict(price=.71)]
+        self.assertEqual(quotes(book,'Polymarket')[1]['yes'],.71)
+
+    def test_selected_source_has_primary_placement_and_explicit_loading_state(self):
+        data=dict(request=dict(provider='Kalshi'),providers={p:dict(pending=p=='Kalshi',data=None) for p in ('FanDuel','Kalshi','Polymarket')})
+        result=render(data)
+        self.assertIn('structure-source--primary',result.children[0].className)
+        serialized=json.dumps(result.children[0],cls=PlotlyJSONEncoder)
+        self.assertIn('Kalshi',serialized);self.assertIn('Loading activity',serialized)
+
+    def test_trade_chart_uses_actual_yes_prices_and_keeps_explicit_units(self):
+        import plotly.graph_objects as go
+        from sports_analytics.market_structure_view import price_history
+        market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
+        rows=[kalshi_trade('no','later',quantity='2.5',price='.7'),
+              {**kalshi_trade(identity='earlier'),'created_time':(NOW-timedelta(minutes=1)).isoformat()}]
+        trades=trade_summary(rows,'Kalshi',market,NOW-timedelta(days=1),NOW)
+        view=price_history(trades,dict(yes='Over 47.5',no='Under 47.5'))
+        graph=view.children[2];figure=go.Figure(graph.figure)
+        self.assertEqual(list(figure.data[0].y),[60,70])
+        self.assertEqual(list(figure.data[0].x),[(NOW-timedelta(minutes=1)).isoformat(),NOW.isoformat()])
+        self.assertEqual(figure.data[0].mode,'markers')
+        self.assertEqual(figure.layout.xaxis.title.text,'Trade time (UTC)')
+        self.assertEqual(figure.layout.yaxis.title.text,'YES price (¢)')
+        self.assertEqual(list(figure.layout.yaxis.range),[0,100])
+        self.assertTrue(graph.responsive)
 
     def test_window_control_callback_loads_new_scope_and_paused_polling_stops(self):
         app = create_app(structure_service=self.service)

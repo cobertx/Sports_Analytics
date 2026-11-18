@@ -96,7 +96,9 @@ class AvailabilityStore:
         interval = int(self.now().timestamp()//300)
         try:
             stat = path.stat()
-            return [str(path), stat.st_size, stat.st_mtime_ns, interval]
+            # JavaScript Numbers cannot preserve nanosecond timestamps. This
+            # revision travels through dcc.Store before being compared again.
+            return [str(path), stat.st_size, str(stat.st_mtime_ns), interval]
         except OSError:return [str(path),None,interval]
 
     def load(self, snapshot):

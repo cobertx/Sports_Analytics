@@ -29,7 +29,7 @@ def configure(layout):
                 className='export-button',style={'display':'none'})])
         return node
     layout=visit(layout)
-    layout.children=[dcc.Interval(id=page+'-model-poll',interval=500,n_intervals=0,disabled=True)
+    layout.children=[dcc.Interval(id=page+'-model-poll',interval=1500 if page=='summary' else 500,n_intervals=0,disabled=True)
                      for page in ('kalshi','summary')]+layout.children
     return layout
 

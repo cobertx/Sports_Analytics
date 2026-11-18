@@ -21,8 +21,8 @@
         document.getElementById('structure-close')?.click();
       }
       if (event.key !== 'Tab') return;
-      const controls = [...dialog.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled)')]
-        .filter(element => element.getClientRects().length);
+      const controls = [...dialog.querySelectorAll('button,a[href],input,select,textarea,summary,[tabindex]')]
+        .filter(element => element.tabIndex >= 0 && !element.disabled && element.getClientRects().length);
       const first = controls[0], last = controls.at(-1);
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault(); last?.focus();

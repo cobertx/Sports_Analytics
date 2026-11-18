@@ -58,6 +58,7 @@
   });
   function currentRoot(){
     const classes=document.getElementById('app-shell')?.className||'';
+    if(classes.split(/\s+/).includes('market-screen-summary'))return document.getElementById('summary-detail');
     if(!classes.includes('market-screen-detail')||classes.includes('market-screen-pending'))return null;
     const provider=['market','kalshi','polymarket'].find(name=>classes.includes('market-screen-'+name+' '));
     return document.getElementById({market:'market-game-detail',kalshi:'kalshi-detail',polymarket:'polymarket-detail'}[provider]);
@@ -119,7 +120,7 @@
     const shell=document.getElementById('app-shell');
     if(!shell)return;
     bootstrap.disconnect();visibilityObserver.observe(shell,{attributes:true,attributeFilter:['class']});
-    for(const id of ['market-page','kalshi-page','polymarket-page','market-game-detail','kalshi-detail','polymarket-detail']){
+    for(const id of ['market-page','kalshi-page','polymarket-page','market-game-detail','kalshi-detail','polymarket-detail','summary-detail']){
       const panel=document.getElementById(id);if(panel)visibilityObserver.observe(panel,{attributes:true,attributeFilter:['class']});
     }
     schedule();
