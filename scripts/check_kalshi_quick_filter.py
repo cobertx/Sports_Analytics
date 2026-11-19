@@ -59,7 +59,10 @@ class QuickLifecycleChecks(TestCase):
         scan=self.submit();self.assertTrue(entered.wait(2))
         response=self.display(scan)
         self.assertEqual(response['sideUpdate']['kalshi-quick-state']['data']['status'],'pending')
-        self.assertIn('calculating in the background',str(response))
+        progress=response['response']['kalshi-quick-results']['children']
+        self.assertEqual(progress['props']['children'][1]['props']['value'],5)
+        self.assertIn('Loading market quotes',str(progress))
+        self.assertEqual(response['sideUpdate']['kalshi-quick-status']['children'],'')
         self.revision=[2]
         changed=dict(self.f.game,title='PIT at NO',milestone_id='new metadata')
         response=self.display(scan,**{'kalshi-context':changed})

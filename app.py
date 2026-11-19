@@ -12,6 +12,11 @@ from sports_analytics.dashboard import create_app
 app = create_app()
 server = app.server
 
+@server.before_request
+def start_history_updates():
+    app._history_updates.start()
+
+
 def main(argv=None):
     """Start the dashboard from either app.py or index.py."""
     parser = argparse.ArgumentParser(description="NBA, NFL, and NCAAF analytics dashboard")

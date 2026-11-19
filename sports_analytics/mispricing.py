@@ -1,7 +1,7 @@
 """Rank saved game and player selections with the same probabilities as market tabs."""
 
 import math
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
 from dash import dcc, html
@@ -13,6 +13,7 @@ from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
 from .quick_methods import GAME_METHODS,PLAYER_METHODS
 from .lazy_markets import markets as lazy_markets
+from .filter_jobs import forecast_progress
 
 
 FILTER_CATEGORY = 'Mispricing'
@@ -53,7 +54,7 @@ def quick_controls(prefix, result_id):
             html.Button('Quick Filtering', id=prefix+'-quick-filter', n_clicks=0, className='apply-criteria-button quick-filter-button'),
         ], className='criteria-controls'),
         html.Div(id=prefix+'-quick-status', className='criteria-status', role='status'),
-        dcc.Loading(html.Div(id=result_id), delay_show=500, overlay_style={'visibility':'visible'}, color='#57dbc4'),
+        html.Div(id=result_id),
     ], className='quick-filter-section')
 
 
@@ -65,12 +66,32 @@ def selected_methods(game_methods, player_methods):
     return validate(game_methods, GAME_METHODS), validate(player_methods, PLAYER_METHODS)
 
 
-def run_forecasts(tasks, sport):
+def quick_progress(tasks, key, prefix):
+    progress=tasks.progress(key)
+    percent=progress['percent']
+    return html.Div([
+        html.Div([html.Strong('Quick Filtering'),html.Span(f'{percent}%',className='backtest-job-percent')],
+                 className='backtest-job-heading'),
+        html.Progress(value=percent,max=100,**{'aria-label':'Quick Filtering calculation'}),
+        html.Small(progress['message'],className='backtest-job-message',role='status'),
+    ],id=prefix+'-quick-progress',className='quick-filter-progress')
+
+
+def run_forecasts(tasks, sport, report=None):
+    forecast_progress(report,0,len(tasks))
+    values={}
     # College preparation writes shared historical files. Keep those fits serial.
     if sport == 'NCAAF':
-        with _college_preparation:return {key: task() for key, task in tasks.items()}
-    pending = {key: _method_workers.submit(task) for key, task in tasks.items()}
-    return {key: task.result() for key, task in pending.items()}
+        with _college_preparation:
+            for key,task in tasks.items():
+                values[key]=task()
+                forecast_progress(report,len(values),len(tasks))
+    else:
+        pending = {_method_workers.submit(task):key for key,task in tasks.items()}
+        for future in as_completed(pending):
+            values[pending[future]]=future.result()
+            forecast_progress(report,len(values),len(tasks))
+    return {key:values[key] for key in tasks}
 
 
 def consensus_rankings(groups, criteria, selection_key):
@@ -174,9 +195,4 @@ def results(snapshot, ranked, criteria, errors=()):
         html.Section([html.H3('Remaining qualifying markets'),
             lazy_markets.panel(lazy_markets.view(),0,lambda count:table(matches[3:3+count],4),
                                max(0,len(matches)-3),size=50)],className='mispricing-remaining'),
-        html.P('Ranked by estimated probability minus market implied probability, highest first. '
-               'Estimates use the selected game/player methods and exclude pushes, matching the market tabs. '
-               'Alternate lines are separate selections. '+
-               ('Every method assigned to a prompt must pass both thresholds. Ranking uses the lowest edge across those methods; '
-                'missing estimates from any selected method exclude that selection.' if consensus else ''),className='ppp-comparison-note'),
     ],className='mispricing-results')

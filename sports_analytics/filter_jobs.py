@@ -13,9 +13,45 @@ def request_key(value):
     return sha256(json.dumps(value,sort_keys=True,default=str,separators=(',',':')).encode()).hexdigest()
 
 
+class QuickScanTasks(PageTasks):
+    """Track completed stages alongside the existing bounded quick scan queue."""
+
+    def __init__(self, capacity=16):
+        super().__init__(capacity=capacity)
+        self.progress_records = OrderedDict()
+
+    def scan(self, key, work, *, refresh=False, force=False):
+        with self.lock:
+            if self.queue.pending(key):
+                return self.peek(key), True, None
+            progress = {'percent':0, 'message':'Waiting for a calculation worker'}
+
+            def report(percent, message):
+                with self.lock:
+                    progress.update(percent=max(progress['percent'],percent),message=message)
+
+            result, pending, error = self.read(key, lambda:work(report), refresh=refresh, force=force)
+            if pending:
+                self.progress_records[key] = progress
+                self.progress_records.move_to_end(key)
+                while len(self.progress_records)>128:
+                    old = next(k for k in self.progress_records if not self.queue.pending(k))
+                    self.progress_records.pop(old)
+            return result, pending, error
+
+    def progress(self, key):
+        with self.lock:
+            return dict(self.progress_records.get(key, {'percent':0, 'message':'Waiting for a calculation worker'}))
+
+
+def forecast_progress(report, completed, total):
+    if report and total:
+        report(15 + 65*completed//total, f'{completed} of {total} forecast methods completed')
+
+
 class FilterJobs:
     def __init__(self,capacity=16):
-        self.tasks=PageTasks(capacity=capacity)
+        self.tasks=QuickScanTasks(capacity=capacity)
         self.lock=Lock();self.forecasts=OrderedDict();self.pending={};self.capacity=capacity
 
     def forecast(self,key,calculate):

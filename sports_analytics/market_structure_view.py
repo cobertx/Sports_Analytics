@@ -5,6 +5,7 @@ from dash import ALL, Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 
 from .display_time import format_eastern
+from .kalshi_view import odds_text
 from .market_structure import BOOK_DEPTH, validate, flow_summary
 from .presentation import PALETTE, chart_style
 
@@ -62,10 +63,14 @@ def price(value):
     return 'Unavailable' if value is None else f'{value*100:,.2f}'.rstrip('0').rstrip('.')+'¢'
 
 
+def best_quotes(bids, asks):
+    return (max((row['price'] for row in bids), default=None),
+            min((row['price'] for row in asks), default=None))
+
+
 def quotes(book, provider):
-    ladders = {s:order_levels(book, provider, s) for s in ('yes','no')}
-    return ({s:max((r['price'] for r in levels[0]), default=None) for s,levels in ladders.items()},
-            {s:min((r['price'] for r in levels[1]), default=None) for s,levels in ladders.items()})
+    sides = {side:best_quotes(*order_levels(book, provider, side)) for side in ('yes','no')}
+    return ({side:pair[0] for side,pair in sides.items()}, {side:pair[1] for side,pair in sides.items()})
 
 
 def order_levels(book, provider, side):
@@ -90,6 +95,16 @@ def depth_chart(book, provider, side, label):
     # A ladder gives each quoted price a row, including fractional-cent levels.
     prices = sorted({row['price'] for row in bids+asks})
     price_rows = {value:index for index,value in enumerate(prices)}
+    best_bid, best_ask = best_quotes(bids, asks)
+    current = None
+    if best_bid is None:
+        current = ('Best ask', best_ask, price_rows[best_ask])
+    elif best_ask is None:
+        current = ('Best bid', best_bid, price_rows[best_bid])
+    elif best_bid <= best_ask:
+        # The best bid and ask occupy adjacent rows when the book is uncrossed.
+        current = ('Midpoint', (best_bid+best_ask)/2, (price_rows[best_bid]+price_rows[best_ask])/2)
+
     unit = 'contracts' if provider == 'Kalshi' else 'shares'
     books = []
     for name, levels, color, direction in (
@@ -112,23 +127,35 @@ def depth_chart(book, provider, side, label):
         points = sorted(sizes.items())
         traces.append(dict(type='bar',orientation='h',name=name,base=direction*gutter,width=.72,
             x=[direction*float(size) for _,size in points],y=[price_rows[value] for value,_ in points],
-            marker=dict(color=color),customdata=[[price(value),amount(size)] for value,size in points],
-            hovertemplate='%{customdata[0]}<br>%{customdata[1]} '+unit+'<extra>'+name+'</extra>'))
+            marker=dict(color=color),customdata=[[odds_text(value),price(value),amount(size)] for value,size in points],
+            hovertemplate='%{customdata[0]} odds · %{customdata[1]}<br>%{customdata[2]} '+unit+'<extra>'+name+'</extra>'))
 
     # Keep the price labels centered in the gutter and legible in dense books.
     last_row = len(prices)-1
     intervals = min(last_row, 5)
     ticks = [round(last_row*i/intervals) for i in range(intervals+1)] if intervals else [0]
-    price_labels = [dict(xref='x',yref='y',x=0,y=index,text=price(prices[index]),showarrow=False,
+    if current:
+        ticks = [index for index in ticks if abs(index-current[2]) >= len(prices)*.075]
+    price_labels = [dict(xref='x',yref='y',x=0,y=index,text=odds_text(prices[index]),showarrow=False,
                          bgcolor=PALETTE['panel'],borderpad=2,font=dict(size=10)) for index in ticks]
+    shapes = [dict(type='line',xref='x',yref='paper',x0=0,x1=0,y0=0,y1=1,
+                   line=dict(color=PALETTE['line'],width=1),layer='below')]
+    if current:
+        kind, value, row = current
+        odds = odds_text(value)
+        highlight = PALETTE['warning']
+        shapes.append(dict(type='line',xref='paper',yref='y',x0=0,x1=1,y0=row,y1=row,
+                           line=dict(color=highlight,width=1.5,dash='dash')))
+        price_labels.append(dict(xref='x',yref='y',x=0,y=row,text=odds,showarrow=False,bgcolor=PALETTE['panel'],
+                                 bordercolor=highlight,borderwidth=1,borderpad=2,font=dict(size=11,color=highlight)))
+        heading = html.Div([heading,html.Span(f'{kind} {odds}',title=price(value),className='structure-depth-current')],
+                           className='structure-depth-heading')
     headings = [dict(xref='paper',yref='paper',x=x,y=1,yshift=8,text=name,showarrow=False,
                      xanchor='center',yanchor='bottom',font=dict(size=11,color=color))
-                for x,name,color in ((.22,'Bids',PALETTE['positive']),(.5,'Price',PALETTE['text']),
+                for x,name,color in ((.22,'Bids',PALETTE['positive']),(.5,'Odds',PALETTE['text']),
                                      (.78,'Asks',PALETTE['negative']))]
     figure = dict(data=traces,layout=chart_style(margin=dict(l=36,r=36,t=28,b=50),barmode='overlay',
-        showlegend=False,hovermode='closest',annotations=headings+price_labels,
-        shapes=[dict(type='line',xref='x',yref='paper',x0=0,x1=0,y0=0,y1=1,
-                     line=dict(color=PALETTE['line'],width=1),layer='below')],
+        showlegend=False,hovermode='closest',annotations=headings+price_labels,shapes=shapes,
         xaxis=dict(title=dict(text='Resting size ('+unit+')'),range=[-extent,extent],fixedrange=True,
                    showgrid=False,zeroline=False,tickfont=dict(size=10),
                    tickmode='array',tickvals=[-longest_bar_end,-gutter,gutter,longest_bar_end],
@@ -290,8 +317,9 @@ def activity(market, provider):
                 html.Span('Bid '+price(bid[side])),html.Span('Ask '+price(ask[side])),
                 html.Span('Spread '+price(round(ask[side]-bid[side],10)) if bid[side] is not None and ask[side] is not None else 'Spread unavailable')])],
                 className='structure-quote') for side in ('yes','no')],className='structure-outcomes')]
-        content += [html.P(f'Resting size at each price, up to {BOOK_DEPTH} levels per side. '
-                           'Bids extend left and asks extend right.',className='structure-note'),
+        content += [html.P(f'Resting size at each price, up to {BOOK_DEPTH} American odds levels per side. '
+                           'Bids extend left and asks extend right. The dashed line marks the bid–ask midpoint '
+                           'or the best available quote when only one side has orders.',className='structure-note'),
                     html.Div([depth_chart(book,provider,side,labels[side]) for side in ('yes','no')],
                              className='structure-depth-charts')]
         if is_kalshi:

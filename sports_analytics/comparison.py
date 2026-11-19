@@ -138,7 +138,7 @@ class Comparisons:
                 if job is None:
                     entry.update(state='interrupted',message='This run was interrupted. Run another comparison to retry.')
                 elif job['state']=='completed':
-                    entry.update(state='completed',run_id=job['result']['run_id'],percent=100,message='Completed')
+                    entry.update(state='completed',run_id=job['result']['run_id'],percent=100,message=job.get('message','Completed'))
                 else:
                     entry.update(state=job['state'],percent=job.get('percent',0),message=job.get('message',''))
             if json.dumps(manifest,sort_keys=True)!=original:self.save(manifest)

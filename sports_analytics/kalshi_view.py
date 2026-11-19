@@ -177,27 +177,29 @@ def layout(provider='Kalshi'):
             ], className='kalshi-detail-controls'),
             dcc.Tabs(id=f'{prefix}-category', value='Game Lines', children=[], mobile_breakpoint=0, className='market-category-tabs'),
             filter_panel() if not polymarket else None,
-            html.Div(id=f'{prefix}-quote-status', className='load-status', role='status'),
-            html.Div(id='kalshi-model-status',className='forecast-history',role='status') if not polymarket else None,
-            html.P('Market odds use American format, converted from each outcome’s quoted buying price divided by its payout. '
-                   'Market implied probability uses that same price; each outcome has its own quote. '
-                   'Raw bids, asks and last trades in cents are available in the detailed quote table. '
-                   'Quotes are before fees and subject to available liquidity. Read each contract’s settlement rules.', className='kalshi-connection-note'),
-            html.P('Market implied = ask price / contract payout. Edge = calculated probability minus market implied, before fees. '
-                   'Yes and No have their own buying costs. Estimates describe full-game outcomes; live game state is not modeled.',
-                   className='ppp-comparison-note') if not polymarket else None,
-            html.Div(indicator('Loading the selected markets…'),className='exchange-sections-transition'),
-            html.Div(id=f'{prefix}-market-sections'),
-            html.Div(id='kalshi-game-distributions') if not polymarket else None,
-            html.Details([html.Summary('Detailed quote table & CSV export'),
-              dash_table.DataTable(id=f'{prefix}-table', columns=columns, data=[], page_size=20, sort_action='native',
-                filter_action='native', export_format='csv', tooltip_duration=None,
-                style_table={'overflowX': 'auto'},
-                style_cell=table_cell(minWidth='95px', maxWidth='290px', whiteSpace='normal', height='auto'),
-                style_header=table_header())],
-                id=f'{prefix}-detail-table',open=False,className='panel kalshi-detail-table'),
-            html.Details([html.Summary('Contract rules, payout & settlement'), html.Div(id=f'{prefix}-rules')],
-                         id=f'{prefix}-rules-panel',open=False,className='panel kalshi-rules'),
+            html.Div([
+                html.Div(id=f'{prefix}-quote-status', className='load-status', role='status'),
+                html.Div(id='kalshi-model-status',className='forecast-history',role='status') if not polymarket else None,
+                html.P('Market odds use American format, converted from each outcome’s quoted buying price divided by its payout. '
+                       'Market implied probability uses that same price; each outcome has its own quote. '
+                       'Raw bids, asks and last trades in cents are available in the detailed quote table. '
+                       'Quotes are before fees and subject to available liquidity. Read each contract’s settlement rules.', className='kalshi-connection-note'),
+                html.P('Market implied = ask price / contract payout. Edge = calculated probability minus market implied, before fees. '
+                       'Yes and No have their own buying costs. Estimates describe full-game outcomes; live game state is not modeled.',
+                       className='ppp-comparison-note') if not polymarket else None,
+                html.Div(indicator('Loading the selected markets…'),className='exchange-sections-transition'),
+                html.Div(id=f'{prefix}-market-sections'),
+                html.Div(id='kalshi-game-distributions') if not polymarket else None,
+                html.Details([html.Summary('Detailed quote table & CSV export'),
+                  dash_table.DataTable(id=f'{prefix}-table', columns=columns, data=[], page_size=20, sort_action='native',
+                    filter_action='native', export_format='csv', tooltip_duration=None,
+                    style_table={'overflowX': 'auto'},
+                    style_cell=table_cell(minWidth='95px', maxWidth='290px', whiteSpace='normal', height='auto'),
+                    style_header=table_header())],
+                    id=f'{prefix}-detail-table',open=False,className='panel kalshi-detail-table'),
+                html.Details([html.Summary('Contract rules, payout & settlement'), html.Div(id=f'{prefix}-rules')],
+                             id=f'{prefix}-rules-panel',open=False,className='panel kalshi-rules'),
+            ], id=f'{prefix}-quote-content'),
         ], id=f'{prefix}-detail', style={'display': 'none'}, className='sportsbook-view kalshi-sportsbook'),
         html.Details([html.Summary('API connection & update speed'),
             html.P([f'This page uses {provider}’s ', html.A('public market-data REST API',
@@ -287,8 +289,7 @@ def filter_panel():
             field('Edge (percentage points)',dcc.Input(id='kalshi-edge-threshold',type='number',value=5,min=-100,max=100,step='any')),
             html.Button('Apply Criteria',id='kalshi-apply-criteria',n_clicks=0,className='apply-criteria-button'),
         ],className='criteria-controls'),
-        html.Div('Both thresholds must be exceeded. These criteria also highlight qualifying selections in the market tabs.',
-                 id='kalshi-criteria-status',className='criteria-status',role='status'),
+        html.Div(id='kalshi-criteria-status',className='criteria-status',role='status'),
         dcc.Loading(html.Div(id='kalshi-filter-results'),delay_show=500,overlay_style={'visibility':'visible'},color='#57dbc4'),
         quick_controls('kalshi', 'kalshi-quick-results'),
     ],id='kalshi-filter-panel',className='panel market-criteria',style={'display':'none'})

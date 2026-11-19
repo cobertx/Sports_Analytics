@@ -23,8 +23,6 @@ MESSAGES={
     'load-status':'Loading historical data…',
     'market-detail-pull-status':'Pulling live markets…',
     'market-criteria-status':'Applying criteria…',
-    'market-quick-status':'Preparing Quick Filtering…',
-    'kalshi-quick-status':'Calculating and filtering markets…',
     'kalshi-criteria-status':'Applying criteria…',
     'kalshi-quote-status':'Loading market quotes…',
     'polymarket-quote-status':'Loading market quotes…',

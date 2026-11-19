@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import contextmanager
 import os
+from time import sleep
 
 ACTIVE_REFRESH_SECONDS = 300
 
@@ -48,22 +49,30 @@ def retain_first_availability(frame, previous, keys):
 
 
 @contextmanager
-def update_lease(path):
+def update_lease(path, *, wait=False, stop=None):
     """One refresh cycle across the dashboard and unattended Windows worker."""
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
     with path.open('a+b') as stream:
         if stream.seek(0,2)==0:stream.write(b'0');stream.flush()
         stream.seek(0)
-        try:
-            if os.name=='nt':
-                import msvcrt
-                msvcrt.locking(stream.fileno(),msvcrt.LK_NBLCK,1)
-            else:
-                import fcntl
-                fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except OSError:
-            yield False
-            return
+        while True:
+            try:
+                if os.name=='nt':
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(),msvcrt.LK_NBLCK,1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                # Lock contention is expected. Filesystem failures must still surface.
+                windows_lock = os.name=='nt' and (exc.errno in {13,36} or getattr(exc,'winerror',None) in {32,33})
+                if not isinstance(exc, BlockingIOError) and not windows_lock:
+                    raise
+                if not wait or (stop is not None and stop.wait(.25)):
+                    yield False
+                    return
+                if stop is None:sleep(.25)
         try:yield True
         finally:
             stream.seek(0)

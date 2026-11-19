@@ -44,12 +44,28 @@ def layout():
     ],id='filtered-results-page',style={'display':'none'})
 
 
+def selection_label(row):
+    selection = row['selection']
+    direction = row.get('direction')
+    if row['provider'] == 'Kalshi':
+        title, separator, label = selection.rpartition(' — ')
+        if separator and label.casefold() in {'yes','no'} and (not direction or label.casefold()==direction.casefold()):
+            selection = title
+            direction = direction or label.title()
+        return f'{direction or "Side unavailable"} · {selection}'
+    if row['provider'] == 'Polymarket' and direction:
+        return f'{direction} · {selection}'
+    if row['provider'] == 'FanDuel' and direction in {'Yes','No'} and not selection.endswith(f' · {direction}'):
+        return f'{direction} · {selection}'
+    return selection
+
+
 def rows(records):
     data=[];tooltips=[]
     for row in records:
         criteria=row['criteria']
-        data.append({**{key:row[key] for key in ('id','matchup','provider','selection','category','market','method','probability','implied','odds')},
-            'open':f'[Open game]({row["href"]})','edge':100*row['edge'],
+        data.append({**{key:row[key] for key in ('id','matchup','provider','category','market','method','probability','implied','odds')},
+            'selection':selection_label(row),'open':f'[Open game]({row["href"]})','edge':100*row['edge'],
             'start':format_eastern(row['start']),'quote_time':format_eastern(row['quote_time']) if row['quote_time'] else 'Unavailable',
             'saved_at':format_eastern(row['saved_at']),
             'weighting':row.get('weighting','Earlier weighting; rerun Quick Filtering'),

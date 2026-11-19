@@ -135,11 +135,12 @@ def layout():
             html.Div(field('DraftKings snapshot',dcc.Dropdown(id='summary-draftkings-view',
                 options=[dict(label='Latest saved snapshot',value='latest')],value='latest',clearable=False)),
                 className='summary-draftkings-only'),
-            html.Div(id='summary-model-status',className='forecast-history',role='status'),
+            html.Div(html.Div(id='summary-model-status',className='forecast-history',role='status'),id='summary-forecast-status'),
             dcc.Tabs(id='summary-category',value='Game Lines',mobile_breakpoint=0,children=[dcc.Tab(label=value,value=value) for value in
                      ['Game Lines','Player Props',QUICK,'Other Markets']],className='market-category-tabs'),
             quick_controls(),
-            dcc.Loading(html.Div(id='summary-market-sections'),delay_show=500,color='#57dbc4',overlay_style={'visibility':'visible'}),
+            html.Div(dcc.Loading(html.Div(id='summary-market-sections'),delay_show=500,color='#57dbc4',
+                                 overlay_style={'visibility':'visible'}),id='summary-quote-content'),
             html.Details([
                 html.Summary('Forecast vs. market probabilities'),
                 chart_criteria_controls(),
@@ -364,6 +365,4 @@ def quick_results(bundle,ranked,criteria):
         html.H3('Top 3 by edge'),table(matches[:3],1),
         html.H3('Remaining qualifying quotes'),lazy_markets.panel(lazy_markets.view(),0,
             lambda count:table(matches[3:3+count],4),max(0,len(matches)-3),size=25,text_more=True),
-        html.P('Ranking uses the lowest edge across the selected methods. Calculated odds use the lowest calculated probability. '
-               'Source prices and each contract’s settlement rules are preserved. Edge is before fees.',className='ppp-comparison-note'),
     ],className='summary-quick-ranking')

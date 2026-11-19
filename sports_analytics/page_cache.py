@@ -23,11 +23,12 @@ def forecast_revision(service,sport):
             value=fields.get(key)
             if isinstance(value,(str,Path)):
                 path=Path(value);files.update([path,Path(str(path)+'-wal')])
-        for key in ('root','directory','college_directory'):
+        for key in ('root','directory','college_directory','pbp_root'):
             value=fields.get(key)
             if not isinstance(value,(str,Path)):continue
             root=Path(value)
             files.update(root.glob('*.csv'));files.update(root.glob('*.manifest.json'))
+            files.update(root.glob('state_statistics_*.npz'))
             files.add(root/'imports'/f'{sport.lower()}.csv')
             files.update((root/'ncaaf').glob('*.json'))
             if sport=='NCAAF' and key!='root':

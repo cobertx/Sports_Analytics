@@ -20,7 +20,6 @@ from .mispricing import GAME_METHODS,PLAYER_METHODS,criteria_values
 from .filter_jobs import request_key
 from .availability import revision as availability_revision
 from .summary_quote_jobs import SummaryQuoteJobs
-from .page_cache import PageTasks
 from . import market_summary as analysis
 from . import market_summary_view as view
 from . import summary_probability
@@ -42,9 +41,8 @@ def quote_version(sport,game,providers):
 def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast,pages=None,tasks=None,source_revision=None,*,draftkings=None):
     quote_jobs=SummaryQuoteJobs()
     books={'FanDuel':markets,'DraftKings':draftkings or {}}
-    quick_jobs=PageTasks(capacity=8)
     from .summary_filter_callbacks import register as register_quick
-    quick_chart_result=register_quick(app,quote_jobs,quick_jobs,game_forecast,player_forecast,source_revision)
+    quick_chart_result=register_quick(app,quote_jobs,game_forecast,player_forecast,source_revision)
     costs={provider:{sport:view.pull_estimate(sport,provider) for sport in SOURCES} for provider in books}
     app.clientside_callback("function(sport){return '#'+sport.toLowerCase()+'-draftkings-market';}",
         Output('draftkings-page-link','href'),Input('sport','value'))

@@ -69,19 +69,27 @@ class FilteredResults:
             if provider == 'FanDuel':
                 key = (row['market_key'],row['subject'],row['selection'],row.get('line'))
                 selection = selection_text(row)
+                direction = row['selection']
                 market = MARKET_NAMES.get(row['market_key'],(row['market'],))[0]
                 category = 'Player Props' if row['market_key'].startswith('player_') else 'Game Lines'
                 odds = row.get('odds')
             else:
-                key = (row['ticker'],item['side'])
-                selection = row['title']+' — '+row.get(item['side']+'_label',item['side'].title())
+                side = item['side']
+                key = (row['ticker'],side)
+                direction = side.title()
+                label = row.get(f'{side}_label') or direction
+                if provider == 'Polymarket':
+                    direction = label
+                selection = row['title']
+                if label != direction and label != row.get('no_label' if side == 'yes' else 'yes_label'):
+                    selection += ' — '+label
                 market = row.get('section') or row.get('event_title') or row['title']
                 category = row['category']
                 odds = 100*(1-implied)/implied if 0 < implied <= .5 else -100*implied/(1-implied) if .5 < implied < 1 else None
             if key in seen:
                 continue
             seen.add(key)
-            matches.append(dict(selection=selection,market=market,category=category,probability=probability,
+            matches.append(dict(selection=selection,direction=direction,market=market,category=category,probability=probability,
                 implied=implied,edge=edge,odds=odds,method=item['method'],estimates=item.get('estimates',[])))
         report = dict(sport=sport,provider=provider,game_id=game_id,matchup=matchup,start=start.isoformat(),
             href=href,quote_time=snapshot.get('pulled_at') or snapshot.get('fetched_at'),criteria=criteria,

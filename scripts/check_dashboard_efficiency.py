@@ -184,6 +184,8 @@ class AsyncScanChecks(TestCase):
         self.assertLess(perf_counter()-start,1);self.assertTrue(entered.wait(1))
         history=reply['response']['mispricing-forecast-history']['data']
         self.assertTrue(history['pending']);self.assertLess(len(json.dumps(history)),3000)
+        progress=reply['response']['mispricing-results']['children']
+        self.assertEqual(progress['props']['children'][1]['type'],'Progress')
         self.assertNotIn('snapshot',history);values['mispricing-forecast-history']=history
         values['mispricing-request']={**request,'sequence':2}
         duplicate=post(f.app,'quick_filter_markets',values,'mispricing-request.data')

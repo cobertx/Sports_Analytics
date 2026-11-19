@@ -133,12 +133,19 @@ class DataService:
             raise
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         source = frame.attrs.get("source", SOURCES[query.sport][0])
-        if cached is not None and cached.source==source and 'game_id' in cached.frame:
-            columns=['game_id','entity_id'] if 'entity_id' in frame and 'entity_id' in cached.frame else ['game_id']
-            before=set(cached.frame[columns].astype(str).itertuples(index=False,name=None))
-            after=(set(frame[columns].astype(str).itertuples(index=False,name=None))
-                   if set(columns)<=set(frame) else set())
-            if not before<=after:
+        if cached is not None and 'game_id' in cached.frame:
+            if cached.source==source:
+                columns=['game_id','entity_id'] if 'entity_id' in frame and 'entity_id' in cached.frame else ['game_id']
+                before=set(cached.frame[columns].astype(str).itertuples(index=False,name=None))
+                after=(set(frame[columns].astype(str).itertuples(index=False,name=None))
+                       if set(columns)<=set(frame) else set())
+                incomplete=not before<=after
+            else:
+                # Public fallback sources can use different game IDs. Do not
+                # replace a current season with a less complete fallback.
+                incomplete=(query.season>=active_season(query.sport) and
+                            ('game_id' not in frame or frame.game_id.nunique()<cached.frame.game_id.nunique()))
+            if incomplete:
                 return replace(cached,status='stale cache',notice='The source returned an incomplete game history; the last valid dataset was preserved.')
         # Complete box scores are known no later than this successful retrieval.
         # Preserve older conservative proxies, while admitting newly published

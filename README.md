@@ -236,7 +236,11 @@ statistic and prompt hit count; rolling forecasts still require their full histo
 NBA player IDs are retained when verified against the NBA API client registry; unmatched IDs
 remain provider-qualified. DNPs, incomplete games and other season phases are excluded.
 Market links load their requested season/player scope directly, and simultaneous callbacks
-share one download. Current-season NBA caches are checked after 15 minutes; Refresh still bypasses them.
+share one download. The dashboard checks active-season history on startup and repeats
+the check every five minutes. Refresh still bypasses the cache. Backtest and comparison
+methods wait for an in-progress history update and reuse the same published inputs.
+Source outages are reported separately and valid saved inputs remain available.
+Updated inputs invalidate forecast caches while preserving each forecast’s cutoff.
 Historical page navigation reads compatible local data immediately, then refreshes expired
 data in a bounded background worker. First-time downloads also run in the background,
 with local loading feedback and a half-second completion poll. The linked chart resolves
@@ -918,9 +922,10 @@ the complementary price basis, rather than displaying obsolete zero purchase
 fields. Empty failed feeds show **Unavailable**; positive headline volume with
 an empty trade feed is flagged as a coverage conflict. Sub-cent amounts show
 **< $0.01**, and verified empty windows explicitly say no executions were returned.
-The current bid/ask charts put price in the center and show the resting size at
-each price, with bids extending left and asks extending right. Each side shows
-up to 30 price levels. Kalshi asks are derived from opposite-side bids.
+The current bid/ask charts put American odds in the center and show the resting
+size at each price, with bids extending left and asks extending right. The dashed
+line marks the bid–ask midpoint or the best available quote in a one-sided book.
+Each side shows up to 30 price levels. Kalshi asks are derived from opposite-side bids.
 Polymarket depth uses the bids and asks from each token's own book.
 The YES trade-price chart samples dense histories for display while flow totals
 use every returned execution. The table keeps the latest 20 executions.

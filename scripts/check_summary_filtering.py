@@ -125,9 +125,15 @@ class SummaryFilteringChecks(TestCase):
 
     def test_slow_filter_does_not_hold_the_page_and_polling_never_restarts_it(self):
         from time import perf_counter
-        f=self.fixture();release=Event();entered=Event();self.addCleanup(release.set)
+        f=self.fixture();release=Event();entered=Event();advance=Event();advanced=Event()
+        self.addCleanup(release.set);self.addCleanup(advance.set)
         def blocked(*args):
+            report=args[-1]
+            report(15,'0 of 2 forecast methods completed')
             entered.set()
+            if not advance.wait(5):raise AssertionError('First method never released')
+            report(47,'1 of 2 forecast methods completed')
+            advanced.set()
             if not release.wait(5):raise AssertionError('Filter never released')
             return dict(matches=[],evaluated=0,unavailable=0,errors=[])
         with patch('sports_analytics.summary_filter_callbacks.calculate_filter',side_effect=blocked) as fit:
@@ -136,6 +142,11 @@ class SummaryFilteringChecks(TestCase):
             for tick in range(3):
                 pending=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',tick,None)
                 self.assertIs(pending[2],no_update)
+                self.assertEqual(pending[0].children[1].value,15)
+                self.assertEqual(pending[1],'')
+            advance.set();self.assertTrue(advanced.wait(1))
+            next_stage=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',3,None)
+            self.assertEqual(next_stage[0].children[1].value,47)
             with self.assertRaises(PreventUpdate):f.cb['summary_quick_results'](request,f.data,'Game Lines','123','market-summary','NFL',4,None)
             self.assertEqual(fit.call_count,1);release.set();f.app._summary_quick_jobs.queue.tasks.join()
             done=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',5,None)

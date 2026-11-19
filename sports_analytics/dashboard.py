@@ -84,7 +84,7 @@ from .market_navigation import remembered_market
 from .history_scope import analysis_scope, career_scope
 from .navigation import register_research_visibility,PAGES,scoped_callback,register_shell,register_sidebar,register as register_navigation
 from .mispricing import (FILTER_CATEGORY, criteria_values, filter_context, rank_markets, results as mispricing_results,
-                         quick_controls, selected_methods, run_forecasts, consensus_rankings, ALL_PROBABILITIES)
+                         quick_controls, quick_progress, selected_methods, run_forecasts, consensus_rankings, ALL_PROBABILITIES)
 from . import quick_methods
 from .display_time import eastern_datetime, format_eastern
 from .information import InformationService,route as information_route
@@ -647,12 +647,14 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                       value=5, min=-100, max=100, step="any")),
                                 html.Button("Apply Criteria", id="market-apply-criteria", n_clicks=0, className="apply-criteria-button"),
                             ], className="criteria-controls"),
-                            html.Div('Rows must exceed both thresholds. Edge is measured in percentage points.',
-                                     id="market-criteria-status", role="status", **{"aria-live": "polite"}, className="criteria-status"),
+                            html.Div(id="market-criteria-status", role="status", **{"aria-live": "polite"},
+                                     className="criteria-status"),
                             quick_controls('market', 'mispricing-results'),
                             ],id='mispricing-filter-panel',className='panel market-criteria',style={'display':'none'}),
-                            html.Div(indicator('Loading the selected markets…'),id='market-sections-transition',className='market-sections-transition'),
-                            dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),
+                            html.Div([
+                                html.Div(indicator('Loading the selected markets…'),id='market-sections-transition',className='market-sections-transition'),
+                                dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),
+                            ],id='market-quote-content'),
                             ], className="sportsbook-view"),
                         ], id="market-game-detail", className="market-detail-view", style={"display": "none"}),
                     ], id="market-page", className="market-page", style={"display": "none"}),
@@ -1172,18 +1174,15 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         estimate,error,latest=None,None,None
         try:
             if row['market_key'].startswith('player_'):
-                if snapshot['sport']=='NCAAF':
-                    ncaaf_model_data.prepare([snapshot['home_team'],snapshot['away_team']],snapshot['commence_time'])
-                    ncaaf_model_data.prepare_players(snapshot,[row])
-                forecast=availability_service.apply(snapshot,whp_service.forecast({**snapshot,'rows':[row]}),'WHP')
-                estimate=forecast.selection(row)
-                if estimate is None:error=forecast.detail(row)
-                fitted=forecast.forecasts.get((row['subject'],row['market_key'].removesuffix('_alternate')))
-                latest=fitted.diagnostics.get('last_game_date') if fitted else None
+                forecast,error,history=forecast_player_markets({**snapshot,'rows':[row]},'WHP')
+                if forecast:
+                    estimate=forecast.selection(row)
+                    if estimate is None:error=forecast.detail(row)
+                    latest=history.get('latest_date')
             elif row['market_key'] in {'alternate_spreads','alternate_totals'} and snapshot['sport'] in {'NBA','NFL','NCAAF'}:
-                forecast=availability_service.apply(snapshot,{'NBA':nba_ppp_service,'NFL':ppp_service,'NCAAF':ncaaf_forecast_services['PPP']}[snapshot['sport']].forecast(snapshot),'PPP')
+                forecast,error=forecast_game_markets(snapshot,'PPP')
                 estimate=_market_probability(row,forecast)
-                latest=forecast.diagnostics.get('last_game_date')
+                if forecast:latest=forecast.diagnostics.get('last_game_date')
             else:error='PPP is unavailable for this sport/market.'
         except (DataSourceError,OSError,ValueError) as exc:
             error=str(exc)
@@ -1280,10 +1279,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 'market',market_game_sport(location_hash),market_game_id(location_hash)))
             request={**filter_context(location_hash,selection,methods,player_methods,criteria),'sequence':clicks}
             if overrides:request['prompt_methods']=overrides
-            return request, 'Every method assigned to a prompt must pass both Quick Filtering thresholds.'
+            return request, ''
         except ValueError as exc:return no_update,str(exc)
 
-    @app.callback(Output('mispricing-filter-panel','style'),Output('saved-market-sections','style'),Input('market-category','value'))
+    @app.callback(Output('mispricing-filter-panel','style'),Output('market-quote-content','style'),Input('market-category','value'))
     def mispricing_visibility(category):
         selected=category==FILTER_CATEGORY
         return {'display':'block' if selected else 'none'},{'display':'none' if selected or category==ADDITIONAL_INFORMATION else 'block'}
@@ -1431,21 +1430,24 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             job=previous_history.get('job')
             if job:
                 state=filter_jobs.tasks.queue.state(job)
-                if state['pending']:return no_update,no_update
+                if state['pending']:return quick_progress(filter_jobs.tasks,job,'market'),no_update
+                if state['error']:return html.P(state['error'],className='mispricing-error'),dict(previous_history,pending=False)
                 result=filter_jobs.tasks.peek(job)
                 if result is not None:return result[0],{**result[1],'filter_key':request}
-                if state['error']:return html.P(state['error'],className='mispricing-error'),dict(previous_history,pending=False)
+                return html.P('This result expired. Run Quick Filtering again.',className='mispricing-error'),dict(previous_history,pending=False)
         snapshot=saved_snapshot(location_hash,selection)
         if not snapshot:return html.P('That saved snapshot is unavailable. Choose a snapshot and run Quick Filtering again.',className='saved-market-empty'),no_update
         snapshot={**snapshot,'sport':market_game_sport(location_hash)}
-        def calculate_filter():
+        def calculate_filter(report=None):
+            if report:report(5,'Preparing saved quotes and forecast methods')
             assignments=quick_methods.plan(snapshot['rows'],methods,player_methods,overrides)
             needed={method for choices in assignments.values() for method in choices}
             game_methods=[method for method in quick_methods.GAME_METHODS if method in needed]
             chosen_players=[method for method in quick_methods.PLAYER_METHODS if method in needed]
             tasks={method:lambda method=method:forecast_game_markets(snapshot,method) for method in game_methods}
             tasks.update({method:lambda method=method:forecast_player_markets(snapshot,method) for method in chosen_players})
-            forecasts=run_forecasts(tasks,snapshot['sport'])
+            forecasts=run_forecasts(tasks,snapshot['sport'],report)
+            if report:report(85,'Applying thresholds and ranking selections')
             game_rows={**snapshot,'rows':[row for row in snapshot['rows'] if not row['market_key'].startswith('player_')]}
             player_rows={**snapshot,'rows':[row for row in snapshot['rows'] if row['market_key'].startswith('player_')]}
             rankings={method:rank_markets(game_rows,forecasts[method][0],None,ALL_PROBABILITIES,method) for method in game_methods}
@@ -1462,6 +1464,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             errors=[f'{method} forecast: {record[1]}' for method,record in forecasts.items() if record[1]]
             injuries=availability_note(*(record[0] for record in forecasts.values()))
             if injuries:errors.append(injuries)
+            if report:report(95,'Saving filtered selections')
             try:
                 filtered_results_service.save(snapshot,ranked,criteria,request=request)
             except (DataSourceError,OSError,ValueError) as exc:
@@ -1471,10 +1474,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         identities=[forecast_identity(snapshot,method) for method in [*methods,*player_methods]]
         job=request_key([{key:value for key,value in request.items() if key!='sequence'},identities])
         explicit=ctx.triggered_id=='mispricing-request'
-        result,pending,error=filter_jobs.tasks.read(job,calculate_filter,refresh=explicit,force=explicit)
-        if result is not None and not pending:return result[0],{**result[1],'filter_key':request}
+        result,pending,error=filter_jobs.tasks.scan(job,calculate_filter,refresh=explicit,force=explicit)
+        if result is not None and not pending and not error:return result[0],{**result[1],'filter_key':request}
         history=dict(context=[location_hash,selection],filter_key=request,pending=pending,job=job)
-        return (html.P(error,className='mispricing-error') if error else indicator('Quick Filtering is calculating in the background...')),history
+        return (html.P(error,className='mispricing-error') if error else quick_progress(filter_jobs.tasks,job,'market')),history
 
     app.clientside_callback("""function(page,category,history,location,selection){
         const pending=page==='market'&&category==='Mispricing'&&history?.pending&&

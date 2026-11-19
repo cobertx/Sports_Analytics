@@ -433,7 +433,11 @@ class BacktestingService:
         def work():
             try:
                 updater=getattr(self,'history_updater',None)
-                if updater is not None:updater.refresh_for_analysis(parameters['sport'])
+                if updater is not None:
+                    progress(0,0,'Checking for newly published historical results')
+                    failed=updater.refresh_for_analysis(parameters['sport'])
+                    if failed:
+                        with self._jobs_lock:self._jobs[job_id]['history_notice']='Source refresh needs attention: '+', '.join(failed)
                 run_parameters=dict(parameters)
                 if parameters.get('sport')=='NBA' and parameters.get('group')=='game-outcome':
                     run_parameters.setdefault('prepare_history',True)
@@ -446,7 +450,7 @@ class BacktestingService:
                 with self._jobs_lock:
                     job=self._jobs[job_id]
                     job.update(state='completed',percent=100,result=result,
-                        reused=job['message']=='Loaded saved results',message='Completed')
+                        reused=job['message']=='Loaded saved results',message='Completed'+(' · '+job['history_notice'] if job.get('history_notice') else ''))
             except Exception as exc:
                 with self._jobs_lock:self._jobs[job_id].update(state='failed',message=str(exc))
         threading.Thread(target=work,name='backtest-'+job_id[:8],daemon=True).start()
@@ -508,7 +512,7 @@ class BacktestingService:
                 frames.append(read_input_csv(path,{'entity_id':str,'game_id':str}))
         else:
             with self.data.connect() as db:
-                saved=db.execute('SELECT key, query FROM datasets').fetchall()
+                saved=db.execute('SELECT key, query FROM datasets ORDER BY fetched_at, rowid').fetchall()
             for key,raw in saved:
                 query=json.loads(raw)
                 if query.get('sport')==sport and query.get('entity_type')=='player':

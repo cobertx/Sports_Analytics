@@ -6,15 +6,16 @@ from dash import Input,Output,State,html,no_update
 from dash.exceptions import PreventUpdate
 
 from .navigation import scoped_callback
-from .mispricing import criteria_values,selected_methods
-from .filter_jobs import request_key
+from .mispricing import criteria_values,quick_progress,selected_methods
+from .filter_jobs import QuickScanTasks,request_key
 from .summary_filtering import calculate_filter
 from .availability import revision as availability_revision
 from . import market_summary_view as view
 from .market_summary import POLICY_VERSION
 
 
-def register(app,quotes,jobs,game_forecast,player_forecast,source_revision):
+def register(app,quotes,game_forecast,player_forecast,source_revision):
+    jobs=QuickScanTasks(capacity=8)
     app._summary_quick_jobs=jobs
     def revision(sport,methods,players):
         return request_key([source_revision(dict(sport=sport),method,player) for method,player in
@@ -34,7 +35,7 @@ def register(app,quotes,jobs,game_forecast,player_forecast,source_revision):
 
     app.clientside_callback('''function(category){const quick=category==='Quick Filtering';
         return [quick?{}:{display:'none'},quick?{display:'none'}:{},quick?{display:'none'}:{},quick?{display:'none'}:{}];}''',
-        Output('summary-quick-panel','style'),Output('summary-market-sections','style'),Output('summary-forecast-controls','style'),Output('summary-model-status','style'),
+        Output('summary-quick-panel','style'),Output('summary-quote-content','style'),Output('summary-forecast-controls','style'),Output('summary-forecast-status','style'),
         Input('summary-category','value'))
 
     app.clientside_callback('''function(page,category,request,done,bundle,selected){
@@ -62,16 +63,23 @@ def register(app,quotes,jobs,game_forecast,player_forecast,source_revision):
             methods,players=selected_methods(methods,players);criteria=criteria_values(probability,edge)
             source=revision(sport,methods,players)
             key=request_key(['summary-quick-v1',bundle['id'],methods,players,criteria,POLICY_VERSION,availability_revision(sport),source,token])
-            def compute():
+            def compute(report):
+                report(5,'Preparing source quotes and forecast methods')
                 # The first forecast may prepare newly completed games. Refit
                 # once against that new revision so all methods share it.
-                for _ in range(2):
+                def report_retry(percent,message):
+                    report(86+percent//10,'Updated history · '+message)
+
+                for progress in (report,report_retry):
                     before=[revision(sport,methods,players),availability_revision(sport)]
-                    ranked=calculate_filter(bundle,methods,players,criteria,game_forecast,player_forecast)
+                    ranked=calculate_filter(bundle,methods,players,criteria,game_forecast,player_forecast,progress)
                     after=[revision(sport,methods,players),availability_revision(sport)]
-                    if before==after:return {**ranked,'input_revision':after}
+                    if before==after:
+                        report(97,'Publishing filtered selections')
+                        return {**ranked,'input_revision':after}
                 raise ValueError('Historical inputs changed during the scan. Run Quick Filtering again.')
-            jobs.read(key,compute)
+            _,_,error=jobs.scan(key,compute)
+            if error:raise ValueError(error)
             return dict(job=key,bundle_id=bundle['id'],game_id=selected,sport=sport,methods=methods,players=players,applied_at=time(),
                 criteria=criteria,policy=POLICY_VERSION,availability=availability_revision(sport),source_revision=source,partial=bool(bundle.get('updating')))
         except (ValueError,TypeError) as exc:return dict(error=str(exc),token=token)
@@ -95,8 +103,7 @@ def register(app,quotes,jobs,game_forecast,player_forecast,source_revision):
         state=jobs.queue.state(request['job'])
         if state['pending']:
             if category!='Quick Filtering':raise PreventUpdate
-            return html.P('Calculating the selected methods in the background…',role='status'),\
-                'Quick Filtering is running. You can continue browsing game lines and player props.',no_update
+            return quick_progress(jobs,request['job'],'summary'),'',no_update
         ranked,status=ranked_result(request,sport)
         if status=='changed':
             return prompt,'Historical inputs changed. Run Quick Filtering again to use the current data.',dict(job=request['job'],status='changed')

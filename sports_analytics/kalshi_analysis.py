@@ -266,7 +266,7 @@ def prompt_targets(game,snapshot):
     return targets
 
 
-def quick_calculate(game, snapshot, selected, methods, player_methods, criteria, game_forecast, player_forecast,prompt_methods=None):
+def quick_calculate(game, snapshot, selected, methods, player_methods, criteria, game_forecast, player_forecast,prompt_methods=None,report=None):
     """Fit each selected method once, with the same quotes and historical cutoff."""
     try:
         targets=prompt_targets(game,snapshot)
@@ -287,7 +287,8 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
         return rank(displayed,ALL_PROBABILITIES),models.get('errors',[])
     tasks={method:lambda method=method:evaluate(method,False) for method in GAME_METHODS if method in needed}
     tasks.update({method:lambda method=method:evaluate(method,True) for method in PLAYER_METHODS if method in needed})
-    forecasts=run_forecasts(tasks,game['sport'])
+    forecasts=run_forecasts(tasks,game['sport'],report)
+    if report:report(85,'Applying thresholds and ranking selections')
     ranked=quick_methods.consensus({method:record[0] for method,record in forecasts.items()},assignments,
         snapshot['rows'],criteria,lambda item:(item['row']['ticker'],item['side']),consensus_rankings,
         prompt=lambda row:quick_methods.prompt_key(targets[row['ticker']]),sides=2)

@@ -15,9 +15,11 @@
 .backtest-job-percent { color: var(--accent); font-size: 12px; font-weight: 700; }
 .backtest-job-scope { font-size: 12px; margin: 8px 0 4px; overflow-wrap: anywhere; }
 .backtest-job-detail,.backtest-job-message { display: block; color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
-.backtest-job progress { display: block; width: 100%; height: 7px; margin: 9px 0 6px; border: 0; border-radius: 6px; overflow: hidden; accent-color: var(--accent); }
-.backtest-job progress::-webkit-progress-bar { background: var(--line); border-radius: 6px; }
-.backtest-job progress::-webkit-progress-value { background: var(--accent); border-radius: 6px; transition: width .3s; }
+:is(.backtest-job,.quick-filter-progress) progress { display: block; width: 100%; height: 7px; margin: 9px 0 6px; border: 0; border-radius: 6px; overflow: hidden; accent-color: var(--accent); }
+:is(.backtest-job,.quick-filter-progress) progress::-webkit-progress-bar { background: var(--line); border-radius: 6px; }
+:is(.backtest-job,.quick-filter-progress) progress::-webkit-progress-value { background: var(--accent); border-radius: 6px; transition: width .3s; }
+.quick-filter-progress { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; max-width: 460px; }
+@media (prefers-reduced-motion: reduce) { .quick-filter-progress progress::-webkit-progress-value { transition: none; } }
 @media (max-width: 700px) {
   .backtest-monitor { width: min(300px,calc(100vw - 12px)); }
   .backtest-monitor.is-collapsed { width: 190px; }

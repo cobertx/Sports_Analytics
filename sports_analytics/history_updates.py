@@ -26,7 +26,7 @@ class HistoryUpdater:
         self.thread = None
         self.path = self.root/'data/cache/history_updates.json'
 
-    def plan(self):
+    def plan(self, *, refresh=False, only_sport=None):
         """Update active seasons; retain already-prepared advanced/school scopes."""
         from .nba_model_data import NbaModelData
         from .nfl_model_data import NflModelData
@@ -35,12 +35,13 @@ class HistoryUpdater:
         now = self.now()
         jobs = {}
         for sport in ('NBA', 'NFL'):
+            if only_sport and sport!=only_sport:continue
             year = active_season(sport, now)
             for phase in active_phases(sport, now):
                 for kind in ('player', 'team'):
                     query = Query(sport, year, kind, phase)
                     def update(query=query):
-                        result = self.data.load(query)
+                        result = self.data.load(query, refresh=True) if refresh else self.data.load(query)
                         if result.status == 'stale cache':
                             raise DataSourceError(result.notice)
                         if query.sport == 'NBA' and query.entity_type == 'team':
@@ -51,18 +52,19 @@ class HistoryUpdater:
                     jobs[f'{sport} {year} {phase} {kind}'] = update
         nfl_year = active_season('NFL', now)
         nfl = self.root/'data/modeling/nfl'
-        if (nfl/f'team_games_{nfl_year}.csv').exists():
+        if only_sport in {None,'NFL'} and (any(nfl.glob('team_games_*.csv')) or any((nfl/'raw').glob('play_by_play_*.csv'))):
             def nfl_models():
                 frame, notices = NflModelData(nfl).prepare([nfl_year])
                 return dict(rows=len(frame), latest_game=str(frame.event_date.max()), notices=notices)
             jobs['NFL prepared game models'] = nfl_models
         nba_year = active_season('NBA', now)
         epa = self.root/'data/modeling/nba/epa'
-        if (epa/f'team_games_{nba_year}.csv').exists():
+        if only_sport in {None,'NBA'} and any(epa.glob('team_games_*.csv')):
             def nba_epa():
                 dataset, notices = NBAEPAData(epa, self.data).prepare([nba_year])
                 return dict(rows=len(dataset.games), latest_game=str(dataset.games.event_date.max()), notices=notices)
             jobs['NBA EPA event inputs'] = nba_epa
+        if only_sport not in {None,'NCAAF'}:return jobs
         college = NcaafModelData(self.root/'data/modeling/ncaaf')
         for path in college.directory.glob(f'team_games_{active_season("NCAAF",now)}_*.manifest.json'):
             try:
@@ -119,10 +121,21 @@ class HistoryUpdater:
             sources[name] = {**sources.get(name, {}), **fields}
             atomic_text(self.path, json.dumps(state, indent=2, allow_nan=False))
 
-    def tick(self, *, wait=True):
-        with update_lease(self.path.with_suffix('.lock')) as acquired:
+    @staticmethod
+    def checked_recently(record, now, interval):
+        stamp = record.get('failed_at') if record.get('error') else record.get('last_success')
+        if not stamp or record.get('pending'):return False
+        try:return 0 <= (now-datetime.fromisoformat(stamp)).total_seconds() < interval
+        except (TypeError,ValueError):return False
+
+    def tick(self, *, wait=True, startup=False):
+        with update_lease(self.path.with_suffix('.lock'), wait=startup, stop=self.stop_event) as acquired:
             if not acquired:return self.status()
-            self._schedule(self.plan())
+            state=self.status()
+            last=state.get('sources',{}).get('Automatic updater',{})
+            # Multiple dashboard/worker starts within a minute share one source check.
+            if startup and self.checked_recently(last,self.now(),60):return state
+            self._schedule(self.plan(refresh=True) if startup else self.plan())
             # Keep the cross-process lease through publication of every source.
             self.queue.tasks.join()
             self._record('Automatic updater',pending=False,error=None,last_success=self.now().isoformat())
@@ -141,28 +154,34 @@ class HistoryUpdater:
             self.queue.request(name, update)
 
     def refresh_for_analysis(self, sport):
-        """Catch up a requested simulation before freezing its input snapshot."""
-        with update_lease(self.path.with_suffix('.lock')) as acquired:
+        """Wait in the replay worker and share a completed refresh across methods."""
+        with update_lease(self.path.with_suffix('.lock'), wait=True, stop=self.stop_event) as acquired:
             if not acquired:
-                raise DataSourceError('Historical data is being updated. Retry the analysis after the update completes.')
-            jobs={name:work for name,work in self.plan().items() if name.startswith(sport+' ')}
-            self._schedule(jobs)
+                raise DataSourceError('The historical data updater is shutting down.')
+            jobs=self.plan(only_sport=sport)
+            recent=self.status().get('sources',{})
+            now=self.now()
+            due={name:work for name,work in jobs.items() if not self.checked_recently(
+                recent.get(name,{}),now,60 if recent.get(name,{}).get('error') else self.interval)}
+            self._schedule(due)
             self.queue.tasks.join()
             status=self.status().get('sources',{})
-            failed=[name for name in jobs if status.get(name,{}).get('error')]
-            if failed:raise DataSourceError('Current history is unavailable: '+', '.join(failed)+'. Automatic updates will retry.')
+            return [name for name in jobs if status.get(name,{}).get('error')]
 
     def start(self):
         """Start once on server startup; catch up immediately, without blocking UI."""
+        if self.thread and self.thread.is_alive():return
         with self.lock:
             if self.thread and self.thread.is_alive():
                 return
             def loop():
+                startup=True
                 while not self.stop_event.is_set():
                     try:
-                        self.tick()
+                        self.tick(startup=startup)
                     except Exception as exc:
                         self._record('Automatic updater', pending=False, error=str(exc))
+                    startup=False
                     self.stop_event.wait(self.interval)
             self.thread = Thread(target=loop, name='analysis-history-updater', daemon=True)
             self.thread.start()

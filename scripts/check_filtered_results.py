@@ -86,6 +86,25 @@ class SavedFilteringChecks(TestCase):
         self.store.now=lambda:NOW+timedelta(hours=24)
         self.assertFalse(self.store.upcoming('NBA','all'))
 
+    def test_exchange_sides_remain_distinct_when_the_labels_match(self):
+        game=dict(sport='NBA',id='KXNBAGAME-TEST',title='Indiana Pacers at Brooklyn Nets',start=source()['commence_time'])
+        snapshot=dict(sport='NBA',game_id=game['id'],fetched_at=NOW.isoformat())
+        prompt=dict(ticker='KXNBAPTS-TEST',title='Stephon Castle: 25+ points',category='Player Props',
+                    yes_label='Stephon Castle: 25+',no_label='Stephon Castle: 25+')
+        matches=[dict(row=prompt,side=side,probability=probability,implied=.4,edge=probability-.4,method='WHP')
+                 for side,probability in [('yes',.6),('no',.8)]]
+        self.store.save(snapshot,dict(matches=matches),CRITERIA,provider='Kalshi',game=game)
+        records=self.store.upcoming('NBA')
+        self.assertEqual([r['direction'] for r in records],['No','Yes'])
+        self.assertEqual([r['selection'] for r in rows(records)[0]],
+                         ['No · Stephon Castle: 25+ points','Yes · Stephon Castle: 25+ points'])
+
+        ambiguous=dict(records[0],direction=None,selection='Stephon Castle: 25+ points — Stephon Castle: 25+')
+        explicit=dict(ambiguous,selection='Stephon Castle: 25+ points — No')
+        self.assertEqual([r['selection'] for r in rows([ambiguous,explicit])[0]],
+                         ['Side unavailable · Stephon Castle: 25+ points — Stephon Castle: 25+',
+                          'No · Stephon Castle: 25+ points'])
+
     def test_concurrent_saves_are_atomic_and_duplicate_quotes_do_not_repeat(self):
         ranked=ranking();ranked['matches'].append(deepcopy(ranked['matches'][0]))
         with ThreadPoolExecutor(max_workers=4) as pool:

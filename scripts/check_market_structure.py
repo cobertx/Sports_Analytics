@@ -347,20 +347,39 @@ class StructureChecks(TestCase):
         self.assertEqual((bids.type,bids.orientation,asks.type,asks.orientation),('bar','h','bar','h'))
         self.assertEqual(list(bids.x),[-4,-2])
         self.assertEqual(list(asks.x),[3,5])
-        self.assertEqual([list(row) for row in bids.customdata],[['50¢','4'],['60¢','2']])
-        self.assertEqual([list(row) for row in asks.customdata],[['70¢','3'],['80¢','5']])
+        self.assertEqual([list(row) for row in bids.customdata],[['+100','50¢','4'],['-150','60¢','2']])
+        self.assertEqual([list(row) for row in asks.customdata],[['-233','70¢','3'],['-400','80¢','5']])
         self.assertLess(bids.base,0)
         self.assertEqual(bids.base,-asks.base)
         self.assertEqual(figure.layout.yaxis.position,.5)
         self.assertEqual(figure.layout.xaxis.range[0],-figure.layout.xaxis.range[1])
         self.assertEqual(figure.layout.xaxis.title.text,'Resting size (contracts)')
+        self.assertEqual(figure.layout.annotations[1].text,'Odds')
         self.assertEqual([(label.x,label.text) for label in figure.layout.annotations[3:]],
-                         [(0,'50¢'),(0,'60¢'),(0,'70¢'),(0,'80¢')])
+                         [(0,'+100'),(0,'-150'),(0,'-233'),(0,'-400'),(0,'-186')])
+        highlight=figure.layout.shapes[1]
+        self.assertEqual((highlight.xref,highlight.yref,highlight.y0,highlight.y1),('paper','y',1.5,1.5))
+        self.assertIn('Midpoint -186',str(result.children[0]))
         poly=go.Figure(depth_chart(book,'Polymarket','yes','Over').children[1].figure)
         self.assertEqual(list(poly.data[1].x),[11])
-        self.assertEqual(list(poly.data[1].customdata[0]),['65¢','11'])
+        self.assertEqual(list(poly.data[1].customdata[0]),['-186','65¢','11'])
         self.assertEqual(poly.layout.xaxis.title.text,'Resting size (shares)')
+        self.assertEqual(poly.layout.annotations[-1].text,'-167')
         self.assertIn('No resting orders',str(depth_chart({},'Kalshi','no','Under')))
+
+    def test_depth_highlight_handles_one_sided_and_crossed_books(self):
+        import plotly.graph_objects as go
+        from sports_analytics.market_structure_view import depth_chart
+        bids=[dict(price=.25,size=2),dict(price=.2,size=4)]
+        one_sided=depth_chart(dict(sides=dict(yes=dict(depth=bids))),'Polymarket','yes','Over')
+        figure=go.Figure(one_sided.children[1].figure)
+        self.assertIn('Best bid +300',str(one_sided.children[0]))
+        self.assertEqual(figure.layout.shapes[1].y0,1)
+        self.assertEqual(figure.layout.annotations[-1].text,'+300')
+
+        crossed=dict(sides=dict(yes=dict(depth=bids,ask_depth=[dict(price=.23,size=8)])))
+        figure=go.Figure(depth_chart(crossed,'Polymarket','yes','Over').children[1].figure)
+        self.assertEqual(len(figure.layout.shapes),1)
 
     def test_window_control_callback_loads_new_scope_and_paused_polling_stops(self):
         app = create_app(structure_service=self.service)

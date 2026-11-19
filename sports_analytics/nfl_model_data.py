@@ -223,11 +223,19 @@ class NflModelData:
         for year in seasons:
             prepared = self.directory / f"team_games_{year}.csv"
             manifest_path = prepared.with_suffix(".manifest.json")
+            season_schedule = schedule[schedule['season'].eq(year)]
+            expected = set()
+            if year>=active_season('NFL') and 'result' in season_schedule:
+                finals=season_schedule[pd.to_numeric(season_schedule.result,errors='coerce').notna()]
+                if 'game_type' in finals:finals=finals[finals.game_type.ne('PRE')]
+                expected=set(finals.game_id.astype(str))
             if prepared.exists() and manifest_path.exists() and not refresh:
                 manifest = json.loads(manifest_path.read_text())
                 if manifest.get("version") == VERSION and source_fresh(prepared,'NFL',year,fetched_at=manifest['prepared_at']):
-                    frames.append(pd.read_csv(prepared, dtype={"game_id": str}))
-                    continue
+                    saved=pd.read_csv(prepared, dtype={"game_id": str})
+                    if expected<=set(saved.game_id.astype(str)):
+                        frames.append(saved)
+                        continue
             try:
                 pbp_path = self._source(f"play_by_play_{year}.csv", f"{RELEASES}/pbp/play_by_play_{year}.csv", refresh)
                 box_path = self._source(f"stats_team_week_{year}.csv", f"{RELEASES}/stats_team/stats_team_week_{year}.csv", refresh)
@@ -236,12 +244,9 @@ class NflModelData:
                                   dtype={"game_id": str}, low_memory=False)
                 box = pd.read_csv(box_path, dtype={"game_id": str}, low_memory=False)
                 snaps = pd.read_csv(snap_path, dtype={"game_id": str}, low_memory=False)
-                frame = aggregate_team_games(pbp, schedule[schedule["season"].eq(year)], box, snaps)
-                if year>=active_season('NFL') and 'result' in schedule:
-                    finals=schedule[schedule.season.eq(year)&pd.to_numeric(schedule.result,errors='coerce').notna()]
-                    if 'game_type' in finals:finals=finals[finals.game_type.ne('PRE')]
-                    if not set(finals.game_id.astype(str))<=set(frame.game_id.astype(str)):
-                        raise DataSourceError('NFL play-by-play inputs are missing completed games; current estimates will wait for published results.')
+                frame = aggregate_team_games(pbp, season_schedule, box, snaps)
+                if not expected<=set(frame.game_id.astype(str)):
+                    raise DataSourceError('NFL play-by-play inputs are missing completed games; current estimates will wait for published results.')
                 frame['available_at']=pd.to_datetime(frame.available_at,utc=True,format='mixed').clip(upper=pd.Timestamp.now(tz='UTC')).map(lambda t:t.isoformat())
                 if prepared.exists():
                     from .history_freshness import retain_first_availability

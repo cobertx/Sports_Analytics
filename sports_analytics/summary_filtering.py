@@ -2,6 +2,7 @@
 import math
 
 from models.Game_Outcome.PPP.PPP import fair_american_odds
+from .filter_jobs import forecast_progress
 from .market_summary import calculate,entries
 from .market_view import criteria_match
 
@@ -9,14 +10,18 @@ from .market_view import criteria_match
 def selection_key(row):return row['provider'],row['index'],row['side'] or ''
 
 
-def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player_forecast):
+def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player_forecast,report=None):
     values={};errors=[]
+    total=len(methods)+len(player_methods)
+    forecast_progress(report,0,total)
     for kind,selected in [('game',methods),('player',player_methods)]:
         for method in selected:
             result=calculate(bundle,method if kind=='game' else methods[0],
                 method if kind=='player' else player_methods[0],game_forecast,player_forecast,kinds=(kind,))
             errors.extend(result['errors'])
             values[kind,method]={selection_key(row):row for row in result['rows']}
+            forecast_progress(report,len(values),total)
+    if report:report(85,'Applying thresholds and ranking selections')
     matches=[];evaluated=unavailable=0
     for row in entries(bundle):
         kind='player' if row['category']=='Player Props' else 'game'

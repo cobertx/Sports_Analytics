@@ -81,6 +81,9 @@
 .structure-depth-charts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:12px 0 20px; }
 .structure-depth-panel { min-width:0; border:1px solid var(--line); border-radius:6px; padding:8px 4px; }
 .structure-depth-panel h6 { margin:8px 12px 0; color:var(--text); font-size:13px; }
+.structure-depth-heading { display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:4px 12px; margin:8px 12px 0; }
+.structure-depth-heading h6 { margin:0; }
+.structure-depth-current { color:var(--warning); font-size:11px; font-variant-numeric:tabular-nums; }
 .structure-depth-chart { min-width:0; width:100%; }
 .structure-source:not(.structure-source--primary) .structure-depth-charts { grid-template-columns:1fr; }
 @media(max-width:800px) { .structure-sources { grid-template-columns:1fr; }.structure-kpis strong { font-size:20px; } }

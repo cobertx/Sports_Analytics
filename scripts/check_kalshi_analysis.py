@@ -242,7 +242,12 @@ class KalshiFilterCallbacks(TestCase):
             g=dict(self.game,sport=sport,events=['KX'+sport+'GAME-TEST'])
             self.assertEqual(view.categories(g),['Game Lines',FILTER])
         visible=self.cb['kalshi_filter_visibility'](FILTER)
-        self.assertEqual(visible[0],{'display':'block'});self.assertEqual(visible[1:],({'display':'none'},)*4)
+        self.assertEqual(visible,({'display':'block'},{'display':'none'}))
+        self.assertEqual(self.cb['kalshi_filter_visibility']('Game Lines'),({'display':'none'},{'display':'block'}))
+        quotes=next(c for c in components(self.app.layout) if getattr(c,'id',None)=='kalshi-quote-content')
+        self.assertIn('Market odds use American format',str(quotes))
+        self.assertIn('Market implied = ask price',str(quotes))
+        self.assertIn('kalshi-model-status',str(quotes))
         visibility=self.cb['kalshi_visibility']('kalshi','NFL',view.href('NFL',GAME),5,'live',self.game,FILTER)
         self.assertTrue(visibility[-2])
         with self.assertRaises(PreventUpdate):self.cb['kalshi_quotes']('kalshi','NFL',self.game,FILTER,'live',1,0,5)
@@ -260,7 +265,8 @@ class KalshiFilterCallbacks(TestCase):
         self.engines['EPA'].forecast.assert_called_once()
         changed=self.cb['kalshi_models'](None,scan,self.game,'ELO','WHP','live','kalshi',FILTER,models)
         self.assertEqual(changed['context'][-2],'ELO');self.engines['ELO'].forecast.assert_called_once()
-        self.assertIn('Click Apply Criteria',str(self.cb['kalshi_filter_results'](scan,criteria,dict(self.game,id='another'),'EPA','WHP','live',FILTER,'kalshi',models)))
+        self.assertIsNone(self.cb['kalshi_filter_results'](scan,criteria,dict(self.game,id='another'),'EPA','WHP','live',FILTER,'kalshi',models))
+        self.assertIsNone(self.cb['kalshi_filter_results'](None,None,self.game,'EPA','WHP','live',FILTER,'kalshi',None))
 
     def test_archive_scan_never_fetches_live_prices_and_bad_criteria_preserve_results(self):
         self.exchange.history.side_effect=lambda g,c:['archive.json'] if c=='Game Lines' else []

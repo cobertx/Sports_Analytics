@@ -1,10 +1,13 @@
 """Automatic results ingestion, failure visibility and prediction invalidation."""
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
+from threading import Event
+from time import monotonic, sleep
 from types import SimpleNamespace
 from unittest import TestCase, main
 from unittest.mock import Mock, patch
@@ -73,6 +76,51 @@ class AutomaticHistoryChecks(TestCase):
             self.assertTrue(first)
             with update_lease(path) as second:self.assertFalse(second)
         with update_lease(path) as third:self.assertTrue(third)
+
+    def test_concurrent_analysis_waits_for_startup_and_reuses_the_published_history(self):
+        startup=HistoryUpdater(self.data,self.root,now=lambda:NOW)
+        another=HistoryUpdater(self.data,self.root,now=lambda:NOW)
+        self.addCleanup(startup.stop);self.addCleanup(another.stop)
+        entered,release=Event(),Event()
+        def fetch_boxes():
+            entered.set()
+            if not release.wait(5):raise AssertionError('Refresh was not released')
+            return {'rows':2,'latest_game':'newest published game'}
+        fetch=Mock(side_effect=fetch_boxes)
+        with patch.object(startup,'plan',return_value={'NBA results':fetch}) as plan, \
+             patch.object(another,'plan',return_value={'NBA results':fetch}),ThreadPoolExecutor(max_workers=4) as pool:
+            updating=pool.submit(startup.tick,startup=True)
+            self.assertTrue(entered.wait(2))
+            waiting=[pool.submit(another.refresh_for_analysis,'NBA') for _ in range(3)]
+            try:
+                with self.assertRaises(TimeoutError):waiting[0].result(timeout=.1)
+            finally:release.set()
+            updating.result(timeout=5)
+            self.assertEqual([job.result(timeout=5) for job in waiting],[[],[],[]])
+        plan.assert_called_once_with(refresh=True)
+        fetch.assert_called_once()
+        self.assertEqual(another.status()['sources']['NBA results']['detail']['rows'],2)
+
+    def test_optional_history_source_failure_does_not_prevent_other_methods_from_running(self):
+        from sports_analytics.backtesting_service import BacktestingService
+        updater=HistoryUpdater(self.data,self.root,now=lambda:NOW)
+        self.addCleanup(updater.stop)
+        available=Event()
+        def run(**_):
+            self.assertIs(updater.status()['sources']['NBA team']['error'],None)
+            available.set()
+            return {'run_id':'fixture'}
+        jobs={'NBA team':Mock(return_value={'rows':4}),
+              'NBA EPA event inputs':Mock(side_effect=DataSourceError('Feed has not published'))}
+        service=BacktestingService(self.root/'reports',self.data,history_updater=updater)
+        with patch.object(updater,'plan',return_value=jobs),patch.object(service,'run',side_effect=run):
+            job=service.start(sport='NBA',group='game-outcome',key='ppp')
+            self.assertTrue(available.wait(5))
+            thread_deadline=monotonic()+5
+            while service.progress(job)['state']=='running' and monotonic()<thread_deadline:sleep(.01)
+        result=service.progress(job)
+        self.assertEqual(result['state'],'completed')
+        self.assertIn('NBA EPA event inputs',result['message'])
 
     def test_current_college_result_feeds_expire_and_archive_stays_offline(self):
         college=NcaafModelData(self.root/'college',client=Mock())
@@ -143,6 +191,16 @@ class AutomaticHistoryChecks(TestCase):
         before=forecast_revision(source,'NBA');path.write_text('updated history')
         self.assertNotEqual(before,forecast_revision(source,'NBA'))
 
+    def test_revisions_include_pace_play_by_play_and_nba_epa_state_statistics(self):
+        pbp=self.root/'raw';pbp.mkdir()
+        source=SimpleNamespace(data=SimpleNamespace(directory=self.root),repository=SimpleNamespace(pbp_root=pbp))
+        before=forecast_revision(source,'NFL')
+        (pbp/'play_by_play_2026.csv').write_text('new data')
+        self.assertNotEqual(before,forecast_revision(source,'NFL'))
+        before=forecast_revision(source,'NBA')
+        (self.root/'state_statistics_2026.npz').write_bytes(b'new version')
+        self.assertNotEqual(before,forecast_revision(source,'NBA'))
+
     def test_public_result_cache_updates_final_availability_and_rejects_truncation(self):
         query=Query('NBA',2026,'player')
         frame=pd.DataFrame(dict(game_id=['one','two'],entity_id=['p','p'],
@@ -155,6 +213,32 @@ class AutomaticHistoryChecks(TestCase):
             failed=self.data.load(query,refresh=True)
         self.assertEqual(failed.status,'stale cache')
         self.assertEqual(len(self.data.cached(self.data.key(query)).frame),2)
+
+        fallback=frame.iloc[:1].assign(game_id=['alternate-id'])
+        fallback.attrs['source']='Fallback source'
+        with patch('sports_analytics.service.active_season',return_value=2026), \
+             patch('sports_analytics.service.fetch',return_value=fallback):
+            failed=self.data.load(query,refresh=True)
+        self.assertEqual(failed.status,'stale cache')
+        self.assertEqual(failed.frame.game_id.tolist(),['one','two'])
+
+    def test_nfl_prepared_cache_checks_for_new_finals_even_within_the_ttl(self):
+        from sports_analytics.nfl_model_data import NflModelData, VERSION
+        year=active_season('NFL')
+        prepared=self.root/f'team_games_{year}.csv'
+        prepared.write_text('game_id\nold\n')
+        prepared.with_suffix('.manifest.json').write_text(json.dumps(dict(version=VERSION,
+            prepared_at=datetime.now(timezone.utc).isoformat())))
+        schedule=self.root/'games.csv'
+        pd.DataFrame(dict(game_id=['old','new','preseason'],season=[year]*3,result=[1,-2,3],
+                          game_type=['REG','REG','PRE'])).to_csv(schedule,index=False)
+        data=NflModelData(self.root)
+        with patch.object(data,'_source',side_effect=lambda name,*_:schedule if name=='games.csv' else prepared), \
+             patch('sports_analytics.nfl_model_data.aggregate_team_games',return_value=pd.DataFrame(dict(game_id=['old']))) as aggregate:
+            with self.assertRaisesRegex(DataSourceError,'missing completed games'):
+                data.prepare([year])
+        aggregate.assert_called_once()
+        self.assertEqual(prepared.read_text(),'game_id\nold\n')
 
     def test_repeated_checks_retain_the_first_time_a_result_was_observed(self):
         from sports_analytics.history_freshness import retain_first_availability
