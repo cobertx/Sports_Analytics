@@ -13,7 +13,7 @@
 .summary-table-scroll { overflow-x: auto; width: 100%; }
 .summary-table-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .summary-row-count { color:var(--muted); font-size:12px; margin:12px 16px; }
-.summary-market .market-load-more { margin:0 16px 16px; }
+.market-summary-page .market-load-more-text { text-align: center; }
 .summary-source-pulls { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:16px 0 22px; }
 .summary-source-pull { min-width:0; margin:0; padding:14px 16px 16px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
 .summary-source-pull legend { padding:0 6px; font-size:14px; font-weight:650; color:var(--text); }

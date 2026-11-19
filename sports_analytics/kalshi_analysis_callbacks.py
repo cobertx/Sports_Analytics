@@ -177,12 +177,14 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
                 *[html.P(error,className='ppp-comparison-note' if error.startswith('Game injuries:') else 'mispricing-error') for error in models.get('errors',[])]]
 
     rows=dict(type='kalshi-comparison-row',sport=ALL,game=ALL,ticker=ALL,side=ALL)
-    @scoped_callback(app,'kalshi',Output('kalshi-game-distributions','children'),
+    @app.callback(Output('kalshi-game-distributions','children'),
                   Input('kalshi-models','data'),Input('kalshi-context','data'),Input('kalshi-game-method','value'),
                   Input('kalshi-player-method','value'),Input('kalshi-snapshot','value'),Input('kalshi-category','value'),
-                  Input('workspace-page','value'),Input('market-url','hash'))
+                  State('workspace-page','value'),State('market-url','hash'),prevent_initial_call=True)
     def kalshi_game_distributions(models,game,method,player_method,selected,category,page,location):
-        if page!='kalshi' or not game or category!='Game Lines' or route(location)!=(game['sport'],game['id']):return []
+        # Retain the chart for a warm return. The market shell hides it while its route or quotes are stale.
+        if page!='kalshi' or not game or route(location)!=(game['sport'],game['id']):raise PreventUpdate
+        if category!='Game Lines':return []
         if not model_matches(models,game,selected,method,player_method):return []
         if models.get('pending') and not models.get('keep_visible'):return []
         from .game_distribution import panel

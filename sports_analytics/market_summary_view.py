@@ -286,7 +286,8 @@ def sections(bundle,rows,category):
     for (group,title),items in groups.items():
         def render(count,items=items,title=title):
             return selection_table(bundle,items,title,snapshots,count)
-        body=(lazy_markets.panel(scope,index,render,len(items),initial=index<2,size=SUMMARY_BATCH,step=SUMMARY_STEP,loading=False)
+        body=(lazy_markets.panel(scope,index,render,len(items),initial=index<2,size=SUMMARY_BATCH,step=SUMMARY_STEP,
+                                 loading=False,text_more=True)
               if lazy else render(len(items)))
         table=html.Details([
             html.Summary([html.Strong(title),html.Span(f'{len(items)} selections',className='market-chevron')]),
@@ -325,7 +326,7 @@ def quick_results(bundle,ranked,criteria):
         *[html.P(error,className='mispricing-error',role='status') for error in ranked['errors']],
         html.H3('Top 3 by edge'),table(matches[:3],1),
         html.H3('Remaining qualifying quotes'),lazy_markets.panel(lazy_markets.view(),0,
-            lambda count:table(matches[3:3+count],4),max(0,len(matches)-3),size=25),
+            lambda count:table(matches[3:3+count],4),max(0,len(matches)-3),size=25,text_more=True),
         html.P('Ranking uses the lowest edge across the selected methods. Calculated odds use the lowest calculated probability. '
                'Source prices and each contract’s settlement rules are preserved. Edge is before fees.',className='ppp-comparison-note'),
     ],className='summary-quick-ranking')

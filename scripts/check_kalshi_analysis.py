@@ -224,8 +224,11 @@ class KalshiFilterCallbacks(TestCase):
         args=[models,self.game,'PPP','WHP','live','Game Lines','kalshi',view.href(self.game['sport'],self.game['id'])]
         output=self.cb['kalshi_game_distributions'](*args)
         self.assertIn('Forecast distributions',str(output));self.assertFalse(output.open)
-        for index,value in [(2,'EPA'),(4,'saved-other'),(5,'Passing Props'),(6,'historical'),(7,'#nfl-kalshi-game-OTHER')]:
+        for index,value in [(2,'EPA'),(4,'saved-other'),(5,'Passing Props')]:
             changed=list(args);changed[index]=value;self.assertEqual(self.cb['kalshi_game_distributions'](*changed),[])
+        for index,value in [(6,'historical'),(7,'#nfl-kalshi-game-OTHER')]:
+            changed=list(args);changed[index]=value
+            with self.assertRaises(PreventUpdate):self.cb['kalshi_game_distributions'](*changed)
         self.assertEqual(self.cb['kalshi_game_distributions']({**models,'pending':True,'keep_visible':False},*args[1:]),[])
         for engine in self.engines.values():engine.forecast.assert_not_called()
         self.exchange.quotes.assert_not_called()
