@@ -15,6 +15,7 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
       const special={RESEARCH:'backtesting',PNL:'pnl',ODDS_API:'odds'}[sport],route=api.route(hash);
       if(special)return 'app-shell workspace-screen workspace-screen-'+special;
       if(route&&route.sport!==sport)return plain;
+      if(route?.provider==='draftkings')return 'app-shell market-screen market-screen-summary market-screen-draftkings';
       if(route)return 'app-shell market-screen market-screen-'+route.provider+' market-screen-'+(route.game?'detail':'list');
       const target=destination?.page||page||'historical';
       return 'app-shell workspace-screen workspace-screen-'+target;
@@ -132,7 +133,7 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
     },
     destination: function(hash) {
       const market=window.dash_clientside.market_transition.route(hash);
-      if(market)return {sport:market.sport,page:{summary:'market-summary',filtered:'filtered-results'}[market.provider]||market.provider};
+      if(market)return {sport:market.sport,page:{summary:'market-summary',draftkings:'market-summary',filtered:'filtered-results'}[market.provider]||market.provider};
       const historical=/^#historical(?:-(team|player))?(?:\?(.*))?$/.exec(hash||'');
       if(historical) {
         const value=new URLSearchParams(historical[2]||'').get('sport');
@@ -150,8 +151,8 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
       return null;
     },
     route: function(hash) {
-      const summary=/^#(nba|nfl|ncaaf)-market-summary$/.exec(hash||'');
-      if(summary)return {sport:summary[1].toUpperCase(),provider:'summary',game:null};
+      const summary=/^#(nba|nfl|ncaaf)-(market-summary|draftkings-market)$/.exec(hash||'');
+      if(summary)return {sport:summary[1].toUpperCase(),provider:summary[2]==='draftkings-market'?'draftkings':'summary',game:null};
       const filtered=/^#(nba|nfl|ncaaf)-filtered-results$/.exec(hash||'');
       if(filtered)return {sport:filtered[1].toUpperCase(),provider:'filtered',game:null};
       let match=/^#(nba|nfl|ncaaf)-(games|game-(\d+))$/.exec(hash||'');
@@ -180,6 +181,7 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
       }
       if(route.sport!==sport)return plain;
       if(route.provider==='summary')return 'app-shell market-screen market-screen-summary';
+      if(route.provider==='draftkings')return 'app-shell market-screen market-screen-summary market-screen-draftkings';
       if(route.provider==='filtered')return 'app-shell market-screen market-screen-filtered';
       const context={market:game,kalshi,polymarket}[route.provider];
       const catalog={market:scope,kalshi:kalshiGames,polymarket:polymarketGames}[route.provider];

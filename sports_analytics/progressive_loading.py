@@ -84,11 +84,13 @@ def register(app):
         }''', Output(provider+'-detail', 'className'), Input('market-url', 'hash'),
             Input(provider+'-snapshot', 'value'), Input(provider+'-category', 'value'),
             Input(provider+'-rules-signature', 'data'), Input(provider+'-quotes', 'data'))
-    app.clientside_callback('''function(bundle,rendered,selected,sport,category){
-        const ready=bundle?.sport===sport&&String(bundle?.game?.id)===selected&&rendered?.[0]===bundle?.id&&rendered?.[3]===category;
+    app.clientside_callback('''function(bundle,rendered,selected,sport,category,hash){
+        const mode=hash?.endsWith('-draftkings-market')?'draftkings':'summary';
+        const ready=bundle?.sport===sport&&(bundle.mode||'summary')===mode&&String(bundle?.game?.id)===selected&&rendered?.[0]===bundle?.id&&rendered?.[3]===category;
         return ready?'':'summary-quotes-pending';
     }''',Output('summary-market-sections','className'),Input('summary-quotes','data'),
-        Input('summary-rendered','data'),Input('summary-game','value'),Input('sport','value'),Input('summary-category','value'))
+        Input('summary-rendered','data'),Input('summary-game','value'),Input('sport','value'),Input('summary-category','value'),
+        Input('market-url','hash'))
     # Model guards have a separate DOM owner, so quote rendering never waits on
     # a forecast result (including when both are downstream of a route change).
     app.clientside_callback('''function(hash,selection,method,player,models){

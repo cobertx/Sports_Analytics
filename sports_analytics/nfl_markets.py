@@ -56,6 +56,17 @@ CSV_FIELDS = ["game_id", "event_id", "home_team", "home_abbreviation", "away_tea
               "snapshot_metadata_json", "api_response_json"]
 csv.field_size_limit(max(csv.field_size_limit(), 64 * 1024 * 1024))
 GAME_TIMEZONE = ZoneInfo("America/New_York")
+SPORTSBOOKS = ('FanDuel','DraftKings')
+SPORTSBOOK_LINES = {'spreads':'alternate_spreads','totals':'alternate_totals'}
+
+
+def draftkings_markets(markets):
+    return {
+        'h2h': ('Game', 'Moneyline'), 'spreads': ('Game', 'Spread'), 'totals': ('Game', 'Game total'),
+        **{key.removesuffix('_alternate'): (group,label.removeprefix('Alternate ').capitalize())
+           for key,(group,label) in markets.items() if key.startswith('player_') and key.endswith('_alternate')},
+        **markets,
+    }
 
 
 def team_name(name):
@@ -96,7 +107,7 @@ def number(value):
     return None
 
 
-def snapshot_data(payload, event, game_id, headers, markets=None, sport="NFL"):
+def snapshot_data(payload, event, game_id, headers, markets=None, sport="NFL", *, bookmaker_key="fanduel"):
     markets = NFL_MARKETS if markets is None else markets
     headers = CaseInsensitiveDict(headers)
     if not isinstance(payload, dict) or payload.get("id") != event["id"] or not isinstance(payload.get("bookmakers"), list):
@@ -104,20 +115,27 @@ def snapshot_data(payload, event, game_id, headers, markets=None, sport="NFL"):
     rows, returned = [], set()
     try:
         for bookmaker in payload["bookmakers"]:
-            if bookmaker["key"] != "fanduel":
+            if bookmaker["key"] != bookmaker_key:
                 continue
             for market in bookmaker["markets"]:
                 key = market["key"]
                 if key not in markets:
                     continue
                 group, label = markets[key]
+                two_way = key == 'h2h' and sorted(team_name(outcome['name']) for outcome in market['outcomes']) == sorted(
+                    team_name(event[f'{side}_team']) for side in ('home','away'))
                 for outcome in market["outcomes"]:
                     selection = str(outcome["name"])
                     point = number(outcome.get("point"))
                     milestone = ""
                     if key == "player_tds" and selection == "Over" and point is not None and point >= 0 and point % 1 == 0.5:
                         milestone = f"{int(point) + 1}+ TDs"
-                    rows.append({"group": group, "market_key": key, "market": label,
+                    canonical = SPORTSBOOK_LINES.get(key,key)
+                    if two_way:
+                        canonical,point = 'alternate_spreads',0
+                    if key.startswith('player_') and key+'_alternate' in markets:
+                        canonical = key+'_alternate'
+                    rows.append({"group": group, "market_key": canonical, "market": label,
                                  "subject": str(outcome.get("description") or selection),
                                  "selection": "Yes" if key in {"player_anytime_td", "player_1st_td", "player_last_td"} and not outcome.get("description") else selection,
                                  "line": point, "td_threshold": milestone, "odds": number(outcome.get("price")),
@@ -125,12 +143,18 @@ def snapshot_data(payload, event, game_id, headers, markets=None, sport="NFL"):
                     returned.add(key)
     except (KeyError, TypeError, AttributeError):
         raise DataSourceError("The odds response had an unexpected market schema. It was not retried; check account usage before pulling again.") from None
+    if bookmaker_key == 'draftkings':
+        priority={label:0 for key,(group,label) in markets.items() if not key.startswith('alternate_') and not key.endswith('_alternate')}
+        unique={}
+        for row in sorted(rows,key=lambda r:(priority.get(r['market'],1),r['odds'] is None)):
+            unique.setdefault(tuple(row[k] for k in ('market_key','subject','selection','line')),row)
+        rows=list(unique.values())
     try:
         cost = credit_headers({"x-requests-used": headers.get("x-requests-last"), "x-requests-remaining": 0})[0]
     except DataSourceError:
         cost = None
     return {"sport": sport, "game_id": str(game_id), "event_id": event["id"], "home_team": event["home_team"],
-            "away_team": event["away_team"], "commence_time": event["commence_time"], "bookmaker": "fanduel",
+            "away_team": event["away_team"], "commence_time": event["commence_time"], "bookmaker": bookmaker_key,
             "pulled_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"), "cost": cost,
             "usage_headers": {key: headers.get(key) for key in ("x-requests-used", "x-requests-remaining", "x-requests-last")},
             "requested": list(markets), "returned": sorted(returned),
@@ -144,11 +168,20 @@ class NflMarketService:
     team_codes = NFL_TEAM_CODES
     table = "nfl_snapshots"
 
-    def __init__(self, odds_api, path, csv_directory=None, usage_log=None):
+    def __init__(self, odds_api, path, csv_directory=None, usage_log=None, *, bookmaker='fanduel'):
+        if bookmaker not in {'fanduel','draftkings'}:
+            raise ValueError('Unsupported sportsbook.')
+        self.bookmaker = bookmaker
+        if bookmaker == 'draftkings':
+            self.markets = draftkings_markets(self.markets)
+            self.table = 'draftkings_'+self.table
         self.api = odds_api
         self.path = Path(path)
         self.csv_directory = Path(csv_directory) if csv_directory is not None else self.path.parent / "market_data"
-        self.usage_log = usage_log or ApiUsageLog(self.csv_directory.parent / "API Log" / "api_credit_usage.csv")
+        if bookmaker == 'draftkings':
+            self.csv_directory /= bookmaker
+        log_root = self.csv_directory.parent.parent if bookmaker == 'draftkings' else self.csv_directory.parent
+        self.usage_log = usage_log or ApiUsageLog(log_root / "API Log" / "api_credit_usage.csv")
         self._csv_cache = OrderedDict()
         self._csv_lock = threading.Lock()
         self._history_cache = OrderedDict()
@@ -311,7 +344,8 @@ class NflMarketService:
         for path in self.csv_directory.glob(f"{self.sport.lower()}_*.csv"):
             try:
                 snapshot = self._read_csv(path)
-                if snapshot.get("account_id") == account and (selected is None or snapshot["game_id"] in selected):
+                if (snapshot.get("account_id") == account and snapshot.get('bookmaker','fanduel')==self.bookmaker
+                        and (selected is None or snapshot["game_id"] in selected)):
                     snapshot = {key: value for key, value in snapshot.items() if key != "account_id"}
                     saved[(snapshot["game_id"], snapshot["pulled_at"])] = snapshot
             except (OSError, ValueError, KeyError, StopIteration, TypeError, csv.Error):
@@ -348,6 +382,8 @@ class NflMarketService:
         account = self.api.account_id()
         # Preserve existing NFL click identities; other sports get a namespace.
         namespace = "" if self.sport == "NFL" else self.sport + ":"
+        if self.bookmaker != 'fanduel':
+            namespace = self.bookmaker+':'+namespace
         request_key = hashlib.sha256((account + ":" + namespace + str(request_id)).encode()).hexdigest()
         with self._lock, closing(self._connect()) as db:
             previous = db.execute(f"SELECT state, payload, error, account FROM {self.table} WHERE request_id = ?", (request_key,)).fetchone()
@@ -378,7 +414,7 @@ class NflMarketService:
             paid_response = None
             try:
                 response = self.api.get(f"sports/{self.sport_key}/events/{event['id']}/odds", params={
-                    "bookmakers": "fanduel", "markets": ",".join(self.markets), "oddsFormat": "american", "dateFormat": "iso"})
+                    "bookmakers": self.bookmaker, "markets": ",".join(self.markets), "oddsFormat": "american", "dateFormat": "iso"})
                 account = self._paying_account(response, account)
                 paid_response = response
                 paid_headers = response.headers
@@ -386,7 +422,7 @@ class NflMarketService:
                     payload = response.json()
                 except ValueError:
                     raise DataSourceError("The odds response was invalid. It was not retried; check account usage before pulling again.") from None
-                snapshot = snapshot_data(payload, event, game["id"], response.headers, self.markets, self.sport)
+                snapshot = snapshot_data(payload, event, game["id"], response.headers, self.markets, self.sport, bookmaker_key=self.bookmaker)
                 snapshot["pulled_at"] = taken
                 snapshot["usage_log_id"] = request_key
                 snapshot['api_account_id'] = account

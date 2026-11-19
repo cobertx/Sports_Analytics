@@ -113,6 +113,25 @@ class PlayerForecast:
 
 
 class SummaryAnalysisChecks(TestCase):
+    def test_draftkings_main_lines_align_with_sportsbook_push_treatment(self):
+        source=bundle()
+        fanduel=source['providers']['FanDuel']['snapshot']
+        common=dict(group='Game',market='Total',market_key='alternate_totals',subject='Over',selection='Over',line=47,odds=-110)
+        fanduel['rows']=[common]
+        source['providers']['DraftKings']=dict(game=game(),snapshot={**fanduel,'bookmaker':'draftkings',
+            'rows':[{**common,'odds':100},{**common,'line':47.5,'odds':110}]})
+        model=PPPForecast('NO','PIT',27,21,11,10)
+        result=calculate(source,'PPP','WHP',lambda *_:(model,None),lambda *_:(None,None,{}))
+        ranked=[r for r in result['rows'] if r['provider']=='DraftKings']
+        self.assertAlmostEqual(ranked[0]['probability'],model.total(47,'Over').probability)
+        self.assertAlmostEqual(ranked[1]['probability'],model.total(47.5,'Over').win)
+        aligned=comparison_rows(result['rows'],'Game Lines')['Game Lines','Game Total']
+        self.assertTrue(any(set(r['quotes'])=={'FanDuel','DraftKings'} for r in aligned))
+        self.assertTrue(any({'DraftKings','Kalshi','Polymarket'}<=set(r['quotes']) for r in aligned))
+        from sports_analytics.summary_probability import panel
+        charts=panel(source,result['rows'],'PPP')[-1].children
+        self.assertTrue(any(trace.name=='DraftKings implied' for chart in charts for trace in chart.children[1].figure.data))
+
     def test_game_line_charts_use_source_quotes_and_settlement_matched_forecasts(self):
         from sports_analytics.summary_probability import panel
         source=bundle()
@@ -309,13 +328,13 @@ class SummaryAnalysisChecks(TestCase):
             rendered=sections(source,entries(source),'Game Lines')
             table=native_dom(rendered).find('table')[0]
             header=table.find('thead')[0]
-            self.assertEqual(len(header.children[0].children),5)
-            self.assertEqual(len(header.children[1].children),9)
-            self.assertEqual([int(c.attrs['colspan']) for c in header.children[0].children[1:]],[2,2,2,3])
+            self.assertEqual(len(header.children[0].children),6)
+            self.assertEqual(len(header.children[1].children),11)
+            self.assertEqual([int(c.attrs['colspan']) for c in header.children[0].children[1:]],[2,2,2,2,3])
             self.assertEqual([c.attrs['alt'] for c in header.find('img')],['FanDuel','Kalshi','Polymarket'])
             body=table.find('tbody')[0]
             self.assertEqual(len(body.children),2)
-            self.assertTrue(all(sum(int(cell.attrs.get('colspan',1)) for cell in row.children)==10 for row in body.children))
+            self.assertTrue(all(sum(int(cell.attrs.get('colspan',1)) for cell in row.children)==12 for row in body.children))
             for row in body.children:
                 self.assertEqual(sum('summary-model-values' in cell.attrs.get('class','') for cell in row.children),3)
                 self.assertTrue(all('summary-model-values' not in cell.attrs.get('class','') for cell in row.children[1:7]))
@@ -460,16 +479,20 @@ class SummaryCallbackChecks(TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.source=Mock(path=Path(self.tmp.name)/'cache.sqlite3')
         self.schedule=Mock();self.schedule.load.return_value=SimpleNamespace(games=[game()],failed_days=[],stale_days=[])
-        self.fd=Mock();self.kalshi=Mock();self.poly=Mock();self.data=bundle()
+        self.fd=Mock();self.dk=Mock();self.kalshi=Mock();self.poly=Mock();self.data=bundle()
         self.fd.latest.return_value={'123':self.data['providers']['FanDuel']['snapshot']}
         self.fd.pull.return_value=self.data['providers']['FanDuel']['snapshot']
+        draftkings={**self.fd.pull.return_value,'bookmaker':'draftkings','rows':[]}
+        self.dk.latest.return_value={'123':draftkings}
+        self.dk.history.return_value=[draftkings]
+        self.dk.pull.return_value={**draftkings,'rows':self.fd.pull.return_value['rows']}
         for name,service in [('Kalshi',self.kalshi),('Polymarket',self.poly)]:
             service.games.return_value=dict(sport='NFL',games=[exchange(name)])
             service.all_quotes.return_value=self.data['providers'][name]['snapshot']
         self.engines={key:Mock() for key in GAME_METHODS};self.players={key:Mock() for key in PLAYER_METHODS}
         for engine in self.engines.values():engine.forecast.return_value=GameForecast()
         for engine in self.players.values():engine.forecast.return_value=PlayerForecast()
-        self.app=create_app(service=self.source,schedule_service=self.schedule,nfl_market_service=self.fd,
+        self.app=create_app(service=self.source,schedule_service=self.schedule,nfl_market_service=self.fd,draftkings_services={'NFL':self.dk},
             kalshi_service=self.kalshi,polymarket_service=self.poly,ppp_service=self.engines['PPP'],epa_service=self.engines['EPA'],
             elo_service=self.engines['ELO'],whp_service=self.players['WHP'],usage_opportunity_service=self.players['UO'],
             opponent_adjusted_service=self.players['OAM'],pace_game_environment_service=self.players['PGE'])
@@ -501,14 +524,15 @@ class SummaryCallbackChecks(TestCase):
         self.assertEqual(self.engines['PPP'].forecast.call_count,calls)
         self.fd.pull.assert_not_called()
 
-    def test_market_data_contains_all_four_subpages_and_summary_routes_for_all_sports(self):
+    def test_market_data_contains_draftkings_and_summary_routes_for_all_sports(self):
         nav=next(c for c in components(self.app.layout) if getattr(c,'id',None)=='market-data-navigation')
         links={getattr(c,'id',None):getattr(c,'children',None) for c in components(nav)}
-        self.assertEqual([links[k] for k in ['market-page-link','kalshi-page-link','polymarket-page-link','market-summary-page-link']],
-                         ['FanDuel','Kalshi','Polymarket','Market Summary'])
+        self.assertEqual([links[k] for k in ['market-page-link','draftkings-page-link','kalshi-page-link','polymarket-page-link','market-summary-page-link']],
+                         ['FanDuel','DraftKings','Kalshi','Polymarket','Market Summary'])
         for sport in ['NBA','NFL','NCAAF']:
             href=f'#{sport.lower()}-market-summary'
             self.assertEqual(route(href),sport)
+            self.assertEqual(self.cb['restore_game_route'](f'#{sport.lower()}-draftkings-market'),(sport,'market-summary'))
             self.assertEqual(self.cb['restore_game_route'](href),(sport,'market-summary'))
             self.assertEqual(self.cb['navigate']('market-summary',sport)[0],{'display':'none'})
             visible=self.cb['summary_visibility']('market-summary',sport)
@@ -518,17 +542,19 @@ class SummaryCallbackChecks(TestCase):
     def test_initial_summary_never_spends_fanduel_credits_and_manual_pull_refreshes_all(self):
         quoted,status=self.quotes()
         self.fd.pull.assert_not_called();self.fd.latest.assert_called_once_with(['123'])
+        self.dk.pull.assert_not_called();self.dk.latest.assert_called_once_with(['123'])
         self.kalshi.all_quotes.assert_called_once_with(exchange(),refresh=False,save=False)
         self.poly.all_quotes.assert_called_once_with(exchange('Polymarket'),refresh=False,save=False)
         self.assertEqual(sum(len(p['snapshot']['rows']) for p in quoted['providers'].values()),6)
         self.quotes(True,quoted)
         self.fd.pull.assert_called_once();self.assertIn('summary:NFL:123:',self.fd.pull.call_args.args[1])
+        self.dk.pull.assert_called_once()
         self.assertEqual(self.kalshi.all_quotes.call_args.kwargs,dict(refresh=True,save=True))
         self.assertEqual(self.poly.all_quotes.call_args.kwargs,dict(refresh=True,save=True))
 
     def test_individual_pull_controls_show_costs_for_all_supported_sports(self):
         ids={getattr(c,'id',None):c for c in components(self.app.layout) if isinstance(getattr(c,'id',None),str)}
-        for provider in ('FanDuel','Kalshi','Polymarket'):
+        for provider in ('FanDuel','Kalshi','Polymarket','DraftKings'):
             self.assertEqual(ids['summary-pull-'+provider.lower()].children,'Pull '+provider)
             self.assertTrue(ids['summary-source-'+provider.lower()].disabled)
         for sport,cost in [('NBA',13),('NFL',17),('NCAAF',17)]:
@@ -546,11 +572,44 @@ class SummaryCallbackChecks(TestCase):
                 'Kalshi':dict(game=dict(id='KX'),snapshot=dict(rows=[{}])),
                 'Polymarket':dict(game=None,snapshot=None)})
             refs.append(dict(output='summary-source-fanduel.disabled',args=['market-summary',sport,'123',catalog,data],
-                expected=[False,False,True,'Unavailable · ready to retry','1 market loaded',
-                          'No matching event · refresh upcoming games',pull_estimate(sport,'FanDuel')]))
+                expected=[False,False,True,False,'Unavailable · ready to retry','1 market loaded',
+                          'No matching event · refresh upcoming games','No quotes loaded',pull_estimate(sport,'FanDuel'),
+                          pull_estimate(sport,'DraftKings')]))
             refs.append(dict(output='summary-source-fanduel.disabled',args=['market-summary',sport,'other-game',catalog,data],
-                expected=[True,True,True,'Select a game','Select a game','Select a game',pull_estimate(sport,'FanDuel')]))
+                expected=[True]*4+['Select a game']*4+[pull_estimate(sport,'FanDuel'),pull_estimate(sport,'DraftKings')]))
         self.assertEqual(run_client(self.app,references=refs,steps=[])['checks'],len(refs))
+
+    def test_draftkings_route_loads_only_its_saved_archive_and_its_pull_stays_isolated(self):
+        location='#nfl-draftkings-market'
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='nav-market-summary')):
+            catalog,_=self.cb['summary_catalog']('market-summary','NFL',7,0,None,None,location)
+        self.assertEqual(catalog['mode'],'draftkings')
+        self.kalshi.games.assert_not_called();self.poly.games.assert_not_called()
+        snapshot=self.dk.pull.return_value
+        self.dk.history.return_value=[snapshot]
+        archived='123|'+snapshot['pulled_at']
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-draftkings-view')):
+            record,_=self.cb['summary_quotes']('123',catalog,0,'market-summary','NFL',None,
+                                              None,0,0,0,0,location,archived)
+        self.assertEqual(set(record['providers']),{'DraftKings'})
+        self.assertEqual(record['providers']['DraftKings']['snapshot'],snapshot)
+        self.dk.pull.assert_not_called()
+        options=self.cb['draftkings_snapshot_options'](record)
+        self.assertIn(archived,[option['value'] for option in options])
+        rows=entries(record)
+        self.assertEqual({row['category'] for row in rows},{'Game Lines','Player Props'})
+        shown=sections(record,rows,'Game Lines')
+        table=native_dom(shown).find('table')[0]
+        self.assertIn('summary-table--single-source',table.attrs['class'])
+        self.assertIn('DraftKings',str(table))
+        self.assertNotIn('FanDuel',str(table))
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-draftkings')):
+            refreshed,_=self.cb['summary_quotes']('123',catalog,0,'market-summary','NFL',record,
+                                                 None,0,0,0,1,location,archived)
+        self.assertEqual(set(refreshed['providers']),{'DraftKings'})
+        self.dk.pull.assert_called_once()
+        self.fd.pull.assert_not_called();self.fd.latest.assert_not_called()
+        self.kalshi.all_quotes.assert_not_called();self.poly.all_quotes.assert_not_called()
 
     def test_missing_fanduel_can_be_pulled_without_refreshing_other_sources(self):
         self.fd.latest.return_value={};previous,_=self.quotes()

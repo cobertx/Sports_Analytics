@@ -70,7 +70,7 @@ class StructureChecks(TestCase):
             result = self.service.read(requests[0]);self.service.queue.tasks.join()
             result = self.service.read(requests[1])
         self.assertEqual(set(result['providers']), {'FanDuel','Kalshi','Polymarket'})
-        self.assertIn('not available',result['providers']['FanDuel']['data']['notice'])
+        self.assertIn('unavailable',result['providers']['FanDuel']['data']['notice'])
         self.assertEqual(len(render(result).children),3)
         self.assertNotIn('taker_only',str(render(result)))
 
@@ -106,8 +106,9 @@ class StructureChecks(TestCase):
         self.assertEqual(actual['sides']['no']['buy_contracts'],2.25)
         self.assertEqual(trades,original)
 
-    def test_flow_charts_keep_absolute_counts_money_and_sample_scope_separate(self):
-        from sports_analytics.market_structure_view import activity,amount
+    def test_flow_pies_keep_absolute_counts_money_and_sample_scope_separate(self):
+        import plotly.graph_objects as go
+        from sports_analytics.market_structure_view import activity,amount,flow_pies
         from check_kalshi import components
         market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
         trades=dict(trade_summary([kalshi_trade(),kalshi_trade('no','2',quantity='2.25',price='.4')],'Kalshi',market,NOW,NOW),
@@ -116,14 +117,25 @@ class StructureChecks(TestCase):
         rendered=activity(record,'Kalshi')
         charts=[c for c in components(rendered) if getattr(c,'className',None)=='structure-flow-chart']
         self.assertEqual(len(charts),2)
-        counts=[c for c in components(charts[0]) if getattr(c,'className',None)=='structure-bar-row']
-        money=[c for c in components(charts[1]) if getattr(c,'className',None)=='structure-bar-row']
-        self.assertEqual([getattr(c,'data-value') for c in counts],['1.0','1.0'])
-        self.assertEqual([getattr(c,'data-value') for c in money],['6.3','1.35'])
-        fills=[c for c in components(charts[1]) if getattr(c,'className','').startswith('structure-bar-fill ')]
-        self.assertAlmostEqual(float(fills[1].style['width'].rstrip('%')),100*1.35/6.3,places=5)
+        counts,money=[go.Figure(chart.children[2].figure).data[0] for chart in charts]
+        self.assertEqual((counts.type,money.type),('pie','pie'))
+        self.assertEqual(list(counts.labels),['Over 47.5','Under 47.5'])
+        self.assertEqual(list(counts.values),[1,1])
+        self.assertEqual(list(money.values),[6.3,1.35])
+        self.assertEqual(list(money.customdata),['$6.30','$1.35'])
+        self.assertEqual((counts.textinfo,money.textinfo),('none','none'))
         self.assertIn('Returned sample only',str(charts));self.assertNotIn('Share of taker executions',str(rendered))
         self.assertIn('lower bounds',str(rendered));self.assertEqual(amount(.0001,True),'<$0.01')
+
+        completed=flow_pies(record['labels'],dict(yes=dict(buys=0,buy_dollars=0),
+                            no=dict(buys=1,buy_dollars=.25)),kalshi=True,complete=True)
+        counts=go.Figure(completed.children[0].children[2].figure).data[0]
+        self.assertEqual(list(counts.values),[0,1])
+        self.assertEqual(counts.textinfo,'percent')
+        empty=flow_pies(record['labels'],dict(yes=dict(buys=0,buy_dollars=None),
+                        no=dict(buys=0,buy_dollars=1)),kalshi=False,complete=True)
+        self.assertIn('Zero recorded',str(empty.children[0]))
+        self.assertIn('No usable trade data',str(empty.children[1]))
 
     def test_empty_failed_or_unclassified_trade_samples_are_unavailable_not_zero(self):
         from sports_analytics.market_structure_view import activity
@@ -323,7 +335,7 @@ class StructureChecks(TestCase):
         self.assertEqual(history[0]['time'],trades['first_trade'])
         self.assertEqual([row['time'] for row in history[-20:]],[row['created_time'] for row in rows[-20:]])
 
-    def test_depth_chart_accumulates_from_best_price_out_and_uses_actual_asks(self):
+    def test_depth_chart_mirrors_per_price_sizes_and_uses_provider_asks(self):
         import plotly.graph_objects as go
         from sports_analytics.market_structure_view import depth_chart
         book=dict(sides=dict(yes=dict(depth=[dict(price=.6,size=2),dict(price=.5,size=4)],
@@ -331,16 +343,23 @@ class StructureChecks(TestCase):
                              no=dict(depth=[dict(price=.3,size=3),dict(price=.2,size=5)])))
         result=depth_chart(book,'Kalshi','yes','Over')
         figure=go.Figure(result.children[1].figure)
-        self.assertEqual(list(figure.data[0].x),[50,60])
-        self.assertEqual(list(figure.data[0].y),[6,2])
-        self.assertEqual(list(figure.data[1].x),[70,80])
-        self.assertEqual(list(figure.data[1].y),[3,8])
-        self.assertEqual(figure.layout.yaxis.title.text,'Cumulative contracts')
-        self.assertEqual((figure.layout.shapes[0].x0,figure.layout.shapes[0].x1),(60,70))
+        bids,asks=figure.data
+        self.assertEqual((bids.type,bids.orientation,asks.type,asks.orientation),('bar','h','bar','h'))
+        self.assertEqual(list(bids.x),[-4,-2])
+        self.assertEqual(list(asks.x),[3,5])
+        self.assertEqual([list(row) for row in bids.customdata],[['50¢','4'],['60¢','2']])
+        self.assertEqual([list(row) for row in asks.customdata],[['70¢','3'],['80¢','5']])
+        self.assertLess(bids.base,0)
+        self.assertEqual(bids.base,-asks.base)
+        self.assertEqual(figure.layout.yaxis.position,.5)
+        self.assertEqual(figure.layout.xaxis.range[0],-figure.layout.xaxis.range[1])
+        self.assertEqual(figure.layout.xaxis.title.text,'Resting size (contracts)')
+        self.assertEqual([(label.x,label.text) for label in figure.layout.annotations[3:]],
+                         [(0,'50¢'),(0,'60¢'),(0,'70¢'),(0,'80¢')])
         poly=go.Figure(depth_chart(book,'Polymarket','yes','Over').children[1].figure)
-        self.assertEqual(list(poly.data[1].x),[65])
-        self.assertEqual(list(poly.data[1].y),[11])
-        self.assertEqual(poly.layout.yaxis.title.text,'Cumulative shares')
+        self.assertEqual(list(poly.data[1].x),[11])
+        self.assertEqual(list(poly.data[1].customdata[0]),['65¢','11'])
+        self.assertEqual(poly.layout.xaxis.title.text,'Resting size (shares)')
         self.assertIn('No resting orders',str(depth_chart({},'Kalshi','no','Under')))
 
     def test_window_control_callback_loads_new_scope_and_paused_polling_stops(self):

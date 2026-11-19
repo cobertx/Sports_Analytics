@@ -23,7 +23,7 @@
 .market-screen-unavailable .market-transition-unavailable { display: inline; }
 .market-screen-unavailable #kalshi-detail,.market-screen-unavailable #polymarket-detail { display: none !important; }
 .market-screen .sport-page-link.active { background: transparent; color: var(--muted); font-weight: 400; }
-.market-screen-market #market-page-link,.market-screen-kalshi #kalshi-page-link,.market-screen-polymarket #polymarket-page-link,.market-screen-summary #market-summary-page-link,
+.market-screen-market #market-page-link,.market-screen-kalshi #kalshi-page-link,.market-screen-polymarket #polymarket-page-link,.market-screen-summary:not(.market-screen-draftkings) #market-summary-page-link,.market-screen-draftkings #draftkings-page-link,
 .market-screen-filtered #filtered-results-page-link {
   background: var(--selected); color: var(--accent); font-weight: 650;
 }

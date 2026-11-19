@@ -25,7 +25,7 @@ class SummaryQuoteJobs:
             snapshot=record.get('snapshot')
             records[provider]=dict(game={'id':record['game']['id']} if record.get('game') else None,error=record.get('error'),
                 snapshot={**{k:v for k,v in snapshot.items() if k in fields},'row_count':len(snapshot['rows'])} if snapshot else None)
-        return dict(id=bundle['id'],quote_ref=reference,sport=bundle['sport'],game=bundle['game'],
+        return dict(id=bundle['id'],quote_ref=reference,sport=bundle['sport'],game=bundle['game'],mode=bundle.get('mode','summary'),
                     providers=records,updating=bundle['updating'])
 
     def resolve(self,bundle):

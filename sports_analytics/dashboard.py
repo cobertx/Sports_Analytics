@@ -20,8 +20,8 @@ import plotly.graph_objects as go
 from .presentation import chart_style, table_cell, table_filter, table_header
 
 from .data import DataSourceError, PLAYER_SPORTS, Query, SOURCES
-from .career import CareerService
-from .forecast import rolling_baseline
+from .career import CareerService, career_statistic
+from .forecast import recorded_games, rolling_baseline
 from .backtesting_view import (backtesting_route,find_model,navigation as backtesting_navigation,
                                page as backtesting_page,summary_route as backtest_summary_route)
 from .backtesting_summary import layout as backtest_summary_layout,register as register_backtest_summary
@@ -165,13 +165,14 @@ def game_labels(history):
     return labels
 
 
-def performance_figure(history, metric, window, prediction):
-    label = metric_label(metric, history.iloc[0]["sport"])
+def performance_figure(history, metric, window, prediction, *, season_history=False):
+    sport = history.iloc[0]["sport"]
+    label = metric_label(metric, sport)
     x = list(range(1, len(history) + 1))
     details = game_labels(history)
     figure = go.Figure()
     hover = "%{customdata[0]}<br>%{customdata[1]}<br>%{y:.2f}<extra>%{fullData.name}</extra>"
-    components=NBA_COMBINATIONS.get(metric,()) if history.iloc[0]['sport']=='NBA' else ()
+    components=NBA_COMBINATIONS.get(metric,()) if sport=='NBA' else ()
     if components and set(components)<=set(history):
         colors={'pts':'#57dbc4','reb':'#8197ff','ast':'#f6c667'}
         for component in components:
@@ -182,13 +183,22 @@ def performance_figure(history, metric, window, prediction):
         components=()
         figure.add_trace(go.Bar(x=x, y=history[metric], name=label, width=.65,
                                marker={"color": "#57dbc4"}, customdata=details, hovertemplate=hover))
-    figure.add_trace(go.Scatter(x=x, y=history["baseline"], mode="lines", name=f"Prior {window}-game mean",
-                               line={"color": "#8197ff", "dash": "dot"}, customdata=details, hovertemplate=hover))
+    if season_history:
+        windows = (5, 10, 20) if sport == "NBA" else (3, 5, 7)
+        styles = [("#a3caff", "solid"), ("#d0b7ff", "dash"), ("#ffb7d0", "dot")]
+        for span, (color, dash) in zip(windows, styles):
+            average = history[metric].rolling(span, min_periods=span).mean()
+            figure.add_trace(go.Scatter(x=x, y=average, mode="lines+markers", name=f"{span}-game average",
+                line=dict(color=color, dash=dash, width=2), marker=dict(size=4),
+                customdata=details, hovertemplate=hover))
+    else:
+        figure.add_trace(go.Scatter(x=x, y=history["baseline"], mode="lines", name=f"Prior {window}-game mean",
+                                   line={"color": "#8197ff", "dash": "dot"}, customdata=details, hovertemplate=hover))
     step = max(1, math.ceil(len(history) / 10))
     indices = sorted(set(range(0, len(history), step)) | {len(history) - 1})
     ticks = [x[i] for i in indices]
-    labels = [f"{details[i][0]}<br>{details[i][1]}" for i in indices]
-    if prediction is not None:
+    labels = [details[i][0] if season_history else f"{details[i][0]}<br>{details[i][1]}" for i in indices]
+    if not season_history and prediction is not None:
         figure.add_trace(go.Bar(x=[len(history) + 1], y=[prediction], name="Next appearance baseline", width=.65,
                                marker={"color": "#f6c667"},
                                hovertemplate="Next appearance<br>Date and matchup not yet known<br>%{y:.2f}<extra>Baseline</extra>"))
@@ -197,7 +207,7 @@ def performance_figure(history, metric, window, prediction):
     figure = style_figure(figure)
     figure.update_layout(height=440, barmode="stack" if components else "overlay",
                          meta={'stat_components':list(components)},margin={"l": 55, "r": 25, "t": 35, "b": 115})
-    figure.update_xaxes(title="Game date · Matchup (away @ home)", tickmode="array", tickvals=ticks,
+    figure.update_xaxes(title="Game date" if season_history else "Game date · Matchup (away @ home)", tickmode="array", tickvals=ticks,
                         ticktext=labels, tickangle=-35, automargin=True)
     figure.update_yaxes(title=label)
     return figure
@@ -213,14 +223,19 @@ def career_figure(career, sport, metric, name):
     values = history["value"].astype(object).where(history["value"].notna(), None).tolist()
     teams = history["team"].fillna("No recorded data").tolist()
     seasons = [f"{year}–{str(year + 1)[-2:]}" if sport == "NBA" else str(year) for year in years]
+    statistic = career_statistic(metric, sport)
+    games = history.get("games", pd.Series(index=history.index, dtype=float))
+    details = [(season, team, f"<br>{played:g} games played" if pd.notna(played) else "")
+               for season, team, played in zip(seasons, teams, games)]
     figure = go.Figure(go.Scatter(x=years, y=values, mode="lines+markers", connectgaps=False,
                                  line={"color": "#8197ff", "width": 2}, marker={"size": 7},
-                                 name=name, customdata=list(zip(seasons, teams)),
-                                 hovertemplate="%{customdata[0]} · %{customdata[1]}<br>%{y:.2f}<extra>%{fullData.name}</extra>"))
+                                 name=name, customdata=details,
+                                 hovertemplate="%{customdata[0]} · %{customdata[1]}%{customdata[2]}<br>"
+                                               + statistic + " %{y:.2f}<extra>%{fullData.name}</extra>"))
     figure = style_figure(figure)
     figure.update_xaxes(title="Career season", tickmode="array", tickvals=years, ticktext=seasons,
                         tickangle=-35, automargin=True)
-    figure.update_yaxes(title=metric_label(metric, sport) + " · Season statistic")
+    figure.update_yaxes(title=statistic)
     return figure
 
 
@@ -320,7 +335,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None,
                ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None,in_game_service=None,kalshi_service=None,
                polymarket_service=None,information_service=None,ledger=None,structure_service=None,filtered_results_service=None,
-               game_information_service=None,availability_service=None):
+               game_information_service=None,availability_service=None,draftkings_services=None):
     service = service or DataService()
     history_updater=HistoryUpdater(data=service)
     filtered_results_service = filtered_results_service or FilteredResults(service.path.with_name('filtered_results.sqlite3'))
@@ -368,6 +383,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     ncaaf_market_service = ncaaf_market_service or NcaafMarketService(odds_service, service.path.with_name("ncaaf_markets.sqlite3"),
                                                                   data_directory / "market_data", usage_log=api_usage_log)
     market_services = {"NFL": nfl_market_service, "NBA": nba_market_service, "NCAAF": ncaaf_market_service}
+    if draftkings_services is None:
+        draftkings_services = {
+            sport: service_type(odds_service,service.path.with_name(sport.lower()+"_markets.sqlite3"),
+                                data_directory/"market_data",usage_log=api_usage_log,bookmaker='draftkings')
+            for sport,service_type in [('NFL',NflMarketService),('NBA',NbaMarketService),('NCAAF',NcaafMarketService)]
+        }
     app = Dash(__name__, assets_folder=str(Path(__file__).parent / "assets"),
                title="Sports Analytics", update_title=None)
     register_lazy_markets(app)
@@ -454,6 +475,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                         html.Summary('Market Data'),
                         html.Div([
                             html.A('FanDuel',id='market-page-link',href='#nba-games',className='sport-page-link'),
+                            html.A('DraftKings',id='draftkings-page-link',href='#nba-draftkings-market',className='sport-page-link'),
                             html.A('Kalshi',id='kalshi-page-link',href='#nba-kalshi-market',className='sport-page-link'),
                             html.A('Polymarket',id='polymarket-page-link',href='#nba-polymarket-market',className='sport-page-link'),
                             html.A('Market Summary',id='market-summary-page-link',href='#nba-market-summary',className='sport-page-link'),
@@ -516,7 +538,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                                                         placeholder="Loading statistic types...", clearable=False)),
                                     field("Statistic", dcc.Dropdown(id="metric", options=[], disabled=True,
                                                                    placeholder="Loading statistics...", clearable=False)),
-                                    field("Rolling window", dcc.Dropdown(id="window", options=[{"label": f"{n} games", "value": n} for n in (3, 5, 10)],
+                                    field("Baseline window", dcc.Dropdown(id="window", options=[{"label": f"{n} games", "value": n} for n in (3, 5, 10)],
                                                                          value=5, clearable=False)),
                                 ], className="analysis-filters"),
                                 html.Div([indicator('Loading the selected historical performance…'),
@@ -526,11 +548,11 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                                     kpi("OBSERVED AVERAGE", "—", "Selected statistic per appearance"),
                                     kpi("NEXT APPEARANCE", "—", "Rolling-average baseline"),
                                     kpi("BACKTEST MAE", "—", "Mean absolute error on past games")]),
-                                html.Div([html.Div([html.H2("Performance over time"), html.Span("HISTORY + BASELINE", className="eyebrow")],
+                                html.Div([html.Div([html.H2("Performance over time"), html.Span("GAME HISTORY", className="eyebrow")],
                                                    className="panel-heading"),
                                           action_loading(dcc.Graph(id="trend", figure=empty_figure(), config={"displaylogo": False}),
                                                          'Loading historical performance…'),
-                                          html.P("Baseline uses only prior appearances. This reference forecast does not account for opponent, injuries, minutes, or roster changes.",
+                                          html.P("Hover over a game to see its date, matchup and recorded statistic.",
                                                  className="chart-note")], id='historical-performance-panel',className="panel chart-panel"),
                                 html.Div([
                                     html.Div([html.H2("Player career"), html.Span("ALL AVAILABLE SEASONS", className="eyebrow")],
@@ -1814,8 +1836,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if entity!=resolved:return ''
         if metric is None:return f"No recorded statistic for this market is available for {target['name']} in this scope. Choose another season or statistic."
         note=' '+target.get('note','')
+        if target['market'] or target.get('season'):
+            note+=' The chart includes all recorded games in the loaded season and filters. Each moving average includes the game shown and starts once its full window is available.'
         if target['market'] in {'player_1st_td','player_last_td'} and not target.get('note'):note+=' Touchdown counts are shown; first/last scorer order is not available in these box scores.'
-        if 'line' in target:note+=' The chart marks the prompt threshold and counts hits, misses and pushes on earlier game dates in the selected scope. These are descriptive threshold outcomes, not a forecast or settlement audit.'
+        if 'line' in target:
+            note+=' The chart compares games shown against the prompt threshold.'
+            if target.get('as_of'):note+=' The summary cards and game log use games before the linked game date.'
         return f"{target['name']} · {metric_label(metric,dataset['sport'])} historical game log."+note
 
     @app.callback(Output('ncaaf-history-status','children'),Input('dataset','data'),Input('entity','value'),
@@ -1964,7 +1990,6 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if not supported_dataset(dataset):
             return rendered(empty_figure(), blank, [], [])
         frame = historical_frame(dataset)
-        target=historical_target(location_hash)
         try:trigger=ctx.triggered_id
         except MissingCallbackContextException:trigger=None
         if matches_dataset(target,dataset) and trigger in {'dataset','market-url','entity','nav-historical'}:
@@ -1980,15 +2005,18 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             return rendered(empty_figure(), blank, [], [])
         selected = frame[frame["entity_id"] == entity]
         if not matches_dataset(target,dataset) or target_entity(frame,target)!=entity:target=None
-        selected=prior_history(selected,target)
-        if selected.empty and target:return rendered(empty_figure('No prior appearances in the selected historical scope'),blank,[],[])
         if selected.empty or metric not in relevant_metrics(selected, dataset["sport"], dataset["kind"]):
             return rendered(empty_figure(), blank, [], [])
-        history, prediction, mae, evaluated = rolling_baseline(selected, metric, window)
-        if history.empty:
-            return rendered(empty_figure("No observations of this statistic for the selected entity"), blank, [], [])
-        figure = performance_figure(history, metric, window, prediction)
-        cards = [kpi("OBSERVED AVERAGE", f"{history[metric].mean():,.2f}", f"{len(history):,} recorded appearances"),
+        season_history = bool(target and (target['market'] or target.get('season')))
+        scoped_history = prior_history(selected,target)
+        history, prediction, mae, evaluated = rolling_baseline(scoped_history, metric, window)
+        chart_history = recorded_games(selected, metric) if season_history else history
+        if chart_history.empty:
+            message = 'No recorded appearances for this statistic in the loaded scope'
+            return rendered(empty_figure(message), blank, [], [])
+        figure = performance_figure(chart_history, metric, window, prediction, season_history=season_history)
+        cards = [kpi("OBSERVED AVERAGE", f"{history[metric].mean():,.2f}" if len(history) else "—",
+                     f"{len(history):,} recorded appearances"),
                  kpi("NEXT APPEARANCE", f"{prediction:,.2f}" if prediction is not None else "—",
                      f"Mean of the last {window} appearances" if prediction is not None else f"Requires {window} recorded appearances"),
                  kpi("BACKTEST MAE", f"{mae:,.2f}" if mae is not None else "—",
@@ -2002,11 +2030,16 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         records = table.astype(object).where(pd.notna(table), None).to_dict("records")
         columns = [{"name": metric_label(c, dataset["sport"]) if c == metric or c in components else c.replace("_", " ").title(), "id": c}
                    for c in table]
-        result=prompt_outcomes(history,metric,target)
+        chart_result=prompt_outcomes(chart_history,metric,target)
+        if chart_result is not None:
+            annotate_prompt(figure,chart_history,metric,target,chart_result)
+        result=prompt_outcomes(history,metric,target) if season_history and target.get('as_of') else chart_result
         if result is not None:
-            hits,count,pushes=annotate_prompt(figure,history,metric,target,result)
-            detail=[f'{hits} hits / {count} recorded appearances · {pushes} pushes. ',
-                    html.A('Back to market',href=target['origin'],className='market-history-button')] if target.get('origin') else f'{hits} hits / {count} appearances · {pushes} pushes'
+            hits,count,pushes=int(result.eq('Hit').sum()),int(result.notna().sum()),int(result.eq('Push').sum())
+            scope=' pre-game' if target.get('as_of') else ''
+            detail=f'{hits} hits / {count}{scope} appearances · {pushes} pushes'
+            if target.get('origin'):
+                detail=[detail+'. ',html.A('Back to market',href=target['origin'],className='market-history-button')]
             cards.append(kpi('PROMPT HIT RATE',f'{100*hits/count:.1f}%' if count else '—',detail))
             for record,index in zip(records,table.index):record['prompt_result']=result.loc[index]
             columns.append({'name':'Prompt result','id':'prompt_result'})
@@ -2067,9 +2100,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 set_props('career-job',{'data':dict(scope=career_scope(dataset,entity,metric,location_hash),pending=False,status='error',error=str(exc))})
             return rendered(empty_figure("Career history could not be loaded"), str(exc))
         phase_label = "Regular season" if career.phase == "regular" else "Postseason"
-        status = (f"{name} · {len(career.frame)} recorded seasons · {phase_label} · "
-                  f"{career.source}. Counting statistics use season totals; rates retain source units. "
-                  "Includes all teams and ignores the selected season and week filters.")
+        statistic = career_statistic(metric, dataset['sport'])
+        status = (f"{name} · {statistic} · {len(career.frame)} recorded seasons · {phase_label} · "
+                  f"{career.source}. Career history covers all available seasons and teams.")
         if career.searched:
             status += f" Source coverage checked: {min(career.searched)}–{max(career.searched)}."
         if career.failed:
@@ -2104,7 +2137,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                             jobs=filter_jobs,tasks=market_page_tasks,source_revision=exchange_source_revision)
     register_kalshi_callbacks(app,polymarket_service,view=polymarket_view,provider='Polymarket',pages=exchange_pages.get('Polymarket'))
     register_market_summary(app,schedule_service,market_services,kalshi_service,polymarket_service,forecast_game_markets,forecast_player_markets,
-                            pages=exchange_pages,tasks=market_page_tasks,source_revision=exchange_source_revision)
+                            pages=exchange_pages,tasks=market_page_tasks,source_revision=exchange_source_revision,
+                            draftkings=draftkings_services)
     register_filtered_results(app,filtered_results_service)
     app._history_updates=history_updater
 

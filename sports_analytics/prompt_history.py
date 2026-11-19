@@ -8,6 +8,7 @@ from dash import html
 
 from .historical_links import history_href,target_metric
 from .display_time import EASTERN
+from .nfl_markets import SPORTSBOOKS
 from models.Player_Stats.Weighted_Historical_Performance.markets import stat_spec
 
 INVERSE={'gt':'le','ge':'lt','lt':'ge','le':'gt','eq':'ne','ne':'eq'}
@@ -135,7 +136,9 @@ def exchange_target(snapshot,row,provider,side='yes'):
 
 
 def button(snapshot,row,provider='FanDuel',side='yes'):
-    target=fanduel_target(snapshot,row) if provider=='FanDuel' else exchange_target(snapshot,row,provider,side)
+    target=fanduel_target(snapshot,row) if provider in SPORTSBOOKS else exchange_target(snapshot,row,provider,side)
+    if target and provider=='DraftKings':
+        target={**target,'origin':f"#{target['sport'].lower()}-draftkings-market"}
     if not target:
         return html.Button('Historical Data',className='market-history-button',disabled=True,
                            title='An exact historical statistic for this prompt is not connected.')

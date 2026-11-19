@@ -5,7 +5,7 @@ from dash import ALL, Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 
 from .display_time import format_eastern
-from .market_structure import BOOK_DEPTH, PROVIDERS, validate, flow_summary
+from .market_structure import BOOK_DEPTH, validate, flow_summary
 from .presentation import PALETTE, chart_style
 
 
@@ -86,35 +86,56 @@ def depth_chart(book, provider, side, label):
     heading = html.H6(side.upper()+' · '+label)
     if not bids and not asks:
         return html.Section([heading,html.P('No resting orders were returned.',className='structure-note')])
-    traces = []
-    for name, levels, is_bid in [('Bids',bids,True),('Asks',asks,False)]:
-        if not levels:
-            continue
-        points = []
-        total = Decimal(0)
-        for row in sorted(levels,key=lambda level:level['price'],reverse=is_bid):
-            total += Decimal(str(row['size']))
-            points.append((round(row['price']*100, 8),float(total),row['size']))
-        if is_bid:
-            points.reverse()
-        color, fill = ('#63dba4','rgba(99,219,164,.2)') if is_bid else ('#ff899d','rgba(255,137,157,.2)')
-        traces.append(dict(type='scatter',name=name,mode='lines+markers',x=[p[0] for p in points],
-            y=[p[1] for p in points],customdata=[p[2] for p in points],
-            line=dict(color=color,width=2,shape='vh' if is_bid else 'hv'),
-            marker=dict(size=5,symbol='circle' if is_bid else 'diamond'),fill='tozeroy',fillcolor=fill,
-            hovertemplate='%{x:.2f}¢<br>At price: %{customdata:,.2f}<br>Cumulative: %{y:,.2f}<extra>'+name+'</extra>'))
-    best_bid = max((r['price'] for r in bids),default=None)
-    best_ask = min((r['price'] for r in asks),default=None)
-    shapes = []
-    if best_bid is not None and best_ask is not None and best_bid < best_ask:
-        shapes.append(dict(type='rect',xref='x',yref='paper',x0=best_bid*100,x1=best_ask*100,y0=0,y1=1,
-                           line=dict(width=0),fillcolor='rgba(170,185,205,.12)',layer='below'))
+
+    # A ladder gives each quoted price a row, including fractional-cent levels.
+    prices = sorted({row['price'] for row in bids+asks})
+    price_rows = {value:index for index,value in enumerate(prices)}
     unit = 'contracts' if provider == 'Kalshi' else 'shares'
-    figure = dict(data=traces,layout=chart_style(margin=dict(l=64,r=16,t=30,b=50),
-        legend=dict(orientation='h',y=1.1),shapes=shapes,hovermode='closest',
-        xaxis=dict(title=dict(text='Price (¢)'),ticksuffix='¢',gridcolor=PALETTE['line']),
-        yaxis=dict(title=dict(text='Cumulative '+unit),rangemode='tozero',gridcolor=PALETTE['line'])))
-    return html.Section([heading,dcc.Graph(figure=figure,responsive=True,style={'height':'290px'},
+    books = []
+    for name, levels, color, direction in (
+        ('Bids', bids, PALETTE['positive'], -1),
+        ('Asks', asks, PALETTE['negative'], 1),
+    ):
+        sizes = {}
+        for level in levels:
+            value = level['price']
+            sizes[value] = sizes.get(value, Decimal(0)) + Decimal(str(level['size']))
+        if sizes:
+            books.append((name, sizes, color, direction))
+
+    maximum = float(max(size for _,sizes,_,_ in books for size in sizes.values()))
+    gutter = maximum*.26
+    longest_bar_end = maximum+gutter
+    extent = longest_bar_end+maximum*.06
+    traces = []
+    for name, sizes, color, direction in books:
+        points = sorted(sizes.items())
+        traces.append(dict(type='bar',orientation='h',name=name,base=direction*gutter,width=.72,
+            x=[direction*float(size) for _,size in points],y=[price_rows[value] for value,_ in points],
+            marker=dict(color=color),customdata=[[price(value),amount(size)] for value,size in points],
+            hovertemplate='%{customdata[0]}<br>%{customdata[1]} '+unit+'<extra>'+name+'</extra>'))
+
+    # Keep the price labels centered in the gutter and legible in dense books.
+    last_row = len(prices)-1
+    intervals = min(last_row, 5)
+    ticks = [round(last_row*i/intervals) for i in range(intervals+1)] if intervals else [0]
+    price_labels = [dict(xref='x',yref='y',x=0,y=index,text=price(prices[index]),showarrow=False,
+                         bgcolor=PALETTE['panel'],borderpad=2,font=dict(size=10)) for index in ticks]
+    headings = [dict(xref='paper',yref='paper',x=x,y=1,yshift=8,text=name,showarrow=False,
+                     xanchor='center',yanchor='bottom',font=dict(size=11,color=color))
+                for x,name,color in ((.22,'Bids',PALETTE['positive']),(.5,'Price',PALETTE['text']),
+                                     (.78,'Asks',PALETTE['negative']))]
+    figure = dict(data=traces,layout=chart_style(margin=dict(l=36,r=36,t=28,b=50),barmode='overlay',
+        showlegend=False,hovermode='closest',annotations=headings+price_labels,
+        shapes=[dict(type='line',xref='x',yref='paper',x0=0,x1=0,y0=0,y1=1,
+                     line=dict(color=PALETTE['line'],width=1),layer='below')],
+        xaxis=dict(title=dict(text='Resting size ('+unit+')'),range=[-extent,extent],fixedrange=True,
+                   showgrid=False,zeroline=False,tickfont=dict(size=10),
+                   tickmode='array',tickvals=[-longest_bar_end,-gutter,gutter,longest_bar_end],
+                   ticktext=[amount(maximum),'0','0',amount(maximum)]),
+        yaxis=dict(anchor='free',position=.5,range=[-.6,last_row+.6],fixedrange=True,
+                   showticklabels=False,showgrid=False,zeroline=False)))
+    return html.Section([heading,dcc.Graph(figure=figure,responsive=True,style={'height':'310px'},
         config=dict(displayModeBar=False,scrollZoom=False),className='structure-depth-chart'),
         html.P('Bid depth unavailable.' if not bids else 'Ask depth unavailable.',className='structure-note')
         if not bids or not asks else None],className='structure-depth-panel',role='group',
@@ -148,25 +169,35 @@ def price_history(trades, labels):
                 className='structure-table-scroll',tabIndex=0,role='region',**{'aria-label':'Returned trade prices'})])],className='structure-history')
 
 
-def flow_bars(labels, sides, *, kalshi, complete):
-    """Two absolute scales; partial samples never imply market-wide shares."""
-    panels=[]
+def flow_pies(labels, sides, *, kalshi, complete):
+    outcomes = ('yes','no')
+    colors = [PALETTE['accent'],PALETTE['probability']]
+    panels = []
     for field,title,money in [('buys','Trade count' if kalshi else 'Purchase count',False),
                              ('buy_dollars','Traded value (USD)' if kalshi else 'Purchase value (USD)',True)]:
-        maximum=max((sides[s][field] for s in ('yes','no') if sides[s][field] is not None),default=0)
-        rows=[]
-        for side in ('yes','no'):
-            value=sides[side][field]
-            width=100*value/maximum if value is not None and maximum else 0
-            rows.append(html.Div([
-                html.Div([html.Span(labels[side]),html.Strong(amount(value,money))],className='structure-bar-label'),
-                html.Div(html.Span(style={'width':f'{width:.6f}%'},className='structure-bar-fill structure-bar-fill--'+side),
-                    className='structure-bar-track',**{'aria-hidden':'true'}),
-            ],className='structure-bar-row',**{'data-side':side,'data-value':str(value) if value is not None else 'unavailable'}))
+        values = [sides[side][field] for side in outcomes]
+        amounts = [amount(value,money) for value in values]
+        rows = [html.Div([html.Span(className='structure-pie-swatch',style={'backgroundColor':color},
+                                  **{'aria-hidden':'true'}),html.Span(labels[side]),html.Strong(formatted)],
+                         className='structure-pie-legend-row')
+                for side,color,formatted in zip(outcomes,colors,amounts)]
+        if None in values:
+            chart = html.P('No usable trade data',className='structure-note')
+        elif not any(values):
+            chart = html.P('Zero recorded in this window',className='structure-note')
+        else:
+            figure = dict(data=[dict(type='pie',labels=[labels[side] for side in outcomes],values=values,
+                customdata=amounts,sort=False,marker=dict(colors=colors,line=dict(color=PALETTE['raised'],width=2)),
+                textinfo='percent' if complete else 'none',textposition='inside',
+                insidetextfont=dict(color=PALETTE['bg'],size=13),
+                hovertemplate='%{label}<br>%{customdata}<extra></extra>')],
+                layout=chart_style(paper_bgcolor=PALETTE['raised'],margin=dict(l=6,r=6,t=4,b=4),
+                                   showlegend=False,uniformtext=dict(minsize=11,mode='hide')))
+            chart = dcc.Graph(figure=figure,responsive=True,style={'height':'156px'},
+                              config=dict(displayModeBar=False),className='structure-flow-pie')
         panels.append(html.Figure([
-            html.Figcaption(title),html.Small('Complete API window' if complete else 'Returned sample only'),*rows,
-            html.Div([html.Span(amount(0,money)),html.Span(amount(maximum,money))],className='structure-bar-scale',**{'aria-hidden':'true'})
-                if any(sides[s][field] is not None for s in ('yes','no')) else html.P('No usable trade data',className='structure-note'),
+            html.Figcaption(title),html.Small('Complete API window' if complete else 'Returned sample only'),
+            chart,html.Div(rows,className='structure-pie-legend'),
         ],className='structure-flow-chart',role='group',**{'aria-label':title+' by outcome','data-metric':field}))
     return html.Div(panels,className='structure-flow-charts')
 
@@ -223,7 +254,7 @@ def activity(market, provider):
                 html.P(amount(sides[side]['buy_contracts'])+
                        (' contracts' if is_kalshi else ' shares'))],className='structure-outcome structure-outcome--'+side)
                 for side in ('yes','no')],className='structure-outcomes'),
-            flow_bars(labels,sides,kalshi=is_kalshi,complete=clean)]
+            flow_pies(labels,sides,kalshi=is_kalshi,complete=clean)]
         if trades.get('first_trade'):
             content.append(html.P(f"{int(trades['classified']):,} returned executions · "
                 f"First {stamp(trades['first_trade'])} · Latest {stamp(trades['last_trade'])}",
@@ -259,8 +290,8 @@ def activity(market, provider):
                 html.Span('Bid '+price(bid[side])),html.Span('Ask '+price(ask[side])),
                 html.Span('Spread '+price(round(ask[side]-bid[side],10)) if bid[side] is not None and ask[side] is not None else 'Spread unavailable')])],
                 className='structure-quote') for side in ('yes','no')],className='structure-outcomes')]
-        content += [html.P(f'Cumulative resting size across up to {BOOK_DEPTH} price levels per side. '
-                           'The shaded area marks the bid–ask spread.',className='structure-note'),
+        content += [html.P(f'Resting size at each price, up to {BOOK_DEPTH} levels per side. '
+                           'Bids extend left and asks extend right.',className='structure-note'),
                     html.Div([depth_chart(book,provider,side,labels[side]) for side in ('yes','no')],
                              className='structure-depth-charts')]
         if is_kalshi:
@@ -296,28 +327,31 @@ def activity(market, provider):
 def render(data):
     cards = []
     selected = data.get('request',{}).get('provider','Kalshi')
-    for provider in sorted(PROVIDERS,key=lambda p:p != selected):
+    for provider in sorted(data['providers'],key=lambda p:p != selected):
+        sportsbook = provider in {'FanDuel','DraftKings'}
         state = data['providers'][provider];record = state.get('data') or {}
         content = [html.Div([html.H3(provider),html.Span('Selected source' if provider == selected else 'Other source',className='structure-source-label')],className='structure-source-heading'), html.P(('Updating · saved snapshot shown' if record.get('fetched_at') else 'Loading activity…') if state.get('pending') else
             'Fetched '+stamp(record['fetched_at']) if record.get('fetched_at') else
-            'Not supplied by the connected odds feed' if provider == 'FanDuel' else 'Data unavailable', className='structure-time')]
+            'Not supplied by the connected odds feed' if sportsbook else 'Data unavailable', className='structure-time')]
         if record.get('notice'):
             content.append(html.P(record['notice'], className='structure-note'))
         if state.get('error'):
             content.append(html.P(('Saved snapshot shown. ' if record else '')+state['error'], className='structure-error'))
         content.extend(activity(market, provider) for market in record.get('markets', []))
         content.extend(html.P(notice, className='structure-note') for notice in record.get('notices', []))
-        if provider == 'FanDuel':
+        if sportsbook:
             content.extend([table(dict(yes='Selected outcome',no='Opposite outcome'),[
                 ('Number of sportsbook tickets',{},False),('Total money wagered',{},True)]),
-                html.P('No FanDuel ticket/handle source is connected. Odds and implied probability cannot determine '
-                       'these totals; public percentages alone cannot recover absolute counts or dollars.',className='structure-note'),
+                html.P(f'{provider} prices supply odds and implied probability. Ticket counts and handle require a separate data source.',
+                       className='structure-note')])
+        if provider == 'FanDuel':
+            content.extend([
                 html.A('FanDuel Research', href='https://www.fanduel.com/research', target='_blank', rel='noopener noreferrer'),
                 html.P('Additional sportsbook context (different sources; not FanDuel splits):'),
                 html.A('VSiN · DraftKings / Circa', href='https://data.vsin.com/betting-splits/', target='_blank', rel='noopener noreferrer'),
                 html.Span(' · '), html.A('Action Network · public betting', href='https://www.actionnetwork.com/public-betting',
                                         target='_blank', rel='noopener noreferrer')])
-        else:
+        elif not sportsbook:
             content.append(html.A('Official data documentation', href='https://docs.kalshi.com/api-reference/market/get-trades'
                 if provider == 'Kalshi' else 'https://docs.polymarket.com/api-reference/feeds/list-trades',
                 target='_blank', rel='noopener noreferrer'))

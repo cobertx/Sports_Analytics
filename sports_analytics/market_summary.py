@@ -12,12 +12,13 @@ from .mispricing import run_forecasts
 from .prompt_history import exchange_target
 from .availability import revision as availability_revision
 from .availability_adjustment import note as availability_note
+from .nfl_markets import SPORTSBOOKS
 
-PROVIDERS=('FanDuel','Kalshi','Polymarket')
+PROVIDERS=('FanDuel','Kalshi','Polymarket','DraftKings')
 
 
 def route(value):
-    match=re.fullmatch(r'#(nba|nfl|ncaaf)-market-summary',value or '')
+    match=re.fullmatch(r'#(nba|nfl|ncaaf)-(?:market-summary|draftkings-market)',value or '')
     return match[1].upper() if match else None
 
 
@@ -67,7 +68,7 @@ def comparison(target,invert,side,provider,sport,teams):
     subject=team_identity(target['subject'],sport)['name'] if spread or key=='team_totals' else target['subject'] if player else ''
     boundary=-line if spread else line
     compare='gt' if spread or target['selection']=='Over' else 'lt'
-    push=provider=='FanDuel' and float(line).is_integer()
+    push=provider in SPORTSBOOKS and float(line).is_integer()
     if invert != (side=='no'):compare={'gt':'le','lt':'ge'}[compare]
     if spread and compare in {'lt','le'}:
         other=[team for team in teams if team!=subject]
@@ -83,6 +84,7 @@ def comparison(target,invert,side,provider,sport,teams):
     market=MARKET_NAMES.get(key+'_alternate',MARKET_NAMES.get(key,(key.replace('_',' ').title(),)))[0]
     group=subject+' - '+market if player else subject+' - Team total' if key=='team_totals' else 'Spread / Winner' if spread else 'Game Total'
     label=f'{subject} {-boundary:+g}' if spread else f'{"Over" if compare=="gt" else "Under"} {boundary:g}'
+    if spread and target.get('market')=='Moneyline':label=f'{subject} moneyline'
     if key=='team_totals':label=subject+' '+label
     return dict(key=[category,key,' '.join(subject.casefold().split()),boundary,compare,push],
                 category=category,group=group,label=label,line=-boundary if spread else boundary,
@@ -98,7 +100,7 @@ def entries(bundle):
         if not snapshot:continue
         context={**snapshot,'game':record.get('game')}
         for index,row in enumerate(snapshot['rows']):
-            if provider=='FanDuel':
+            if provider in SPORTSBOOKS:
                 target=dict(row);invert=False;sides=[None]
                 if target['market_key'] not in {'alternate_spreads','alternate_totals'} and not target['market_key'].startswith('player_'):target=None
             else:
@@ -114,7 +116,7 @@ def entries(bundle):
                 category='Player Props' if player else 'Game Lines'
             else:
                 group=row.get('event_title') or row.get('market') or row.get('title') or 'Other markets'
-                category='Other Markets'
+                category='Game Lines' if provider in SPORTSBOOKS and row['market_key']=='h2h' else 'Other Markets'
             for side in sides:
                 try:
                     market_implied=(implied_probability(row['odds']) if side is None and row.get('odds') is not None else
@@ -172,7 +174,7 @@ def calculate(bundle,method,player_method,game_forecast,player_forecast,*,kinds=
                     forecast.away_team if target['subject']==source['away_team'] else None)
                 estimate=forecast.spread(team,target['line']) if team else None
             else:estimate=_market_probability(target,forecast)
-            probability=(estimate.probability if row['provider']=='FanDuel' else
+            probability=(estimate.probability if row['provider'] in SPORTSBOOKS else
                          estimate.loss if row['invert'] else estimate.win) if estimate else None
             if row['side']=='no' and probability is not None:probability=1-probability
             if probability is not None and (not math.isfinite(probability) or not 0<=probability<=1):probability=None

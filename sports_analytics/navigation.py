@@ -7,7 +7,7 @@ from dash import Input, Output, State, html, no_update
 from dash.exceptions import PreventUpdate
 from .data import SOURCES
 from .nba_markets import NBA_MARKETS
-from .nfl_markets import NFL_MARKETS
+from .nfl_markets import NFL_MARKETS,draftkings_markets
 from .ncaaf_markets import NCAAF_MARKETS
 from .kalshi_analysis import FILTER
 from .schedule import FANDUEL_LINKS
@@ -156,7 +156,7 @@ def navigate(page, sport,kind='team'):
             f'Game Outcome and Player Stats evaluation methods for {sport}.') if backtesting else (
             'INFORMATION VARIABLE' if information else 'MARKET DATA' if summary or filtered else 'THE '+exchange.upper()+' EXCHANGE' if exchange else "ON THE COURT / ON THE FIELD" if in_game else "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
             f'{sport} · Filtered Results' if filtered else f'{sport} · Information Variable' if information else f'{sport} · Market Summary' if summary else f'{sport} · {exchange} Market' if exchange else f'{sport} · Visualized In-Game Data' if in_game else "The next game starts here." if market else f'{sport} · {"Player" if kind=="player" else "Team"} Statistics',
-            'Browse saved Quick Filtering matches across upcoming games.' if filtered else 'Read official league reports, attributed news and NFL weather information.' if information else 'Compare market odds, implied probabilities and model forecasts across all three providers.' if summary else f'Browse game contracts and current exchange quotes from {exchange}’s public API.' if exchange else 'See recorded shots and offensive plays on an interactive court or field.' if in_game else "Explore upcoming NBA, NFL, and college football matchups." if market else
+            'Browse saved Quick Filtering matches across upcoming games.' if filtered else 'Read official league reports, attributed news and NFL weather information.' if information else 'Compare sportsbook and exchange quotes with model forecasts.' if summary else f'Browse game contracts and current exchange quotes from {exchange}’s public API.' if exchange else 'See recorded shots and offensive plays on an interactive court or field.' if in_game else "Explore upcoming NBA, NFL, and college football matchups." if market else
             ('Explore saved college player performances and game logs.' if sport=='NCAAF' else
              'Explore historical player performances and career statistics.') if kind=='player' else
             'Explore historical team performances and statistics.')
@@ -257,11 +257,12 @@ def in_game_visibility(page, sport):
 
 def summary_visibility(page,sport):
     active=page=='market-summary' and sport in SOURCES
-    credits=len({'NBA':NBA_MARKETS,'NFL':NFL_MARKETS,'NCAAF':NCAAF_MARKETS}.get(sport,{}))
+    package={'NBA':NBA_MARKETS,'NFL':NFL_MARKETS,'NCAAF':NCAAF_MARKETS}.get(sport,{})
+    credits=len(package)+(len(draftkings_markets(package)) if package else 0)
     return ({'display':'grid' if active else 'none'},{} if sport in SOURCES else {'display':'none'},
             'market-data-navigation'+(' active' if page in {'market','kalshi','polymarket','market-summary','filtered-results'} else ''),
             f'#{sport.lower()}-market-summary','sport-page-link'+(' active' if active else ''),
-            f'FanDuel: up to {credits} API credits per pull. Kalshi / Polymarket: public data.')
+            f'Up to {credits} Odds API credits for FanDuel and DraftKings combined. Kalshi and Polymarket use public data.')
 
 
 

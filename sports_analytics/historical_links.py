@@ -65,7 +65,7 @@ def history_target(location_hash):
             stamp=pd.Timestamp(result['as_of'])
             if pd.isna(stamp) or stamp.tzinfo is None:return None
         except (ValueError,TypeError):return None
-    if result.get('origin') and not re.fullmatch(r'#'+sport.lower()+r'-(?:game-\d+|(?:kalshi|polymarket)-game-[A-Z0-9_.-]+)',result['origin']):
+    if result.get('origin') and not re.fullmatch(r'#'+sport.lower()+r'-(?:game-\d+|draftkings-market|(?:kalshi|polymarket)-game-[A-Z0-9_.-]+)',result['origin']):
         return None
     if "season" in values:
         try:

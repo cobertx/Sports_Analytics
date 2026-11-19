@@ -3,6 +3,15 @@
 import pandas as pd
 
 
+def recorded_games(frame, metric):
+    """Order one entity's recorded observations, preserving zeros."""
+    if frame["entity_id"].nunique() > 1:
+        raise ValueError("Select one team or player before forecasting.")
+    history = frame.sort_values(["season", "event_date", "week", "game_id"], na_position="last").copy()
+    history[metric] = pd.to_numeric(history[metric], errors="coerce")
+    return history.dropna(subset=[metric]).reset_index(drop=True)
+
+
 def rolling_baseline(frame, metric, window=5):
     """Single-entity input only; shift the window to prevent target leakage.
 
@@ -11,11 +20,7 @@ def rolling_baseline(frame, metric, window=5):
     """
     if window < 2:
         raise ValueError("The rolling window must be at least 2 games.")
-    if frame["entity_id"].nunique() > 1:
-        raise ValueError("Select one team or player before forecasting.")
-    history = frame.sort_values(["season", "event_date", "week", "game_id"], na_position="last").copy()
-    history[metric] = pd.to_numeric(history[metric], errors="coerce")
-    history = history.dropna(subset=[metric]).reset_index(drop=True)
+    history = recorded_games(frame, metric)
     history["baseline"] = history[metric].shift(1).rolling(window, min_periods=window).mean()
     scored = history.dropna(subset=["baseline"])
     mae = float((scored[metric] - scored["baseline"]).abs().mean()) if not scored.empty else None

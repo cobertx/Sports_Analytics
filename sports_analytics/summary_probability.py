@@ -13,6 +13,7 @@ from .presentation import chart_style
 
 SOURCE_STYLES = {
     'FanDuel': ('#75baff', 'diamond', 'solid'),
+    'DraftKings': ('#ffac74', 'triangle-down', 'dashdot'),
     'Kalshi': ('#8debab', 'square', 'dash'),
     'Polymarket': ('#b7b6ff', 'triangle-up', 'dot'),
 }
@@ -140,8 +141,8 @@ def panel(bundle, rows, method, waiting=False, *, criteria=None, quick_rows=None
         else:
             status = rule+'. Highlights appear when forecast and quote values are available.'
     return [
-        html.P('Each point shows the chance of winning at that line. Whole-point FanDuel forecasts exclude pushes. '
-               'FanDuel implied probabilities include bookmaker margin. Exchange implied probabilities use the buying price '
+        html.P('Each point shows the chance of winning at that line. Whole-point sportsbook forecasts exclude pushes. '
+               'Sportsbook implied probabilities include bookmaker margin. Exchange implied probabilities use the buying price '
                'before fees. When a source lists multiple equivalent quotes, the chart uses its lowest implied probability.',
                className='chart-note'),
         html.P('Calculating the selected forecast…' if waiting else f'{method} forecast unavailable for these lines.',

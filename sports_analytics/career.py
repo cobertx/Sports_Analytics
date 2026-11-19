@@ -1,7 +1,7 @@
 """Player career season summaries, with a shared local cache for source tables.
 
 Match by provider player ID across teams and seasons, never by display name.
-Counting stats use season totals; rates retain the provider's original units.
+Counting stats use per-game season averages; rates keep their original units.
 """
 
 from collections import OrderedDict
@@ -21,11 +21,25 @@ import pandas as pd
 
 from .data import DataSourceError, HttpClient
 from .historical_links import market_metrics
+from .metrics import metric_label
 
 ARCHIVE = "https://github.com/sportsdataverse/sportsdataverse-data/releases/download/"
 FLOORS = {"NBA": 1996, "NFL": 1999}
 NBA_STATS = ["gp", "min", "pts", "reb", "ast", "stl", "blk", "tov", "fgm", "fga", "fg_pct",
              "fg3m", "fg3a", "fg3_pct", "ftm", "fta", "ft_pct", "oreb", "dreb", "pf", "plus_minus"]
+SOURCE_RATES = {"passing_cpoe", "pacr", "racr", "target_share", "air_yards_share", "wopr"}
+
+
+def per_game_statistic(metric):
+    return (metric != "games" and metric not in SOURCE_RATES
+            and not metric.endswith(("_pct", "_avg", "_long")))
+
+
+def career_statistic(metric, sport):
+    if metric == "games":
+        return "Games played"
+    label = metric_label(metric, sport)
+    return label + " per game" if per_game_statistic(metric) else label
 
 
 @dataclass
@@ -79,8 +93,9 @@ def season_value(rows, metric):
         return float(values.iloc[0])
     if metric.endswith("_long"):
         return float(values.max())
-    if metric.endswith(("_pct", "_avg")) or metric == "passing_cpoe":
-        weights = {"fg_pct": "fg_att", "pat_pct": "pat_att", "fg3_pct": "fg3a", "ft_pct": "fta",
+    if metric.endswith(("_pct", "_avg")) or metric in SOURCE_RATES:
+        weights = {"fg_pct": "fga" if "fga" in rows else "fg_att",
+                   "pat_pct": "pat_att", "fg3_pct": "fg3a", "ft_pct": "fta",
                    "passing_cpoe": "attempts"}
         weight = weights.get(metric)
         if weight not in rows:
@@ -89,6 +104,15 @@ def season_value(rows, metric):
         denominator = rows.loc[mask, weight].sum()
         return float((rows.loc[mask, metric] * rows.loc[mask, weight]).sum() / denominator) if denominator else None
     return float(values.sum())
+
+
+def games_played(rows):
+    if 'games' not in rows:
+        return None
+    games = pd.to_numeric(rows['games'], errors='coerce')
+    if games.notna().all() and games.gt(0).all() and games.mod(1).eq(0).all():
+        return int(games.sum())
+    return None
 
 
 class CareerService:
@@ -192,11 +216,14 @@ class CareerService:
                 selected = frame[frame["entity_id"] == entity]
                 if not selected.empty and metric in selected:
                     value = season_value(selected, metric)
+                    games = games_played(selected)
+                    if per_game_statistic(metric):
+                        value = value / games if value is not None and games and selected[metric].notna().all() else None
                     if value is not None:
-                        points.append({"season": year, "value": value,
+                        points.append({"season": year, "value": value, "games": games,
                                        "team": ", ".join(selected["team"].dropna().astype(str).unique())})
         source = {"NBA": "NBA Stats via SportsDataverse", "NFL": "nflverse"}[sport]
-        frame = pd.DataFrame(points, columns=["season", "value", "team"]).sort_values("season")
+        frame = pd.DataFrame(points, columns=["season", "value", "games", "team"]).sort_values("season")
         return Career(frame, years, sorted(failed), phase, source)
 
     @staticmethod

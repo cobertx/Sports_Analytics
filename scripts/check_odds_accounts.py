@@ -182,6 +182,36 @@ class OddsAccountsChecks(TestCase):
                 contents=path.read_text(encoding='utf-8-sig')
                 self.assertNotIn(PRIMARY,contents);self.assertNotIn(BACKUP,contents)
 
+    def test_draftkings_uses_its_own_bookmaker_primary_props_and_snapshot_archive(self):
+        for service_type,prop in [(NflMarketService,'player_pass_yds'),(NbaMarketService,'player_points'),
+                                  (NcaafMarketService,'player_pass_yds')]:
+            game,event,fanduel=fixture(service_type)
+            draftkings={**fanduel,'bookmakers':fanduel['bookmakers']+[dict(key='draftkings',markets=[
+                dict(key='alternate_totals',outcomes=[dict(name='Over',point=44.5,price=-105)]),
+                dict(key='totals',outcomes=[dict(name='Over',point=44.5,price=-120)]),
+                dict(key='h2h',outcomes=[dict(name=event[side+'_team'],price=100) for side in ('home','away')]),
+                dict(key=prop,outcomes=[dict(name='Over',point=19.5,price=-125,description='Fixture Player')]),
+            ])]}
+            original=self.market(service_type)
+            book=service_type(self.api,original.path,original.csv_directory,original.usage_log,bookmaker='draftkings')
+            self.session.reset_mock()
+            self.session.get.side_effect=[response([event]),response(fanduel,last=1),
+                                          response([event]),response(draftkings,last=4)]
+            saved=original.pull(game,'same-click')
+            snapshot=book.pull(game,'same-click')
+            self.assertEqual(self.session.get.call_args.kwargs['params']['bookmakers'],'draftkings')
+            self.assertEqual(snapshot['bookmaker'],'draftkings')
+            self.assertEqual(snapshot['cost'],4)
+            self.assertNotEqual(snapshot['usage_log_id'],saved['usage_log_id'])
+            self.assertEqual(len(snapshot['rows']),4)
+            self.assertEqual([r['odds'] for r in snapshot['rows'] if r['market_key']=='alternate_totals'],[-120])
+            self.assertEqual([r['line'] for r in snapshot['rows'] if r['market']=='Moneyline'],[0,0])
+            self.assertIn(prop+'_alternate',[r['market_key'] for r in snapshot['rows']])
+            self.assertEqual([row['bookmaker'] for row in book.history('123')],['draftkings'])
+            self.assertEqual([row['bookmaker'] for row in original.history('123')],['fanduel'])
+            self.assertEqual(book.pull(game,'same-click')['csv_file'],snapshot['csv_file'])
+            self.assertEqual(self.session.get.call_count,4)
+
     def test_failed_backup_request_is_attributed_and_not_charged_twice(self):
         game,event,_=fixture();markets=self.market()
         self.session.get.side_effect=[response([event]),exhausted(),requests.Timeout(PRIMARY)]

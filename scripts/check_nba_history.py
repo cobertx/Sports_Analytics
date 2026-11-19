@@ -17,7 +17,7 @@ from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.data import DataSourceError,Query,fetch
 from sports_analytics.nba_espn import load,identities,IDENTITIES
 from sports_analytics.service import DataService
-from sports_analytics.dashboard import create_app,ALL_TEAMS
+from sports_analytics.dashboard import career_figure,create_app,ALL_TEAMS
 from sports_analytics.prompt_history import button
 from sports_analytics.career import CareerService
 
@@ -69,6 +69,29 @@ class NBASeasonHistoryChecks(TestCase):
         self.assertEqual(player.matchup,'CLE @ PHI')
         self.assertEqual(source.season.unique().tolist(),[SEASON])
         self.assertEqual(source.attrs['source'],'ESPN box scores via SportsDataverse')
+
+    def test_career_uses_games_played_and_preserves_rate_units_and_missing_seasons(self):
+        seasons = {
+            2022: pd.DataFrame(dict(entity_id=['201935','201935'],team=['BKN','PHI'],games=[10,30],
+                                    pts=[250,550],reb=[70,150],ast=[70,210],fg_pct=[.5,.4],fga=[100,300])),
+            2023: pd.DataFrame(dict(entity_id=['201935'],team=['PHI'],games=[None],pts=[800],fg_pct=[.4])),
+            2024: pd.DataFrame(dict(entity_id=['201935'],team=['LAC'],games=[60],pts=[1320],fg_pct=[.45])),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            service=CareerService(Path(directory)/'career.sqlite3')
+            with patch.object(service,'available_seasons',return_value=list(seasons)), \
+                 patch.object(service,'season',side_effect=lambda sport,year,phase:seasons[year]):
+                points=service.load('NBA','201935','James Harden','pts','regular')
+                combined=service.load('NBA','201935','James Harden','points_rebounds_assists','regular')
+                rate=service.load('NBA','201935','James Harden','fg_pct','regular')
+        graph=career_figure(points,'NBA','pts','James Harden')
+        self.assertEqual(graph.layout.yaxis.title.text,'Points per game')
+        self.assertEqual(list(graph.data[0].y),[20,None,22])
+        self.assertEqual(points.frame.games.tolist(),[40,60])
+        self.assertEqual(points.frame.team.tolist(),['BKN, PHI','LAC'])
+        self.assertEqual(combined.frame.value.tolist(),[32.5])
+        self.assertAlmostEqual(rate.frame.value.iloc[0],.425)
+        self.assertEqual(rate.frame.value.iloc[-1],.45)
 
     def test_dnp_preseason_wrong_year_and_incomplete_games_are_not_appearances(self):
         raw=boxes()
@@ -168,6 +191,26 @@ class PromptLandingChecks(TestCase):
         self.assertEqual(figure.layout.shapes[0].y0,15.5)
         self.assertIn('1/1 historical hits',str(figure.layout.annotations))
         self.assertIn('Requires 5 recorded appearances',str(cards))
+
+    def test_archived_nba_prompt_charts_the_full_season_even_without_prior_games(self):
+        template=self.source[self.source.entity_id.eq('201935')]
+        season=pd.concat([template.assign(game_id=str(index),event_date=day,pts=index)
+                          for index,day in enumerate(pd.date_range(f'{SEASON}-10-22',periods=21,tz='UTC'))],
+                         ignore_index=True)
+        result=SimpleNamespace(frame=season,revision='market-history-fixture')
+        dataset=dict(key='fixture',sport='NBA',season=SEASON,kind='player',phase='regular')
+        snapshot=dict(sport='NBA',game_id='123',commence_time=f'{SEASON}-10-22T23:00:00Z')
+        row=dict(subject='James Harden',selection='Over',line=15.5,market_key='player_points_alternate',market='Alt Points')
+        with patch.object(self.service,'read',return_value=result):
+            figure,cards,records,_=self.cb['analyze'](dataset,'201935','pts',3,ALL_TEAMS,button(snapshot,row).href)
+        self.assertEqual(list(figure.data[0].y),list(range(21)))
+        self.assertEqual([trace.name for trace in figure.data[1:]],['5-game average','10-game average','20-game average'])
+        for trace,span in zip(figure.data[1:],(5,10,20)):
+            self.assertTrue(pd.isna(trace.y[:span-1]).all())
+            self.assertEqual(trace.y[span-1],(span-1)/2)
+            self.assertEqual(trace.y[-1],20-(span-1)/2)
+        self.assertEqual(records,[])
+        self.assertIn('5/21 historical hits',str(figure.layout.annotations))
 
     def test_explicit_season_changes_are_respected_after_navigation(self):
         with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='season')), \

@@ -12,7 +12,7 @@ from .market_structure_link import button as structure_button
 from .market_summary import PROVIDERS
 from .lazy_markets import markets as lazy_markets
 from .nba_markets import NBA_MARKETS
-from .nfl_markets import NFL_MARKETS
+from .nfl_markets import NFL_MARKETS,SPORTSBOOKS,draftkings_markets
 from .ncaaf_markets import NCAAF_MARKETS
 from .static_markup import markup
 
@@ -24,6 +24,8 @@ METRICS=('probability','odds','edge')
 
 
 def provider_logo(provider):
+    if provider=='DraftKings':
+        return html.Span(provider,className='summary-source-name summary-source-draftkings')
     return html.Img(src='/assets/providers/'+provider.lower()+'.ico',alt=provider,className='summary-provider-logo',title=provider)
 
 
@@ -62,8 +64,9 @@ def chart_criteria_controls():
 
 
 def pull_estimate(sport,provider):
-    if provider!='FanDuel':return '0 Odds API credits · public market data'
+    if provider not in SPORTSBOOKS:return '0 Odds API credits · public market data'
     package={'NBA':NBA_MARKETS,'NFL':NFL_MARKETS,'NCAAF':NCAAF_MARKETS}.get(sport)
+    if package and provider=='DraftKings':package=draftkings_markets(package)
     return f'Estimated up to {len(package)} API credits' if package else 'Choose a sport to see the credit estimate'
 
 
@@ -75,7 +78,7 @@ def source_pulls():
             html.Button('Pull '+provider,id='summary-pull-'+provider.lower(),n_clicks=0,className='pull-markets-button',
                 title='Pull only '+provider+' quotes for this game'),
             html.Small(pull_estimate(None,provider),id='summary-source-'+provider.lower()+'-cost',className='summary-source-cost',
-                title='The final charge depends on the markets returned.' if provider=='FanDuel' else 'This source does not use The Odds API.'),
+                title='The final charge depends on the markets returned.' if provider in SPORTSBOOKS else 'This source does not use The Odds API.'),
         ],id='summary-source-'+provider.lower(),disabled=True,className='summary-source-pull')
         for provider in PROVIDERS
     ],className='summary-source-pulls',role='group',**{'aria-label':'Pull individual market sources'})
@@ -91,8 +94,12 @@ def layout():
         dcc.Store(id='summary-model-completed'),
         dcc.Interval(id='summary-cache-poll',interval=1500,n_intervals=0,disabled=True),
         html.Section([
-            html.Div([html.Div('MARKET DATA',className='eyebrow accent'),html.H2('Market Summary'),
-                      html.P('Compare FanDuel, Kalshi and Polymarket quotes for one upcoming game.')],className='market-heading'),
+            html.Div([html.Div('MARKET DATA',className='eyebrow accent'),
+                      html.H2('Market Summary',className='summary-multi-source'),
+                      html.H2('DraftKings Market',className='summary-draftkings-only'),
+                      html.P('Compare FanDuel, DraftKings, Kalshi and Polymarket quotes for one upcoming game.',className='summary-multi-source'),
+                      html.P('Browse DraftKings game lines and player props from The Odds API.',className='summary-draftkings-only')],
+                     className='market-heading'),
             html.Div([
                 field('Game window',dcc.Dropdown(id='summary-days',options=[dict(label='Next 7 days',value=7),dict(label='Next 14 days',value=14)],value=7,clearable=False)),
                 html.Button('Refresh upcoming games',id='summary-refresh',n_clicks=0,className='export-button'),
@@ -105,7 +112,7 @@ def layout():
             html.Div([
                 html.Button('Back to upcoming games',id='summary-back',n_clicks=0,className='export-button'),
                 html.Div([html.Button('Pull Live Markets',id='summary-pull',n_clicks=0,className='pull-markets-button'),
-                          html.Small(id='summary-credit-note')],className='detail-pull-control'),
+                          html.Small(id='summary-credit-note')],className='detail-pull-control summary-multi-source'),
             ],className='detail-page-actions'),
             html.Div(id='summary-game-header'),
             html.Div([
@@ -113,14 +120,21 @@ def layout():
                 field('Player Forecast Method',dcc.Dropdown(id='summary-player-method',options=list(PLAYER_METHODS),value='WHP',clearable=False)),
                 html.Button('Recalculate estimates',id='summary-recalculate',n_clicks=0,className='export-button'),
             ],id='summary-forecast-controls',className='forecast-methods'),
-            html.P('Saved FanDuel quotes load without spending API credits. Kalshi and Polymarket use public quotes. '
-                   'Pull Live Markets refreshes all three and saves their snapshots. Odds use American format; exchange buying prices '
-                   'are also shown in cents per contract/share. Edge is before fees.',className='ppp-comparison-note'),
+            html.P('Saved sportsbook quotes load without spending API credits. Pull Live Markets refreshes all four sources. '
+                   'FanDuel and DraftKings pulls use The Odds API credits. Odds use American format. Edge is before fees.',
+                   className='ppp-comparison-note summary-multi-source'),
+            html.P('Pull DraftKings saves a timestamped snapshot. Saved quotes load without spending API credits. '
+                   'Odds use American format, and model probabilities exclude pushes.',
+                   className='ppp-comparison-note summary-draftkings-only'),
             html.P('Compare each selection across source columns. Green highlights the best available price for the same outcome. '
                    'Equivalent integer thresholds share a row; hover over a quote for its original wording. '
-                   'Lines with different push rules stay separate. A dash means no matching quote.',className='summary-comparison-note'),
+                   'Lines with different push rules stay separate. A dash means no matching quote.',
+                   className='summary-comparison-note summary-multi-source'),
             dcc.Loading(html.Div(id='summary-quote-status',className='load-status',role='status'),delay_show=500,color='#57dbc4',overlay_style={'visibility':'visible'}),
             source_pulls(),
+            html.Div(field('DraftKings snapshot',dcc.Dropdown(id='summary-draftkings-view',
+                options=[dict(label='Latest saved snapshot',value='latest')],value='latest',clearable=False)),
+                className='summary-draftkings-only'),
             html.Div(id='summary-model-status',className='forecast-history',role='status'),
             dcc.Tabs(id='summary-category',value='Game Lines',mobile_breakpoint=0,children=[dcc.Tab(label=value,value=value) for value in
                      ['Game Lines','Player Props',QUICK,'Other Markets']],className='market-category-tabs'),
@@ -137,11 +151,11 @@ def layout():
     ],id='market-summary-page',className='market-summary-page',style={'display':'none'})
 
 
-def cards(games,sport):
+def cards(games,sport,provider='Market Summary'):
     return html.Div([html.Article([
         html.Button('',id={'type':'summary-game-choice','game':str(game['id'])},n_clicks=0,className='game-card-hit',
                     **{'aria-label':'Compare markets for '+game['away']['name']+' at '+game['home']['name']}),
-        html.Div(sport+' - MARKET SUMMARY',className='game-sport'),
+        html.Div(sport+' - '+provider.upper(),className='game-sport'),
         *[html.Div([logo_badge(game[side]['name'],game[side].get('abbreviation',''),sport),
                     html.Div([html.Strong(game[side]['name']),html.Small(side.title())])],className='game-team') for side in ('away','home')],
         html.Div(format_eastern(game['start']),className='game-card-footer'),
@@ -264,30 +278,32 @@ def quote_cell(bundle,row,snapshot,best):
 
 def selection_table(bundle,items,title,snapshots,count):
     content=[];anchors=[]
+    providers=('DraftKings',) if bundle.get('mode')=='draftkings' else PROVIDERS
     for item in visible_comparisons(items,count):
         outcome=item['outcome'];quotes=item['quotes']
-        anchor=next(quotes[p] for p in PROVIDERS if p in quotes)
+        anchor=next(quotes[p] for p in providers if p in quotes)
         anchors.append([anchor['provider'],anchor['index'],anchor['side'] or ''])
         priced=[row['implied'] for row in quotes.values() if row['implied'] is not None]
         best=min(priced) if len(priced)>1 else None
         content.append(html.Tr([
             html.Th([html.Span(outcome['label']),html.Small(outcome['note']) if outcome['note'] else None],scope='row',className='summary-selection'),
-            *[cell for provider in PROVIDERS for cell in quote_cell(bundle,quotes.get(provider),snapshots.get(provider),best is not None and
+            *[cell for provider in providers for cell in quote_cell(bundle,quotes.get(provider),snapshots.get(provider),best is not None and
                          quotes.get(provider,{}).get('implied')==best)],
             *shared_cells(bundle,quotes),
         ],**{'data-summary-row':json.dumps(anchors[-1],separators=(',',':'))}))
-    content=[html.P('Scroll across the table to compare all sources and model columns.',className='summary-scroll-hint'),html.Div(html.Table([
+    content=[html.P('Scroll across the table to see market odds and model estimates.',className='summary-scroll-hint'),html.Div(html.Table([
         html.Caption(title+' — Market odds by source',className='summary-table-caption'),
         html.Thead([
             html.Tr([html.Th('Market / Selection',scope='col',rowSpan=2),*[html.Th(provider_logo(provider),
-                colSpan=2,scope='colgroup',className='summary-provider-head summary-source-'+provider.lower()) for provider in PROVIDERS],
+                colSpan=2,scope='colgroup',className='summary-provider-head summary-source-'+provider.lower()) for provider in providers],
                 html.Th('Model estimates',colSpan=3,scope='colgroup',className='summary-shared-head summary-model-start')]),
-            html.Tr([*[html.Th(label,scope='col') for provider in PROVIDERS for label in ['Market odds','Implied probability']],
+            html.Tr([*[html.Th(label,scope='col') for provider in providers for label in ['Market odds','Implied probability']],
                      *[html.Th(label,scope='col',className='summary-shared-head'+(' summary-model-start' if i==0 else '')) for i,label in
                        enumerate(['Calculated probability','Calculated odds','Best edge (pp)'])]]),
         ]),
         html.Tbody(content),
-    ],className='summary-table'),className='summary-table-scroll',tabIndex=0,role='region',**{'aria-label':title+' source comparison'}),
+    ],className='summary-table'+(' summary-table--single-source' if len(providers)==1 else '')),
+        className='summary-table-scroll',tabIndex=0,role='region',**{'aria-label':title+' source comparison'}),
         html.P(f'Showing {min(count,len(items))} of {len(items)} selections'+
             (' · Includes prices from each available source. Show more to see additional lines.' if count<len(items) else ''),className='summary-row-count')]
     # Native markup has no per-cell Redux subscriptions. Dash owns this one

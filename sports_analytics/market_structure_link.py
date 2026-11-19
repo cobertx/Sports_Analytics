@@ -2,6 +2,7 @@
 import json
 import re
 from dash import html
+from .nfl_markets import SPORTSBOOKS
 
 
 def reference(snapshot, row, provider='FanDuel', side='yes'):
@@ -12,12 +13,12 @@ def reference(snapshot, row, provider='FanDuel', side='yes'):
     rules = ' '.join(str(row.get(key) or '') for key in ('title','rules_primary','rules_secondary'))
     if re.search(r'\b(?:first|second)\s+half\b|\b[1-4](?:st|nd|rd|th)\s+quarter\b|\bregulation[ -]only\b', rules, re.I):
         return None
-    target = fanduel_target(snapshot, row) if provider == 'FanDuel' else exchange_target(snapshot, row, provider, side)
+    target = fanduel_target(snapshot, row) if provider in SPORTSBOOKS else exchange_target(snapshot, row, provider, side)
     if not target or target.get('note') or target.get('compare') not in {'gt','ge','lt','le'}:
         return None
     sport = snapshot['sport'];spread = target['market'] == 'alternate_spreads'
     line = target['line'] + (-1 if target['compare']=='ge' else 1 if target['compare']=='le' else 0)
-    teams = ([team_identity(snapshot[key], sport)['name'] for key in ('home_team','away_team')] if provider == 'FanDuel'
+    teams = ([team_identity(snapshot[key], sport)['name'] for key in ('home_team','away_team')] if provider in SPORTSBOOKS
              else [team['name'] for team in matchup(snapshot['game'])[0]])
     if spread and target['compare'] in {'lt','le'}:
         name = team_identity(target['name'], sport)['name']
@@ -43,7 +44,7 @@ def context(snapshot, row, provider='FanDuel', side='yes'):
     from .market_summary import entries
     from .kalshi_view import matchup
     from .kalshi import parse_time
-    if provider == 'FanDuel':
+    if provider in SPORTSBOOKS:
         game = dict(id=str(snapshot.get('game_id', '')), start=snapshot.get('commence_time'),
             home=dict(name=snapshot.get('home_team')), away=dict(name=snapshot.get('away_team')))
     else:
@@ -58,7 +59,7 @@ def context(snapshot, row, provider='FanDuel', side='yes'):
         return None
     bundle = dict(sport=sport, game=game, providers={provider:dict(snapshot={**snapshot, 'rows':[row]}, game=snapshot.get('game'))})
     rows = entries(bundle)
-    chosen = next((item for item in rows if item['side'] == (None if provider == 'FanDuel' else side)), None)
+    chosen = next((item for item in rows if item['side'] == (None if provider in SPORTSBOOKS else side)), None)
     return dict(sport=sport, game=game, focus=chosen['comparison']['key'] if chosen and chosen['comparison'] else None,
         reference=reference(snapshot,row,provider,side),
         label=(chosen['group'] + ' · ' + chosen['selection'])[:300] if chosen else str(row.get('title', 'Market'))[:300],

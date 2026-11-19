@@ -101,7 +101,7 @@ def market_section_id(snapshot,market_key,player):
     return 'market-section-'+sha256(identity.encode()).hexdigest()[:24]
 
 
-def game_header(game, snapshot=None, sport="NFL"):
+def game_header(game, snapshot=None, sport="NFL", provider="FanDuel"):
     if not game and snapshot:
         game = snapshot.get("game") or {"start": snapshot["commence_time"],
             "away": {"name": snapshot["away_team"], "abbreviation": snapshot.get("away_abbreviation", "AWAY")},
@@ -116,13 +116,15 @@ def game_header(game, snapshot=None, sport="NFL"):
     return html.Div([team("away"), html.Div([html.Strong(format_eastern(game["start"]) if not game.get("time_tbd") else
                                                        format_eastern(game["start"])[:10] + " EDT"),
                                            html.Span("Time TBD") if game.get("time_tbd") else None,
-                                           html.Small(f"{sport} · FanDuel")], className="matchup-start"),
+                                           html.Small(f"{sport} · {provider}")], className="matchup-start"),
                      team("home")], className="matchup-banner")
 
 
 def selection_text(row):
     subject, selection, line = row["subject"], row["selection"], row["line"]
     key = row["market_key"]
+    if row.get('market')=='Moneyline':
+        return selection+' moneyline'
     if key in MARKET_NAMES:
         unit = MARKET_NAMES[key][1]
         if line is not None and selection == "Over" and line >= 0:

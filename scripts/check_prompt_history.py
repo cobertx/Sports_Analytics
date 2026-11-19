@@ -181,6 +181,15 @@ class PromptChartChecks(TestCase):
         self.fixture.frame=pd.concat([self.fixture.frame,self.fixture.frame.assign(event_date=pd.Timestamp('2026-10-25T00:00:00Z'))],ignore_index=True)
         chart=self.cb['analyze'](self.dataset,'j','receiving_yards',3,ALL_TEAMS,self.href)
         self.assertEqual(len(chart[2]),7)
+        traces=chart[0].data
+        self.assertEqual(len(traces[0].y),14)
+        self.assertEqual([trace.name for trace in traces[1:]],['3-game average','5-game average','7-game average'])
+        for trace,span in zip(traces[1:],(3,5,7)):
+            self.assertTrue(pd.isna(trace.y[:span-1]).all())
+            self.assertEqual(trace.y[span-1],sum(traces[0].y[:span])/span)
+            self.assertEqual(trace.y[-1],sum(traces[0].y[-span:])/span)
+        self.assertIn('8/14 historical hits',str(chart[0].layout.annotations))
+        self.assertIn('4 hits / 7 pre-game appearances',str(chart[1]))
         changed=self.cb['analyze'](self.dataset,'a','receiving_yards',3,ALL_TEAMS,self.href)
         self.assertFalse(changed[0].layout.shapes)
         changed=self.cb['analyze'](self.dataset,'j','receptions',3,ALL_TEAMS,self.href)

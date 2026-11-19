@@ -132,11 +132,19 @@ latest view. Games disappear at their scheduled start, while their reports remai
 saved. New Quick Filtering runs save automatically; earlier unsaved runs need to
 be rerun once. Refreshing this page does not spend credits or recalculate models.
 
+**DraftKings** in **Market Data** has a dedicated game browser for NBA, NFL and
+NCAAF. **Pull DraftKings** requests moneyline, spreads, totals, and available
+standard and alternate player props using the existing Odds API connection.
+The pull displays its credit estimate and saves a separate CSV archive under
+`data/market_data/draftkings/`. Use the **DraftKings snapshot** selector to
+reopen saved prices. Game and player models, charts, and Quick Filtering use
+the selected snapshot.
+
 **Market Summary** (`#nba-market-summary`, `#nfl-market-summary`, `#ncaaf-market-summary`)
 shows upcoming games with team logos, then compares selections in tables grouped by
 Game Lines, Player Props and Other Markets. **Game Lines** is the default; there is no
-All Markets tab. FanDuel, Kalshi and Polymarket use locally served logos above grouped
-columns for market odds and implied probability. A single model group on the right
+All Markets tab. FanDuel, DraftKings, Kalshi and Polymarket have grouped columns
+for market odds and implied probability. A single model group on the right
 shows calculated probability, calculated odds and the best edge in percentage points.
 Those three values come from the same quote: the one with the highest calculated edge;
 its provider is named under Edge. Equivalent estimates therefore use the best available
@@ -165,10 +173,10 @@ rows stay in the bounded server cache, and source revisions preserve exact file
 timestamps across browser requests so unchanged results can be reused.
 Choose PPP/EPA/ELO for game outcomes and
 WHP/UO/OAM/PGE for player props. Exchange buying prices are also shown in cents.
-Saved FanDuel quotes load without spending credits; **Pull Live Markets** refreshes all providers
-and saves snapshots, with the FanDuel credit cost shown beside the button. Public exchange
-quotes require no paid connection. The individual **Pull FanDuel**, **Pull Kalshi** and
-**Pull Polymarket** buttons refresh only that source and retain the other saved quotes.
+Saved sportsbook quotes load without spending credits. **Pull Live Markets** refreshes all
+providers and shows the combined estimated cost of the FanDuel and DraftKings requests.
+Kalshi and Polymarket use public data. The four individual source pulls refresh only that
+source and retain the other saved quotes.
 FanDuel displays the estimated maximum before the pull: 13 API credits for NBA or
 17 for NFL/NCAAF; the final charge depends on the markets returned. Exchange buttons
 show 0 Odds API credits. A source without a matching event is disabled until the game
@@ -208,10 +216,12 @@ Team/player name links stay in player market headings and the game's matchup
 header. Each supported selection in FanDuel, Kalshi and Polymarket also has a
 **Historical Data** button, including selections in mispricing results. It opens
 the relevant player or team's statistic with the exact prompt line and direction.
-The chart draws a dashed threshold, colors hits/misses/pushes, and displays the
-hit count and rate. The game log includes each prompt outcome, and **Back to
-market** reopens the originating game. Counts use recorded earlier game dates in
-the selected season/filter scope; the linked game and future games are excluded.
+The chart shows all recorded games in the loaded season and filters, with trailing
+5-, 10-, and 20-game averages for NBA and 3-, 5-, and 7-game averages for football.
+Each average includes the game shown once a full window is available. A dashed
+threshold marks the prompt, and the chart shows hits, misses, and pushes for the
+games plotted. The summary cards and game log use earlier game dates when the
+linked game has a start time. **Back to market** reopens the originating game.
 Spreads/winners use team scoring margin, totals use combined points, and player
 props use the corresponding recorded statistic or exact component sum. Binary
 No thresholds retain equality on the proper side; sportsbook pushes remain
@@ -668,7 +678,7 @@ Starting the Python server does not download data until you open the page. Openi
 
 **Performance over time** uses bars for the selected statistic and the next-appearance baseline, with the prior rolling-window mean kept as a line. It labels games with their date and **away @ home** matchup, for example `2025-11-01 · GSW @ TOR`. Longer game logs show a readable subset of axis labels; every point's hover shows its date and matchup. The next-appearance baseline has no fabricated future date or opponent.
 
-Selecting **Players** for NBA or NFL adds a **Player career** graph directly below the performance graph. It loads every published season available from the selected sport's summary source, matches the player by ID across all teams, and follows the selected statistic and regular/postseason phase. It ignores the season and week filters so earlier seasons and transfers remain visible. Counting statistics use **season totals**; rates keep their source units. Gaps remain missing rather than becoming zero. The caption reports source coverage and failed seasons. The first load can take longer; summaries are shared across players and saved in `data/cache/career.sqlite3` for 24 hours.
+Selecting **Players** for NBA or NFL adds a **Player career** graph directly below the performance graph. It loads every published season available from the selected sport's summary source, matches the player by ID across all teams, and follows the selected statistic and regular/postseason phase. Counting statistics such as points use **season averages per game**, calculated from the season total and the player's recorded games. Rate statistics keep their source units, and seasons with missing data appear as gaps. The caption reports source coverage and failed seasons. The first load can take longer. Summaries are shared across players and saved in `data/cache/career.sqlite3`.
 
 ## NFL PPP market probabilities
 
@@ -900,17 +910,18 @@ can produce multiple fills, and unfilled orders are labeled separately.
 
 The selected source occupies the main panel, with separate YES/NO flow cards,
 volume and open-interest measures, best bid/ask prices and spreads, and expandable
-depth tables. Two horizontal bar charts compare execution counts and dollar value
-by outcome on separate absolute scales, with exact values beside every bar.
-Partial samples are labeled and do not imply market-wide betting shares. Legacy
+depth tables. Two pie charts compare execution counts and dollar value by outcome,
+with exact amounts in each legend. Partial samples are labeled and their pies
+show the composition of the returned executions. Legacy
 Kalshi snapshots recover direction counts from trade prints and NO value from
 the complementary price basis, rather than displaying obsolete zero purchase
 fields. Empty failed feeds show **Unavailable**; positive headline volume with
 an empty trade feed is flagged as a coverage conflict. Sub-cent amounts show
 **< $0.01**, and verified empty windows explicitly say no executions were returned.
-The current bid/ask charts show cumulative resting size across up to 30 price
-levels on each side of the spread. Kalshi asks are derived from opposite-side
-bids. Polymarket depth uses the bids and asks from each token's own book.
+The current bid/ask charts put price in the center and show the resting size at
+each price, with bids extending left and asks extending right. Each side shows
+up to 30 price levels. Kalshi asks are derived from opposite-side bids.
+Polymarket depth uses the bids and asks from each token's own book.
 The YES trade-price chart samples dense histories for display while flow totals
 use every returned execution. The table keeps the latest 20 executions.
 

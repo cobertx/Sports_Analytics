@@ -28,7 +28,7 @@ CACHE_VERSION = 4
 
 
 def validate(value):
-    if not isinstance(value, dict) or value.get('provider') not in PROVIDERS or value.get('sport') not in {'NBA','NFL','NCAAF'}:
+    if not isinstance(value, dict) or value.get('provider') not in (*PROVIDERS,'DraftKings') or value.get('sport') not in {'NBA','NFL','NCAAF'}:
         raise ValueError('Choose a supported market.')
     game = value.get('game') or {}
     if not parse_time(game.get('start')):
@@ -248,10 +248,11 @@ class MarketStructure:
 
     def read(self, value, refresh=False):
         request = validate(value); providers = {}
-        for provider in PROVIDERS:
-            if provider == 'FanDuel':
+        sources=(*PROVIDERS,'DraftKings') if request['provider']=='DraftKings' else PROVIDERS
+        for provider in sources:
+            if provider in {'FanDuel','DraftKings'}:
                 providers[provider] = dict(pending=False, data=dict(markets=[], notice=
-                    'Exact bet counts, money wagered and live betting splits are not available through the connected FanDuel odds feed. A verified FanDuel-specific splits feed is required.'))
+                    f'Exact bet counts, money wagered and live betting splits are unavailable through the connected {provider} odds feed.'))
                 continue
             key = self.key(request, provider);saved = self.saved(key)
             stamp = parse_time(saved.get('fetched_at')) if saved else None
