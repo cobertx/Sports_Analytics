@@ -60,14 +60,13 @@ class NavigationPipelineChecks(TestCase):
                 refs.append(dict(output=identity+'.max_intervals',args=[page,sport],expected=expected))
         for sport in ('NBA','NFL','NCAAF','RESEARCH','ODDS_API','PNL'):
             for page in PAGES:
-                for kind in ('team','player'):
-                    refs.append(dict(output='page-title.children',args=[page,sport,kind],expected=navigate(page,sport,kind)))
+                refs.append(dict(output='historical-page.style',args=[page,sport],expected=navigate(page,sport)))
                 for fragment,function in [('in-game-page.style',in_game_visibility),
                     ('market-summary-page.style',summary_visibility),('filtered-results-page.style',filtered_visibility)]:
                     refs.append(dict(output=fragment,args=[page,sport],expected=function(page,sport)))
             for route in ('#research','#research-player-stats-whp','#research-player-stats-comparison','#nba-games'):
                 refs.append(dict(output='research-setup.style',args=[sport,route],expected=research_visibility(sport,route)))
-            for page in ('historical','market','kalshi'):
+            for page in ('historical','market','kalshi','in-game','backtesting'):
                 refs.append(dict(output='historical-navigation.children',args=[page,sport,'player',{}],
                                  expected=sport_page_navigation(page,sport,'player',{})))
         for provider in ('Kalshi','Polymarket'):

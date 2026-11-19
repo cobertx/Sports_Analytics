@@ -106,7 +106,7 @@ class ComparisonChecks(TestCase):
                 self.assertEqual(configured[0],{'display':'block'})
                 self.assertEqual(configured[1],{'display':'none'})
                 self.assertEqual(self.cb['restore_game_route'](href),('RESEARCH','backtesting'))
-                self.assertEqual(self.cb['show_backtesting']('backtesting','RESEARCH',href,sport)[3],{'display':'none'})
+                self.assertEqual(self.cb['show_backtesting']('backtesting','RESEARCH',href,sport)[1],{'display':'none'})
         self.assertIsNone(page_route('NBA','#research-game-outcome-comparison','NBA'))
         self.assertEqual(self.cb['configure_comparison']('RESEARCH','#research-game-outcome-ppp','NBA')[0],{'display':'none'})
         with self.application.server.test_client() as client:

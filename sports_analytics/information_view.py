@@ -13,8 +13,8 @@ def link(label,url):
 
 
 def navigation():
-    return html.Details([html.Summary('Information Variable'),html.Div(id='information-navigation',className='market-provider-pages')],
-                        id='information-menu',open=True,className='information-menu',style={'display':'none'})
+    return html.Details([html.Summary('Information Variable'),html.Div(id='information-navigation',className='sidebar-subpages')],
+                        id='information-menu',open=False,className='sidebar-group',style={'display':'none'})
 
 
 def layout():
@@ -115,7 +115,7 @@ def register(app,service):
         const pages='''+json.dumps(data.PAGES)+''', supported=!!pages[sport],active=supported&&page==='information',
             found=/^#(nba|nfl)-information-([a-z]+)$/.exec(hash||''),
             kind=found?.[1]?.toUpperCase()===sport&&pages[sport]?.some(([key])=>key===found[2])?found[2]:pages[sport]?.[0]?.[0];
-        return [supported?{}:{display:'none'},'information-menu'+(active?' active':''),(pages[sport]||[]).map(([key,title])=>({
+        return [supported?{}:{display:'none'},'sidebar-group'+(active?' active':''),(pages[sport]||[]).map(([key,title])=>({
             namespace:'dash_html_components',type:'A',props:{children:title,href:'#'+sport.toLowerCase()+'-information-'+key,
                 className:'sport-page-link'+(active&&kind===key?' active':''),'aria-current':active&&kind===key?'page':'false'}}))];
     }''',Output('information-menu','style'),Output('information-menu','className'),Output('information-navigation','children'),

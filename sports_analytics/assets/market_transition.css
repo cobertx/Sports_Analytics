@@ -3,7 +3,7 @@
 .market-transition-unavailable { display: none; }
 .market-screen #sport-pages { display: grid !important; }
 .market-screen #historical-page,.market-screen #backtesting-page,.market-screen #in-game-page,
-.market-screen #odds-api-page,.market-screen #historical-navigation,.market-screen #backtesting-navigation,
+.market-screen #odds-api-page,
 .market-screen #information-page,.market-screen #pnl-page,
 .market-screen #market-page,.market-screen #kalshi-page,.market-screen #polymarket-page,.market-screen #market-summary-page,
 .market-screen #filtered-results-page { display: none !important; }

@@ -138,21 +138,18 @@ def find_model(sport,route):
     return next((model for model in available_models(sport) if route==(model.group,model.key)),None)
 
 
-def navigation(sport,location_hash):
-    route=backtesting_route(location_hash)
-    summary=bool(summary_route(location_hash))
-    return [html.A('Backtest Summary',href='#backtesting-summary',
-                   className='backtesting-model-link'+(' active' if summary else ''),
-                   **{'aria-current':'page' if summary else 'false'}),
-            html.A('Performance Summary',href=PERFORMANCE_ROUTE,
-                   className='backtesting-model-link'+(' active' if location_hash==PERFORMANCE_ROUTE else ''),
-                   **{'aria-current':'page' if location_hash==PERFORMANCE_ROUTE else 'false'}),*[html.Details([
-        html.Summary(label),
-        html.Div([html.A(model_name(model,sport),href=model.href,
-            className='backtesting-model-link'+(' active' if route==(group,model.key) else ''),
-            **{'aria-current':'page' if route==(group,model.key) else 'false'})
-            for model in available_models(sport,group)],className='backtesting-model-links'),
-    ],open=bool(route and route[0]==group),className='backtesting-nav-group') for group,label in GROUPS.items()]]
+def navigation(sport):
+    return [
+        html.A('Backtesting Overview',href='#backtesting',className='backtesting-model-link'),
+        html.A('Backtest Summary',href='#backtesting-summary',className='backtesting-model-link'),
+        html.A('Performance Summary',href=PERFORMANCE_ROUTE,className='backtesting-model-link'),
+        *[html.Details([
+            html.Summary(label),
+            html.Div([html.A(model_name(model,sport),href=model.href,className='backtesting-model-link')
+                      for model in available_models(sport,group)],className='sidebar-subpages'),
+        ],open=False,className='sidebar-group') for group,label in GROUPS.items()
+          if available_models(sport,group)],
+    ]
 
 
 def model_config(model,sport):

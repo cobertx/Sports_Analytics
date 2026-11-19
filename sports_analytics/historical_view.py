@@ -15,11 +15,11 @@ def statistics_kind(sport,requested):
     return 'player' if requested=='player' and sport in PLAYER_SPORTS else 'team'
 
 
-def navigation(sport,kind):
+def navigation(sport,kind,active=True):
     if sport not in SOURCES:return []
     pages=[('team','Team Statistics')]
     if sport in PLAYER_SPORTS:pages.append(('player','Player Statistics'))
-    selected=statistics_kind(sport,kind)
+    selected=statistics_kind(sport,kind) if active else None
     return [html.A(label,href=f'#historical-{value}',
         className='backtesting-model-link'+(' active' if value==selected else ''),
         **{'aria-current':'page' if value==selected else 'false'}) for value,label in pages]

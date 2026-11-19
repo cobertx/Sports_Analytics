@@ -4,6 +4,7 @@ import json
 import re
 
 from dash import Input, Output, State, html, no_update
+from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 from .data import SOURCES
 from .nba_markets import NBA_MARKETS
@@ -14,7 +15,8 @@ from .schedule import FANDUEL_LINKS
 from .historical_view import navigation as historical_navigation, historical_route
 from .historical_links import history_target
 from .market_navigation import remembered_market
-from .backtesting_view import backtesting_route, summary_route as backtest_summary_route, PERFORMANCE_ROUTE
+from .backtesting_view import (backtesting_route, navigation as backtesting_navigation,
+                               summary_route as backtest_summary_route, PERFORMANCE_ROUTE)
 from .information import route as information_route
 from . import kalshi_view as default_view
 from .kalshi_view import route as kalshi_route
@@ -61,26 +63,31 @@ def register_shell(app,*outputs):
     views=[];lookup={}
     for page in PAGES:
         for sport in ('NBA','NFL','NCAAF','ODDS_API','RESEARCH','PNL'):
-            for kind in ('team','player'):
-                value=navigate(page,sport,kind)
-                if value not in views:views.append(value)
-                lookup[f'{page}:{sport}:{kind}']=views.index(value)
-    app.clientside_callback('function(page,sport,kind){const views='+json.dumps(views)+',lookup='+json.dumps(lookup)+';'
-        'return views[lookup[[page,sport,kind||"team"].join(":")]??lookup[["historical",sport,"team"].join(":")]];}',
-        *outputs,Input('workspace-page','value'),Input('sport','value'),Input('entity-type','value'))
+            value=navigate(page,sport)
+            if value not in views:views.append(value)
+            lookup[f'{page}:{sport}']=views.index(value)
+    app.clientside_callback('function(page,sport){const views='+json.dumps(views)+',lookup='+json.dumps(lookup)+';'
+        'return views[lookup[page+":"+sport]??lookup["historical:"+sport]];}',
+        *outputs,Input('workspace-page','value'),Input('sport','value'))
 
 
 def register_sidebar(app,*outputs):
-    from dash._utils import to_json
-    links={f'{sport}:{kind}':sport_page_navigation('historical',sport,kind)[0]
-           for sport in ('NBA','NFL','NCAAF') for kind in ('team','player')}
+    links={f'{sport}:{kind}:{active}':sport_page_navigation(page,sport,kind)[0]
+           for sport in SOURCES for kind in ('team','player')
+           for active,page in enumerate(('market','historical'))}
     app.clientside_callback('''function(page,sport,kind,saved){
         const links='''+to_json(links)+''';
         const active=value=>'sport-page-link'+(page===value?' active':'');
         const entry=saved?.v===2?saved.entries?.['market:'+sport]:saved?.[sport], remembered=entry&&new RegExp('^#'+sport.toLowerCase()+'-game-[0-9]+$').test(entry.route||'');
-        return [links[[sport,kind].join(':')]||[],{display:page==='historical'&&['NBA','NFL','NCAAF'].includes(sport)?'grid':'none'},
-          active('historical'),active('market'),active('backtesting'),remembered?entry.route:'#'+sport.toLowerCase()+'-games'];
+        const history=['historical','in-game'].includes(page);
+        return [links[[sport,kind||'team',Number(page==='historical')].join(':')]||[],{display:['NBA','NFL','NCAAF'].includes(sport)?'block':'none'},
+          history?'active':'',active('market'),page==='backtesting'?'active':'',remembered?entry.route:'#'+sport.toLowerCase()+'-games'];
     }''',*outputs,Input('workspace-page','value'),Input('sport','value'),Input('entity-type','value'),Input('market-return','data'))
+
+    # Keep the Backtesting menu mounted when navigating within a sport.
+    menus=to_json({sport:backtesting_navigation(sport) for sport in SOURCES})
+    app.clientside_callback('function(sport){const menus='+menus+';return menus[sport]||[];}',
+                            Output('backtesting-navigation','children'),Input('sport','value'))
 
 
 def register_visibility(app,function,*outputs):
@@ -99,7 +106,7 @@ def register_research_visibility(app,*outputs):
     app.clientside_callback('''function(sport,hash){
         const research=sport==='RESEARCH',hidden={display:'none'},
             player=/^#research-player-stats-(?!comparison$)[a-z0-9-]+$/.test(hash||'');
-        return [research?hidden:{},research?hidden:{},research?hidden:{},
+        return [research?hidden:{},research?hidden:{},{display:research?'block':'none'},
             {display:research?'block':'none'},{display:research&&player?'block':'none'}];
     }''',*outputs,Input('sport','value'),Input('market-url','hash'))
 
@@ -135,7 +142,7 @@ def market_game_sport(value):
     return value[1:].split('-game-',1)[0].upper() if market_game_id(value) else None
 
 
-def navigate(page, sport,kind='team'):
+def navigate(page, sport):
     odds = sport == "ODDS_API"
     personal=sport=='PNL'
     research=sport=='RESEARCH'
@@ -148,34 +155,24 @@ def navigate(page, sport,kind='team'):
     filtered = page == 'filtered-results' and sport in SOURCES
     information=page=='information' and sport in {'NBA','NFL'}
     exchange = 'Polymarket' if polymarket else 'Kalshi' if kalshi else None
-    intro = ('P&L HISTORY','Your betting history and recorded balances.',
-             'Track actual stakes, settlements and cash transfers across your accounts.') if personal else ('STRATEGY & RESEARCH','Study the method. Test your parameters.',
-             'Explore forecasting strategies and run reproducible historical experiments across NBA, NFL and NCAAF.') if research else ("THE ODDS API", "Your monthly credits at a glance.",
-             "Monitor your account's credit usage and connection status.") if odds else (
-            'THE BACKTESTING LAB','Explore your forecasting models.',
-            f'Game Outcome and Player Stats evaluation methods for {sport}.') if backtesting else (
-            'INFORMATION VARIABLE' if information else 'MARKET DATA' if summary or filtered else 'THE '+exchange.upper()+' EXCHANGE' if exchange else "ON THE COURT / ON THE FIELD" if in_game else "THE UPCOMING SLATE" if market else "THE HISTORICAL LAB",
-            f'{sport} · Filtered Results' if filtered else f'{sport} · Information Variable' if information else f'{sport} · Market Summary' if summary else f'{sport} · {exchange} Market' if exchange else f'{sport} · Visualized In-Game Data' if in_game else "The next game starts here." if market else f'{sport} · {"Player" if kind=="player" else "Team"} Statistics',
-            'Browse saved Quick Filtering matches across upcoming games.' if filtered else 'Read official league reports, attributed news and NFL weather information.' if information else 'Compare sportsbook and exchange quotes with model forecasts.' if summary else f'Browse game contracts and current exchange quotes from {exchange}’s public API.' if exchange else 'See recorded shots and offensive plays on an interactive court or field.' if in_game else "Explore upcoming NBA, NFL, and college football matchups." if market else
-            ('Explore saved college player performances and game logs.' if sport=='NCAAF' else
-             'Explore historical player performances and career statistics.') if kind=='player' else
-            'Explore historical team performances and statistics.')
     return ({"display": "none" if market or odds or backtesting or in_game or exchange or summary or filtered or information or personal else "grid"}, {"display": "block" if market else "none"},
             f"{sport} · Upcoming games", FANDUEL_LINKS.get(sport, FANDUEL_LINKS["NBA"]), not market,
-            *intro, {"display": "none" if odds or personal else "grid"}, {"display": "block" if odds else "none"}, not odds,
+            {"display": "none" if odds or personal else "grid"}, {"display": "block" if odds else "none"}, not odds,
             {'display':'block' if backtesting else 'none'})
 
 
 def sport_page_navigation(page,sport,kind,market_return=None):
-    visible=page=='historical' and sport in SOURCES
-    active=lambda value:'sport-page-link'+(' active' if page==value else '')
-    links=historical_navigation(sport,kind)
-    if sport=='NCAAF' and kind=='player':
+    visible=sport in SOURCES
+    history=page=='historical'
+    links=historical_navigation(sport,kind,active=history)
+    if sport=='NCAAF' and kind=='player' and history:
         links=[html.A('Team Statistics',href='#historical-team',className='backtesting-model-link',**{'aria-current':'false'})]
         links.append(html.Span('Player Statistics (saved)',className='backtesting-model-link active',**{'aria-current':'page'}))
     remembered=remembered_market(market_return,sport)
-    return (links,{'display':'grid' if visible else 'none'},
-        active('historical'),active('market'),active('backtesting'),remembered['route'] if remembered else f'#{sport.lower()}-games')
+    return (links,{'display':'block' if visible else 'none'},
+        'active' if page in {'historical','in-game'} else '',
+        'sport-page-link'+(' active' if page=='market' else ''),
+        'active' if page=='backtesting' else '',remembered['route'] if remembered else f'#{sport.lower()}-games')
 
 
 def restore_game_route(location_hash,sport=None,page=None):
@@ -240,7 +237,8 @@ def forecast_methods(location_hash, previous):
 def research_visibility(sport,location_hash):
     research=sport=='RESEARCH';hidden={'display':'none'}
     route=research_view.route(location_hash)
-    return (*(hidden if research else {} for _ in range(3)),{'display':'block' if research else 'none'},
+    return (hidden if research else {},hidden if research else {},
+            {'display':'block' if research else 'none'},{'display':'block' if research else 'none'},
             {'display':'block' if research and route and route[0]=='player-stats' and route[1]!='comparison' else 'none'})
 
 
@@ -260,7 +258,7 @@ def summary_visibility(page,sport):
     package={'NBA':NBA_MARKETS,'NFL':NFL_MARKETS,'NCAAF':NCAAF_MARKETS}.get(sport,{})
     credits=len(package)+(len(draftkings_markets(package)) if package else 0)
     return ({'display':'grid' if active else 'none'},{} if sport in SOURCES else {'display':'none'},
-            'market-data-navigation'+(' active' if page in {'market','kalshi','polymarket','market-summary','filtered-results'} else ''),
+            'sidebar-group'+(' active' if page in {'market','kalshi','polymarket','market-summary','filtered-results'} else ''),
             f'#{sport.lower()}-market-summary','sport-page-link'+(' active' if active else ''),
             f'Up to {credits} Odds API credits for FanDuel and DraftKings combined. Kalshi and Polymarket use public data.')
 

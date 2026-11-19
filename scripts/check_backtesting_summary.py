@@ -70,10 +70,10 @@ class BacktestSummaryChecks(TestCase):
     def test_summary_navigation_routes_and_controls_for_each_sport(self):
         self.assertEqual(self.cb['restore_game_route']('#backtesting-summary'),(no_update,'backtesting'))
         for sport in ['NBA','NFL','NCAAF']:
-            link=navigation(sport,self.href(sport))[0]
-            self.assertEqual(link.children,'Backtest Summary');self.assertIn('active',link.className)
+            link=next(link for link in navigation(sport) if getattr(link,'href',None)=='#backtesting-summary')
+            self.assertEqual(link.children,'Backtest Summary')
             self.assertEqual(self.cb['restore_game_route'](self.href(sport)),(sport,'backtesting'))
-            _,_,content,style=self.cb['show_backtesting']('backtesting',sport,self.href(sport))
+            content,style=self.cb['show_backtesting']('backtesting',sport,self.href(sport))
             self.assertEqual(content,[]);self.assertEqual(style,{'display':'none'})
             self.assertIsNone(self.cb['configure_backtest'](sport,self.href(sport),'backtesting',None)[0])
         for href in ['#backtesting-summary-nhl-game-outcome-ppp-'+'a'*64,

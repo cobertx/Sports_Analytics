@@ -113,7 +113,7 @@ def route(value):
     return (match[1],match[2]) if match else None
 
 
-def navigation(sport,location_hash):
+def navigation(sport=None,location_hash=None):
     selected=route(location_hash)
     return [html.Details([html.Summary(label),html.Div([
         html.A(model.label,href=f'#research-{group}-{model.key}',
@@ -122,8 +122,8 @@ def navigation(sport,location_hash):
         for model in CATALOG if model.group==group]+[
         html.A('Methodology Comparison',href=f'#research-{group}-comparison',
             className='backtesting-model-link'+(' active' if selected==(group,'comparison') else ''),
-            **{'aria-current':'page' if selected==(group,'comparison') else 'false'})],className='backtesting-model-links')],
-        open=bool(selected and selected[0]==group),className='backtesting-nav-group') for group,label in GROUPS.items()]
+            **{'aria-current':'page' if selected==(group,'comparison') else 'false'})],className='sidebar-subpages')],
+        open=False,className='sidebar-group') for group,label in GROUPS.items()]
 
 
 def page(sport,location_hash):

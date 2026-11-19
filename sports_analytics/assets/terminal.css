@@ -4,10 +4,8 @@
 .app-shell .brand-mark { width: 36px; height: 36px; border-radius: var(--radius); font-size: 17px; }
 .app-shell .brand-name { font-size: 15px; font-weight: 650; letter-spacing: -.2px; }
 .app-shell > main { max-width: 1600px; padding: var(--space-6) 3% 20px; }
-.app-shell .intro { margin-bottom: var(--space-4); gap: var(--space-4); }
 .app-shell h1 { font-size: 26px; line-height: 1.25; margin: var(--space-1) 0 var(--space-2); letter-spacing: -.5px; }
 .app-shell h2 { line-height: 1.4; }
-.app-shell .intro p { margin: 0; max-width: 85ch; font-size: 13px; }
 .app-shell .eyebrow { font-size: 12px; letter-spacing: .07em; }
 .app-shell .sport-tabs { margin-bottom: 20px; overflow-x: auto; }
 .app-shell .sport-tabs > div { flex-wrap: nowrap; min-width: max-content; }
@@ -162,9 +160,8 @@
     display: flex !important; flex-wrap: wrap; position: static; gap: var(--space-2);
   }
   .app-shell .page-toolbar > * { grid-row: auto !important; grid-column: auto !important; min-width: 0; flex: 1 1 145px; }
-  .app-shell .page-toolbar > :is(#historical-navigation,#backtesting-navigation) { flex-basis: 100%; }
+  .app-shell .page-toolbar > #research-navigation { flex-basis: 100%; }
   .app-shell .page-toolbar :is(.sport-page-link,summary) { text-align: left; justify-content: flex-start; }
-  .app-shell .market-provider-pages { margin-left: var(--space-2); padding-left: var(--space-2); border-left: 1px solid var(--line); }
   .app-shell .sport-tab { min-height: 44px; padding: var(--space-3) !important; }
   .app-shell button:not(.game-card-hit):not(.structure-backdrop),
   .app-shell :is(.sport-page-link,.backtesting-model-link,.market-history-link,summary,.market-link) { min-height: 44px; }

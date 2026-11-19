@@ -107,17 +107,25 @@
   function syncNavigation() {
     const api = window.dash_clientside?.market_transition;
     if (!api) return;
-    const destination = api.destination(location.hash);
+    const hash = location.hash;
+    const destination = api.destination(hash);
     if (!destination) { navigationPending = false; return; }
-    const primary = {historical: 'historical-page-link', market: 'market-page-link', kalshi: 'kalshi-page-link',
+    const primary = {market: 'market-page-link', kalshi: 'kalshi-page-link',
       polymarket: 'polymarket-page-link', 'market-summary': 'market-summary-page-link',
-      'filtered-results': 'filtered-results-page-link', backtesting: 'backtesting-page-link', 'in-game': 'in-game-page-link'};
+      'filtered-results': 'filtered-results-page-link', 'in-game': 'in-game-page-link'};
     const primaryIds = new Set([...Object.values(primary),'draftkings-page-link']);
-    const activePage = api.route?.(location.hash)?.provider==='draftkings'?'draftkings-page-link':primary[destination.page];
+    const activePage = api.route?.(hash)?.provider==='draftkings'?'draftkings-page-link':primary[destination.page];
+    let activeRoute = hash;
+    if (destination.page === 'historical') {
+      const route = hash.split('?')[0];
+      activeRoute = route === '#historical' ? '#historical-team' : route;
+    } else if (destination.page === 'backtesting' && hash.startsWith('#backtesting-summary-')) {
+      activeRoute = '#backtesting-summary';
+    }
     const links = document.querySelectorAll('.page-toolbar a[href]');
     navigationPending = !links.length;
     for (const link of links) {
-      const active = primaryIds.has(link.id) ? link.id === activePage : link.getAttribute('href') === location.hash;
+      const active = primaryIds.has(link.id) ? link.id === activePage : link.getAttribute('href') === activeRoute;
       const value = active ? 'page' : 'false';
       if (link.getAttribute('aria-current') !== value) link.setAttribute('aria-current', value);
     }
@@ -208,7 +216,8 @@
     const root=pending&&document.getElementById(roots[routeFor(pending.route)?.provider]);
     const relevant=!records.length||records.some(record=>['app-shell','historical-results','career-panel','market-page','kalshi-page','polymarket-page'].includes(record.target.id)||record.target.closest?.('.page-toolbar')||
       !record.target.closest?.('.dash-graph,.js-plotly-plot')&&root?.contains?.(record.target));
-    if ((pending||historyPending||pendingFocus||navigationPending)&&relevant) schedule();
+    const sidebarLinksChanged = records.some(record => record.type === 'childList' && record.target.closest?.('.page-toolbar'));
+    if (sidebarLinksChanged || ((pending||historyPending||pendingFocus||navigationPending)&&relevant)) schedule();
   }).observe(document.documentElement, {childList: true, subtree: true, attributes: true,
     attributeFilter: ['style', 'class', 'href', 'data-dash-is-loading']});
   const stop = () => { pending = null; historyPending = null; pendingFocus = null; restoredElement = null; };

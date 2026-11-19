@@ -1,7 +1,3 @@
-.market-data-navigation > summary { cursor: pointer; padding: 10px 12px; margin-bottom: 4px; color: var(--muted); border-radius: 6px; }
-.market-data-navigation.active > summary,.market-screen .market-data-navigation > summary { background: var(--selected); color: var(--accent); }
-.market-provider-pages { margin: 2px 0 7px 12px; padding-left: 8px; border-left: 1px solid var(--line); }
-.market-provider-pages .sport-page-link { font-size: 12px; padding: 9px 6px; }
 .market-summary-page { gap: 20px; min-width: 0; grid-template-columns:minmax(0,1fr); }
 .market-summary-page > * { min-width:0; }
 .summary-heading { padding: 0 20px 12px; }
@@ -97,8 +93,4 @@
 @media (max-width:700px) {
   .summary-table thead tr:first-child > th:first-child { width:150px; }
   .summary-table .summary-provider-head { text-align:left; padding-left:20px; }
-  #market-data-navigation { grid-row: 1; grid-column: 2; min-width: 0; }
-  #market-data-navigation > summary { text-align: center; font-size: 12px; }
-  #market-data-navigation .sport-page-link { display: flex; }
-  .market-provider-pages { margin-left: 0; padding-left: 0; border: 0; }
 }

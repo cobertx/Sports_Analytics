@@ -22,7 +22,7 @@ from .presentation import chart_style, table_cell, table_filter, table_header
 from .data import DataSourceError, PLAYER_SPORTS, Query, SOURCES
 from .career import CareerService, career_statistic
 from .forecast import recorded_games, rolling_baseline
-from .backtesting_view import (backtesting_route,find_model,navigation as backtesting_navigation,
+from .backtesting_view import (backtesting_route,find_model,
                                page as backtesting_page,summary_route as backtest_summary_route)
 from .backtesting_summary import layout as backtest_summary_layout,register as register_backtest_summary
 from .performance_summary import layout as performance_layout,register as register_performance
@@ -82,7 +82,8 @@ from .market_view import _market_probability,selection_text
 from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, NCAAF_LOGO_DIRECTORY, NCAAF_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
 from .market_navigation import remembered_market
 from .history_scope import analysis_scope, career_scope
-from .navigation import register_research_visibility,PAGES,scoped_callback,register_shell,register_sidebar,register as register_navigation
+from .navigation import (register_research_visibility,PAGES,scoped_callback,register_shell,register_sidebar,
+                         register as register_navigation)
 from .mispricing import (FILTER_CATEGORY, criteria_values, filter_context, rank_markets, results as mispricing_results,
                          quick_controls, quick_progress, selected_methods, run_forecasts, consensus_rankings, ALL_PROBABILITIES)
 from . import quick_methods
@@ -456,9 +457,6 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             html.Span("Sports Analytics", className="brand-name"),
         ]),
         html.Main([
-            html.Div([html.Div([html.Div("THE HISTORICAL LAB", id="page-eyebrow", className="eyebrow accent"),
-                               html.H1("From past performance to the next game.", id="page-title",tabIndex=-1),
-                               html.P("Explore team statistics across three leagues and player statistics for NBA and NFL.", id="page-description")])], className="intro"),
             dcc.Tabs(id="sport", value="NBA", mobile_breakpoint=0, children=[
                 dcc.Tab(label="NBA · Basketball", value="NBA", className="sport-tab", selected_className="sport-tab selected"),
                 dcc.Tab(label="NFL · Pro Football", value="NFL", className="sport-tab", selected_className="sport-tab selected"),
@@ -469,8 +467,14 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             ], className="sport-tabs"),
             html.Div([
                 html.Nav([
-                    html.A('Historical Data',id='historical-page-link',href='#historical-team',className='sport-page-link active'),
-                    html.Div(id='historical-navigation',className='historical-navigation backtesting-model-links'),
+                    html.Details([
+                        html.Summary('Historical Data',id='historical-page-link',className='active'),
+                        html.Div([
+                            html.Div(id='historical-navigation'),
+                            html.A('Visualized In-Game Data',id='in-game-page-link',href='#nba-in-game-data',
+                                   className='sport-page-link'),
+                        ],className='sidebar-subpages'),
+                    ],id='historical-menu',open=False,className='sidebar-group'),
                     html.Details([
                         html.Summary('Market Data'),
                         html.Div([
@@ -480,12 +484,13 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                             html.A('Polymarket',id='polymarket-page-link',href='#nba-polymarket-market',className='sport-page-link'),
                             html.A('Market Summary',id='market-summary-page-link',href='#nba-market-summary',className='sport-page-link'),
                             html.A('Filtered Results',id='filtered-results-page-link',href='#nba-filtered-results',className='sport-page-link'),
-                        ],className='market-provider-pages'),
-                    ],id='market-data-navigation',open=True,className='market-data-navigation'),
-                    html.A([html.Span('↺',className='navigation-icon',**{'aria-hidden':'true'}),'Backtesting'],
-                           id='backtesting-page-link',href='#backtesting',className='sport-page-link'),
-                    html.Div(id='backtesting-navigation',className='backtesting-navigation',style={'display':'none'}),
-                    html.A('Visualized In-Game Data', id='in-game-page-link', href='#nba-in-game-data', className='sport-page-link'),
+                        ],className='sidebar-subpages'),
+                    ],id='market-data-navigation',open=False,className='sidebar-group'),
+                    html.Details([
+                        html.Summary('Backtesting',id='backtesting-page-link'),
+                        html.Div(id='backtesting-navigation',className='sidebar-subpages'),
+                    ],id='backtesting-menu',open=False,className='sidebar-group'),
+                    html.Div(research_view.navigation(),id='research-navigation',style={'display':'none'}),
                     information_navigation(),
                 ], className="page-toolbar", **{"aria-label": "Sport pages"}),
                 html.Div([
@@ -779,8 +784,6 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
 
     register_shell(app,Output("historical-page", "style"), Output("market-page", "style"),
                   Output("market-title", "children"), Output("fanduel-link", "href"), Output("market-timer", "disabled"),
-                  Output("page-eyebrow", "children"), Output("page-title", "children"),
-                  Output("page-description", "children"),
                   Output("sport-pages", "style"), Output("odds-api-page", "style"), Output("odds-timer", "disabled"),
                   Output('backtesting-page','style'))
 
@@ -801,23 +804,20 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),
         Input('market-detail-context','data'),Input('kalshi-context','data'),Input('polymarket-context','data'),State('market-return','data'))
 
-    @scoped_callback(app,'backtesting',Output('backtesting-navigation','children'),Output('backtesting-navigation','style'),
-                  Output('backtesting-content','children'),Output('backtest-evaluation-panel','style'),
+    @scoped_callback(app,'backtesting',Output('backtesting-content','children'),Output('backtest-evaluation-panel','style'),
                   Input('workspace-page','value'),Input('sport','value'),
                   Input('market-url','hash'),Input('research-sport','value'))
     def show_backtesting(page,sport,location_hash,research_sport='NBA'):
         if sport=='RESEARCH':
             model=find_model(research_sport,research_view.route(location_hash))
-            return (research_view.navigation(research_sport,location_hash),{'display':'block','margin':0,'padding':0,'border':0},
-                research_view.page(research_sport,location_hash),{'display':'block' if model else 'none'})
+            return research_view.page(research_sport,location_hash),{'display':'block' if model else 'none'}
         if page!='backtesting' or sport not in SOURCES:
-            return no_update,{'display':'none'},no_update,{'display':'none'}
+            return no_update,{'display':'none'}
         model=find_model(sport,backtesting_route(location_hash))
-        return (backtesting_navigation(sport,location_hash),{'display':'block'},backtesting_page(sport,location_hash),
-                {'display':'block' if model else 'none'})
+        return backtesting_page(sport,location_hash),{'display':'block' if model else 'none'}
 
-    register_research_visibility(app,Output('historical-page-link','style'),Output('market-page-link','style'),
-                  Output('backtesting-page-link','style'),Output('research-setup','style'),Output('research-team-field','style'))
+    register_research_visibility(app,Output('historical-menu','style'),Output('backtesting-menu','style'),
+                  Output('research-navigation','style'),Output('research-setup','style'),Output('research-team-field','style'))
 
     @app.callback(Output('research-parameters','children'),Output('research-parameter-note','children'),
                   Output('research-editor-context','data'),Input('backtest-context','data'),Input('research-reset','n_clicks'),

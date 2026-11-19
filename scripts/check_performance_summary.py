@@ -439,9 +439,9 @@ class PerformanceSummaryChecks(TestCase):
         self.assertEqual(callbacks['restore_game_route'](PERFORMANCE_ROUTE),(no_update,'backtesting'))
         for sport in ['NBA','NFL','NCAAF']:
             self.assertEqual(page(sport,PERFORMANCE_ROUTE),[])
-            link=next(c for c in navigation(sport,PERFORMANCE_ROUTE) if getattr(c,'href',None)==PERFORMANCE_ROUTE)
-            self.assertIn('active',link.className)
-            self.assertEqual(callbacks['show_backtesting']('backtesting',sport,PERFORMANCE_ROUTE)[3],{'display':'none'})
+            link=next(c for c in navigation(sport) if getattr(c,'href',None)==PERFORMANCE_ROUTE)
+            self.assertEqual(link.children,'Performance Summary')
+            self.assertEqual(callbacks['show_backtesting']('backtesting',sport,PERFORMANCE_ROUTE)[1],{'display':'none'})
             for group in GROUPS:
                 context=dict(sport=sport,group=group)
                 self.assertEqual(callbacks['performance_context']('backtesting',sport,PERFORMANCE_ROUTE,group)[1],context)

@@ -83,8 +83,10 @@ function checkDeferredNavigation(source,transitionSource) {
   const nodes=Object.fromEntries(['dashboard-main','market-game-detail','market-game-header',
     'historical-performance-panel','market-section-test'].map(id=>[id,element(id)]));
   nodes['market-section-test'].tagName='DETAILS';
-  const links=['historical-page-link','market-page-link','kalshi-page-link','backtesting-page-link'].map(id=>({
-    id,attrs:{href:'#unused'},getAttribute(key){return this.attrs[key];},setAttribute(key,value){this.attrs[key]=value;}}));
+  const links=[
+    ['', '#historical-player'], ['market-page-link', '#nfl-games'], ['kalshi-page-link', '#nfl-kalshi-market'],
+    ['', '#backtesting-summary'],
+  ].map(([id,href])=>({id,attrs:{href},getAttribute(key){return this.attrs[key];},setAttribute(key,value){this.attrs[key]=value;}}));
   const document={documentElement:{},getElementById:id=>nodes[id],querySelectorAll:()=>links,
     addEventListener:(name,handler)=>{documentEvents[name]=handler;}};
   const window={location,dash_clientside:{no_update:{},set_props:(id,props)=>writes.push({id,props})},
@@ -134,6 +136,13 @@ function checkDeferredNavigation(source,transitionSource) {
   change('#historical-player?sport=NFL&name=Player+D');
   change('#nfl-kalshi-market');flush();
   check(links[2].attrs['aria-current']==='page'&&links[0].attrs['aria-current']==='false','Rapid forward navigation leaves only the latest page selected');
+  change('#backtesting-summary-nfl-game-outcome-elo-'+'a'.repeat(64));flush();
+  check(links[3].attrs['aria-current']==='page','A saved backtest marks the Backtest Summary link active');
+  const overview={id:'',attrs:{href:'#backtesting'},getAttribute(key){return this.attrs[key];},setAttribute(key,value){this.attrs[key]=value;}};
+  change('#backtesting');flush();
+  links.push(overview);
+  observer([{type:'childList',target:{closest:selector=>selector==='.page-toolbar'}}]);flush();
+  check(overview.attrs['aria-current']==='page','Links added after navigation receive the active state');
   return checks;
 }
 

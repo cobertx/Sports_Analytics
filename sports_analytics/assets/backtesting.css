@@ -1,16 +1,6 @@
-.navigation-icon { display: inline-block; margin-right: 7px; font-size: 17px; line-height: 1; vertical-align: -1px; }
-.backtesting-navigation { margin: 2px 0 0 12px; padding-left: 9px; border-left: 1px solid var(--line); }
-.backtesting-nav-group { margin-bottom: 5px; }
-.backtesting-nav-group > summary { position: relative; list-style: none; padding: 10px 15px 10px 5px; color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; }
-.backtesting-nav-group > summary::-webkit-details-marker { display: none; }
-.backtesting-nav-group > summary::after { content: '›'; position: absolute; right: 3px; top: 6px; font-size: 20px; color: var(--muted); transition: transform .15s; }
-.backtesting-nav-group[open] > summary::after { transform: rotate(90deg); }
-.backtesting-nav-group > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-.backtesting-nav-group > summary:hover { color: var(--accent); }
-.backtesting-model-links { display: grid; gap: 3px; padding: 0 0 7px 6px; }
 .backtesting-model-link { display: block; padding: 7px 8px; border-radius: 5px; font-size: 11px; line-height: 1.5; text-decoration: none; color: var(--muted); overflow-wrap: anywhere; }
 .backtesting-model-link:hover { background: #172b3b; color: var(--text); }
-.backtesting-model-link.active { background: var(--selected); color: var(--accent); font-weight: 600; }
+.backtesting-model-link.active,.backtesting-model-link[aria-current='page'] { background: var(--selected); color: var(--accent); font-weight: 600; }
 .backtesting-page { min-width: 0; }
 .backtest-summary-list { padding: 22px; margin-bottom: 22px; }
 .backtest-summary-list a { color: var(--accent); }
@@ -131,15 +121,11 @@
 @media (max-width: 420px) { .backtest-kpis { grid-template-columns: minmax(0,1fr); } }
 @media (max-width: 700px) {
   .backtesting-info-grid { grid-template-columns: 1fr; }
-  .backtesting-navigation { margin: 10px 0 12px; padding-left: 0; border-left: 0; display: grid; }
-  .backtesting-nav-group > summary { padding-left: 12px; }
-  .backtesting-model-links { padding-left: 20px; }
 }
 @media (max-width: 400px) {
   .backtesting-model-grid { grid-template-columns: minmax(0, 1fr); }
   .backtesting-heading { padding: 20px; }
   .backtesting-heading h2 { font-size: 21px; }
-  .navigation-icon { margin-right: 4px; }
 }
 .performance-summary-page .comparison-setup { padding: 22px; }
 .performance-summary-page .comparison-summary { margin-top: 18px; }
