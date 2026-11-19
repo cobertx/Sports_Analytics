@@ -19,6 +19,7 @@ from models.Player_Stats.Usage_Opportunity.nba_model import simulate_nba
 from models.Player_Stats.Usage_Opportunity.nfl_model import simulate_nfl
 from .config import MODEL_VERSION,MatchupConfig
 from .historical_data import MatchupHistoryRepository,eligible,match_player,identity_name
+from models.Player_Stats.Weighted_Historical_Performance.prediction_service import PlayerHistoryIndex
 from .features import feature_rows
 from .schedule_strength import ScheduleAdjustedDefense
 from .opponent_adjustment import MatchupContext
@@ -125,7 +126,7 @@ class OpponentAdjustedMarketService:
                 save_json(fit_path,dict(identity=fit_identity,records=model.records,
                                          historical=[[*key,value] for key,value in model.historical.items()]),self.repository.root)
         result,matched,failed_players=MatchupMarketForecast(),{},{}
-        players['_whp_name']=players.entity_name.map(identity_name)
+        player_index=PlayerHistoryIndex(players)
         for row in snapshot['rows']:
             if not row['market_key'].startswith('player_'):
                 continue
@@ -139,7 +140,7 @@ class OpponentAdjustedMarketService:
                 result.errors[key]=failed_players[row['subject']]
                 continue
             try:
-                history=match_player(players,snapshot,row['subject'],cutoff)
+                history=match_player(players,snapshot,row['subject'],cutoff,index=player_index)
                 club=str(history.iloc[-1].team)
                 matched[row['subject']]=dict(team=club,history=history[history.team.eq(club)])
             except ValueError as exc:

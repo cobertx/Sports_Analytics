@@ -172,7 +172,24 @@ class HistoryChecks(TestCase):
         with patch.object(self.backend,'start',return_value='waiting') as start:
             manifest=manager.ensure(context,request,'GSW')
         self.assertEqual(manifest['entries']['elo']['state'],'running')
-        self.assertEqual(start.call_count,3)
+        self.assertEqual({call.kwargs['key'] for call in start.call_args_list},{'ppp','epa','elo','pace','aode','ff'})
+
+    def test_four_factors_enriches_an_older_pace_archive_from_saved_boxes(self):
+        from sports_analytics.nba_model_data import FACTOR_INPUTS
+
+        raw = boxes(2025).assign(min=240, dreb=33, fg3m=8, ftm=10)
+        raw["fgm"] = (raw.pts-18)//2
+        self.fetch.side_effect = None
+        self.fetch.return_value = raw
+        self.history.box_season(2025, ['regular'], require_minutes=True)
+        path = self.history.pace.directory/'team_games_2025_regular.csv'
+        pd.read_csv(path, dtype={"game_id":str}).drop(columns=list(FACTOR_INPUTS)).to_csv(path,index=False)
+        self.fetch.reset_mock()
+        self.history.box_season(2025, ['regular'], require_factors=True)
+        self.fetch.assert_not_called()
+        frame,_ = self.backend.game_inputs('NBA','ff')
+        self.assertTrue(FACTOR_INPUTS <= set(frame))
+        self.assertTrue(frame[list(FACTOR_INPUTS)].notna().all().all())
 
 
 if __name__=='__main__':main()

@@ -666,6 +666,8 @@ Copy-Item .env.example .env
 
 Open **http://127.0.0.1:8050**. Use `--port 8051` to change the port, or `--debug` for development. The default server listens locally. Stop it with Ctrl+C.
 
+On Windows, the dashboard reserves its listening address and port. If the address is already in use, the new launch prints a message and exits. Use the running dashboard or select a different port. Debug mode enables development tools with a single server process.
+
 With the virtual environment activated, you can also run `python index.py`. The original `python app.py` entry point remains available.
 
 Running `index.py` directly also selects this project's `.venv` automatically when it exists, so an IDE Run button using system Python can still launch the app. VS Code's default interpreter is configured to use `.venv`. Install the requirements with the setup command above when creating a new environment.

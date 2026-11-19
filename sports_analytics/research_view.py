@@ -23,6 +23,24 @@ METHODS={
         'Earlier held-forward games fit a regularized logistic correction to Elo win probabilities and determine the blend between Elo-implied and power-model margins.',
         'Reconcile the blended margin with the scoring model’s total. Historical paired residuals determine bias corrections, covariance, and spread/total probabilities.'
     ],
+    'pace':[
+        'Estimate paired possessions from both team box scores and scale by observed elapsed minutes to a 48-minute pace.',
+        'Fit recency-weighted pace effects and opponent-adjusted offense and defense scoring rates. The score fit estimates a separate home advantage.',
+        'Estimate pace errors and paired regulation scoring residuals using forecasts trained before each held-out game.',
+        'Draw one shared pace and correlated scoring shocks per path. Simulate five-minute overtime when tied, then use the same integer scores for all full-game markets.'
+    ],
+    'aode':[
+        'Express scoring in points per 100 possessions and weight earlier results by possession exposure and recency.',
+        'Fit an additive ridge model of team offense, opponent defensive suppression and a symmetric home-court effect. Neutral games omit the venue term.',
+        'Use the shared PACE estimator for regulation possessions. Calibrate correlated scoring-rate errors on earlier held-forward regulation games.',
+        'Simulate both scores jointly and resolve ties through overtime. Price all full-game lines from those same integer scores.'
+    ],
+    'ff':[
+        'Fit shooting, turnover, rebound and free-throw rates using exposure-weighted, recency-weighted offense and opposing defense effects.',
+        'Estimate free-throw accuracy and rebound opportunities per field-goal attempt. Use the box-score possession identity to convert the factors into scoring efficiency.',
+        'Use shared PACE possessions and sample paired factor and pace errors from earlier held-forward regulation games.',
+        'Price the full-game markets from the same integer scores, including simulated overtime and integer-line pushes.'
+    ],
     'whp':[
         'Build a player-specific chronological series for the selected statistic. Retain observed zero production; exclude missing measurements and any result not available at the forecast cutoff.',
         'Take the configured recent appearance window and assign exponential, calendar, linear or uniform weights. Disjoint older appearances can provide an empirical player prior, with shrinkage controlled by effective sample size and prior strength.',
@@ -59,6 +77,9 @@ HELP={
     'prior_season_weight':'Weight multiplier per older season, on top of recency. Default 0.2 gives an otherwise equal prior-season game one fifth of the current-season weight; two seasons ago gets 0.04. Set 1 to disable the season discount.',
     'half_life_days':'Calendar days required for an observation’s recency weight to halve.',
     'ridge_penalty':'Strength of regularization on fitted team effects.',
+    'pace_ridge':'Regularization on each team’s contribution to shared matchup pace.',
+    'efficiency_ridge':'Regularization on team and venue effects in the scoring-rate or factor-rate regressions.',
+    'venue_ridge':'Regularization on the fitted home-versus-away efficiency difference.',
     'minimum_training_games':'Minimum distinct earlier games required for a ratings fit.',
     'minimum_team_games':'Minimum earlier appearances required for each matchup team.',
     'minimum_calibration_games':'Minimum valid held-forward games needed for score calibration.',
@@ -119,7 +140,7 @@ def navigation(sport=None,location_hash=None):
         html.A(model.label,href=f'#research-{group}-{model.key}',
             className='backtesting-model-link'+(' active' if selected==(group,model.key) else ''),
             **{'aria-current':'page' if selected==(group,model.key) else 'false'})
-        for model in CATALOG if model.group==group]+[
+        for model in CATALOG if model.group==group and (sport is None or sport in model.sports)]+[
         html.A('Methodology Comparison',href=f'#research-{group}-comparison',
             className='backtesting-model-link'+(' active' if selected==(group,'comparison') else ''),
             **{'aria-current':'page' if selected==(group,'comparison') else 'false'})],className='sidebar-subpages')],

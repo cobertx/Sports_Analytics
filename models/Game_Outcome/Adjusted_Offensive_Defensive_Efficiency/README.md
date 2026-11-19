@@ -1,0 +1,7 @@
+# NBA Adjusted Offensive & Defensive Efficiency (AODE)
+
+AODE fits offensive production and defensive suppression simultaneously. Each completed game supplies two scoring rates in points per 100 possessions. The additive ridge model estimates scoring-team offense, opposing-team defense, and a symmetric home-court effect. It anchors ratings to the possession- and recency-weighted league rate. Older seasons receive the app's prior-season discount. Neutral games omit the venue term.
+
+AODE uses the PACE model's separate shared possession estimator and the same duration-aware historical inputs. Its scoring model fits additive rate effects. Earlier held-forward regulation games calibrate the bias and paired covariance of scoring-rate errors. Simulations draw a shared possession count and correlated team scoring rates. Tied scores receive five-minute overtime periods using the same sampled rates and time-scaled uncertainty. Any draw still tied after 20 periods receives a seeded one-point tiebreak.
+
+Each simulated score pair supplies moneyline, spread, game-total and team-total probabilities, with exact push mass and empirical intervals. The app archives the ratings, pace, cutoff, input fingerprint and simulation parameters. Confirmed availability can adjust the score rates through the app's existing historical availability overlay. The base fit excludes rest, travel and uncertain lineup scenarios.

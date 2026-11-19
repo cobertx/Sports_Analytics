@@ -60,7 +60,7 @@ def register(app,quotes,game_forecast,player_forecast,source_revision):
                 raise ValueError('Select a game and wait for its quotes before running Quick Filtering.')
             if not any((r.get('snapshot') or {}).get('rows') for r in bundle['providers'].values()):
                 raise ValueError('No source quotes are available yet. Load a source before running Quick Filtering.')
-            methods,players=selected_methods(methods,players);criteria=criteria_values(probability,edge)
+            methods,players=selected_methods(methods,players,sport);criteria=criteria_values(probability,edge)
             source=revision(sport,methods,players)
             key=request_key(['summary-quick-v1',bundle['id'],methods,players,criteria,POLICY_VERSION,availability_revision(sport),source,token])
             def compute(report):

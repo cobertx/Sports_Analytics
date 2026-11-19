@@ -18,7 +18,7 @@ from .config import MODEL_VERSION, UsageOpportunityConfig
 from models.replay import input_digest
 from .distributions import UsageOpportunityForecast
 from .errors import UsageOpportunityError
-from .historical_data import UsageHistoryRepository, eligible, match_player, identity_name
+from .historical_data import UsageHistoryRepository, eligible, match_player, identity_name, PlayerHistoryIndex
 from .market_comparison import compare_price
 from .markets import market_spec, prop_key, quote_index
 from .nba_model import simulate_nba
@@ -85,7 +85,9 @@ class UsageOpportunityMarketService:
         # Retain all clubs while resolving current identity. Otherwise filtering
         # first could erase a player's later trade away from this matchup.
         subjects = {identity_name(row['subject']) for row in snapshot['rows'] if row['market_key'].startswith('player_')}
-        players = players[players.entity_name.map(identity_name).isin(subjects)].copy()
+        player_names = players.entity_name.map(identity_name)
+        subject_mask = player_names.isin(subjects)
+        players = players[subject_mask].copy()
         if teams.empty or players.empty:
             raise DataSourceError('No saved matchup team/player inputs before the snapshot cutoff. Run Usage_Opportunity --prepare.')
         signature = sha256(b''.join(path.read_bytes() for path in sorted(Path(__file__).parent.glob('*.py')))).hexdigest()
@@ -109,7 +111,8 @@ class UsageOpportunityMarketService:
             except (KeyError, ValueError, TypeError):
                 pass
         result, matched, failed_players = UsageMarketForecast(), {}, {}
-        players['_whp_name'] = players.entity_name.map(identity_name)
+        players['_whp_name'] = player_names[subject_mask].to_numpy()
+        player_index = PlayerHistoryIndex(players)
         for row in snapshot['rows']:
             if not row['market_key'].startswith('player_'):
                 continue
@@ -124,7 +127,7 @@ class UsageOpportunityMarketService:
                 result.errors[key] = failed_players[row['subject']]
                 continue
             try:
-                history = match_player(players, snapshot, row['subject'], cutoff)
+                history = match_player(players, snapshot, row['subject'], cutoff,index=player_index)
                 latest = history.iloc[-1]
                 # Only current-club appearances enter opportunity ratios.
                 matched[row['subject']] = dict(team=latest.team, history=history[history.team.eq(latest.team)])

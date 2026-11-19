@@ -9,7 +9,7 @@ from dash.exceptions import PreventUpdate
 from .data import DataSourceError
 from .display_time import format_eastern
 from .kalshi import CATEGORIES
-from .kalshi_analysis import FILTER,GAME_METHODS,PLAYER_METHODS,identity,quick_scope,model_matches,definition,calculate,decorate,rank,quick_calculate,prompt_targets
+from .kalshi_analysis import FILTER,PLAYER_METHODS,identity,quick_scope,model_matches,definition,calculate,decorate,rank,quick_calculate,prompt_targets
 from . import quick_methods
 from .market_view import probability_text
 from .mispricing import criteria_values, selected_methods, method_details, quick_progress
@@ -73,6 +73,7 @@ def filter_snapshot(service,game,selected,pull=False,*,current=False):
 
 def register(app,service,game_forecast,player_forecast,filtered_results=None,*,jobs=None,tasks=None,source_revision=None):
     jobs=jobs or FilterJobs()
+    quick_methods.register_controls(app,'kalshi',single='kalshi-game-method')
     prompt_fields=dict(type='kalshi-quick-prompt-method',scope=ALL,prompt=ALL)
 
     @scoped_callback(app,'kalshi',Output('kalshi-quick-prompts','children'),Input('kalshi-quick-prompts-panel','open'),
@@ -106,7 +107,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
         if not snapshot or (snapshot['sport'],snapshot['game_id'])!=(game['sport'],game['id']):raise PreventUpdate
         if not snapshot['rows'] and snapshot.get('updating'):raise PreventUpdate
         if category!=FILTER and snapshot['category']!=category:raise PreventUpdate
-        if method not in GAME_METHODS or player_method not in PLAYER_METHODS:raise PreventUpdate
+        if method not in quick_methods.game_methods(game['sport']) or player_method not in PLAYER_METHODS:raise PreventUpdate
         before=previous
         context=identity(game,selected,method,player_method)
         if source_revision is not None:
@@ -158,18 +159,15 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
     def kalshi_model_status(models,game,method,player_method,selected):
         if not game:return ''
         if not model_matches(models,game,selected,method,player_method):
-            return 'Calculated probabilities: waiting for the selected category and methods.'
+            return 'Waiting to calculate probabilities…'
         if models.get('pending'):
-            return ('Updating the forecast; previously calculated values remain visible.' if models.get('keep_visible') else
-                    'Quotes available · Calculating probabilities in the background…')
-        history=models.get('history',{})
+            return ('Updating calculated probabilities…' if models.get('keep_visible') else 'Calculating probabilities…')
         priced=sum(p.get('probability') is not None for p in models.get('predictions',{}).values())
         total=len(models.get('predictions',{}))
-        return [html.Span(f"{method} latest historical game: {history.get('game') or 'unavailable'} · "
-                          f"{player_method} latest player history: {history.get('player') or 'unavailable'}"),
-                html.P(f'{priced} of {total} contracts have calculated estimates. '+
-                       ('Unavailable estimates retain their contract-specific explanation.' if priced<total else ''),className='ppp-comparison-note'),
-                *[html.P(error,className='ppp-comparison-note' if error.startswith('Game injuries:') else 'mispricing-error') for error in models.get('errors',[])]]
+        status=(f'Calculated probabilities ready · {priced}/{total} contracts' if priced else
+                'Calculated probabilities unavailable.')
+        errors=models.get('errors',[])
+        return html.Span(status,title='\n'.join(errors)) if errors else status
 
     rows=dict(type='kalshi-comparison-row',sport=ALL,game=ALL,ticker=ALL,side=ALL)
     @app.callback(Output('kalshi-game-distributions','children'),
@@ -248,7 +246,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
         if not scan or not criteria or not game:return None
         snapshot=scan['snapshot']
         if (snapshot['sport'],snapshot['game_id'],scan['selection'])!=(game['sport'],game['id'],selected):return None
-        if method not in GAME_METHODS or player_method not in PLAYER_METHODS:return None
+        if method not in quick_methods.game_methods(game['sport']) or player_method not in PLAYER_METHODS:return None
         if not models or models.get('pending') or not model_matches(models,game,selected,method,player_method):
             return html.P('Calculating the selected forecast methods…',className='saved-market-empty')
         displayed={**decorate(snapshot,game,selected,method,player_method,models,criteria),'game':game}
@@ -265,7 +263,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
         if route(location_hash)!=(game['sport'],game['id']):raise PreventUpdate
         try:
             criteria=criteria_values(probability,edge)
-            methods,player_methods=selected_methods(methods,player_methods)
+            methods,player_methods=selected_methods(methods,player_methods,game['sport'])
             overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope('kalshi',game['sport'],game['id']))
             game=deepcopy(game)
             def calculate_scan(report):
@@ -309,7 +307,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
             state('changed' if scan else 'idle',message if scan else '')
             return prompt
         try:
-            methods,player_methods=selected_methods(methods,player_methods)
+            methods,player_methods=selected_methods(methods,player_methods,(game or {}).get('sport'))
             criteria=criteria_values(probability,edge)
             overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope(
                 'kalshi',(game or {}).get('sport'),(game or {}).get('id')))

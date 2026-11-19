@@ -18,6 +18,7 @@ import pandas as pd
 from models.replay import replay_scope,fingerprint
 
 from .data import DataSourceError
+from .nba_model_data import NBA_PACE_INPUT_METHODS
 from .service import DataService
 from .ncaaf_model_data import NcaafModelData
 from .display_time import EASTERN
@@ -184,7 +185,8 @@ def read_input_csv(path,dtype,columns=None):
 
 def valid_report_page(sport,group,key):
     return (sport in {'NBA','NFL','NCAAF'} and group in {'game-outcome','player-stats'}
-            and key in ({'ppp','epa','elo'} if group=='game-outcome' else {'whp','uo','oam','pge'}))
+            and (key in ({'ppp','epa','elo'} if group=='game-outcome' else {'whp','uo','oam','pge'})
+                 or (sport=='NBA' and group=='game-outcome' and key in NBA_PACE_INPUT_METHODS)))
 
 
 def read_report(path,sport,group,key):
@@ -276,6 +278,8 @@ def evaluated_records(result,target='margin'):
             row.update(actual=row['actual_'+target],predicted=row['predicted_'+target],baseline=row['baseline_'+target],
                 lower=row['predicted_'+target]-PREDICTIVE_Z*row[target+'_sd'],
                 upper=row['predicted_'+target]+PREDICTIVE_Z*row[target+'_sd'],interval_level=PREDICTIVE_INTERVAL)
+            if target+'_interval' in row:
+                row['lower'],row['upper']=row[target+'_interval']
     else:
         for row in records:
             # Older saved reports did not retain the distribution/80% quantiles.
@@ -327,9 +331,28 @@ def estimation_history(frame,cutoff,lookback=None,*,entity='team',paired=False):
     row just to complete a pair. Calibration uses this same bounded input pool.
     """
     result=frame[frame.event_date.lt(cutoff)&frame.available_at.lt(cutoff)].sort_values(['event_date','game_id'])
+    return bound_history(result,lookback,entity,paired)
+
+
+def bound_history(result,lookback,entity,paired):
     if lookback is not None:result=result.groupby(entity,sort=False,dropna=False).tail(lookback)
     if paired:result=result[result.groupby('game_id').game_id.transform('size').eq(2)]
     return result.copy()
+
+
+class ReplayHistory:
+    """Index immutable input rows in the same order as estimation_history."""
+    def __init__(self,frame):
+        self.rows=frame.sort_values(['event_date','game_id'])
+        self.events=pd.DatetimeIndex(self.rows.event_date)
+        self.available=pd.DatetimeIndex(self.rows.available_at)
+
+    def before(self,cutoff,lookback,*,entity='team',paired=False):
+        end=self.events.searchsorted(cutoff,side='left')
+        rows=self.rows.iloc[:end]
+        eligible=self.available[:end]<cutoff
+        if not eligible.all():rows=rows.iloc[eligible]
+        return bound_history(rows,lookback,entity,paired)
 
 
 def evaluation_bounds(start,end,now):
@@ -348,7 +371,10 @@ def game_model(sport,key):
         ('NCAAF','ppp'):('PPP.NCAAF_PPP','NCAAFPPPModel'),('NBA','epa'):('EPA.NBA_EPA','NBAEPAModel'),
         ('NFL','epa'):('EPA.EPA','EPAModel'),('NCAAF','epa'):('EPA.NCAAF_EPA','NCAAFEPAModel'),
         ('NBA','elo'):('ELO.ELO','ELOModel'),('NFL','elo'):('ELO.ELO','ELOModel'),
-        ('NCAAF','elo'):('ELO.NCAAF_ELO','NCAAFELOModel')}
+        ('NCAAF','elo'):('ELO.NCAAF_ELO','NCAAFELOModel'),
+        ('NBA','pace'):('Pace_Possession.NBA_PACE','NBAPaceModel'),
+        ('NBA','aode'):('Adjusted_Offensive_Defensive_Efficiency.NBA_AODE','NBAAdjustedEfficiencyModel'),
+        ('NBA','ff'):('Four_Factors.NBA_FF','NBAFourFactorsModel')}
     module,name=source[sport,key];module=import_module('models.Game_Outcome.'+module)
     return getattr(module,name)(module.ELOConfig.nba()) if sport=='NBA' and key=='elo' else getattr(module,name)()
 
@@ -485,6 +511,7 @@ class BacktestingService:
         directory=ROOT/'data/modeling'/sport.lower()
         dataset=None
         if sport=='NBA' and key=='epa':directory=directory/'epa'
+        if sport=='NBA' and key in NBA_PACE_INPUT_METHODS:directory=directory/'pace'
         paths=sorted(directory.glob('team_games_*.csv'),key=lambda p:p.stat().st_mtime_ns)
         if not paths:raise DataSourceError(f'No saved {sport} {key.upper()} team history. Load historical data or prepare this model’s inputs first.')
         frames=[]
@@ -565,7 +592,7 @@ class BacktestingService:
 
     def options(self,sport,group,key,player=None):
         if group=='game-outcome':
-            frame,_=self.game_inputs(sport,key)
+            frame,_=self.game_inputs(sport,'ppp' if sport=='NBA' and key in NBA_PACE_INPUT_METHODS else key)
             return [dict(label='All teams',value='__all__'),*[dict(label=t,value=t) for t in sorted(frame.team.unique())]],[],None
         frame=self.player_inputs(sport)
         latest=frame.drop_duplicates('entity_id',keep='last').sort_values('entity_name')
@@ -679,7 +706,7 @@ class BacktestingService:
             frame=season_phases(frame,sport)
             frame=frame[frame.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
             # A complete pair must be known today, including both result lags.
-            targets=self.game_inputs(sport,'ppp')[0] if sport=='NBA' and key=='epa' else frame
+            targets=self.game_inputs(sport,'ppp')[0] if sport=='NBA' and key in NBA_PACE_INPUT_METHODS | {'epa'} else frame
             targets=season_phases(targets,sport)
             targets=targets[targets.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
             games=eligible_pairs(targets,entity,lower,upper,self.now(),limit=limit)
@@ -754,6 +781,7 @@ class BacktestingService:
 
     @replay_scope
     def _games(self,result,model,frame,dataset,games,progress=None):
+        history=ReplayHistory(frame)
         previous_cutoff=None
         for number,pair in enumerate(games,1):
             h=pair[pair.is_home.eq(1)].iloc[0];a=pair[pair.is_home.eq(0)].iloc[0]
@@ -761,7 +789,7 @@ class BacktestingService:
                 cutoff=h.event_date
                 # Only model inputs and schedule identities go into predict.
                 if cutoff!=previous_cutoff:
-                    prior=estimation_history(frame,cutoff,result['context']['lookback'],paired=True)
+                    prior=history.before(cutoff,result['context']['lookback'],paired=True)
                     previous_cutoff=cutoff
                     home=prior[prior.is_home.eq(1)]
                     baseline_margin=float((home.points-home.points_allowed).mean()) if len(home) else None
@@ -781,6 +809,10 @@ class BacktestingService:
                 common.update(actual=margin,predicted=forecast.margin_mean,baseline=baseline_margin,
                               lower=forecast.margin_mean-PREDICTIVE_Z*forecast.margin_sd,
                               upper=forecast.margin_mean+PREDICTIVE_Z*forecast.margin_sd,interval_level=PREDICTIVE_INTERVAL)
+                if hasattr(forecast, 'predictive_interval'):
+                    for target in ('margin','total'):
+                        common[target+'_interval']=forecast.predictive_interval(target,PREDICTIVE_INTERVAL)
+                    common['lower'],common['upper']=common['margin_interval']
                 result['records'].append(common)
             except (ValueError,RuntimeError,OSError,np.linalg.LinAlgError) as exc:
                 result['skipped'].append(dict(game_id=str(h.game_id),date=h.event_date.isoformat(),reason=str(exc)))
@@ -823,12 +855,13 @@ class BacktestingService:
             module=import_module('.nba_markets' if sport=='NBA' else '.nfl_markets',package='sports_analytics')
             codes=getattr(module,sport+'_TEAM_CODES');names={v:k for k,v in codes.items()}
         else:names={}
-        player_histories={str(entity):rows[rows.value.notna()] for entity,rows in selected.groupby('entity_id',sort=False)}
+        player_histories={str(entity):ReplayHistory(rows[rows.value.notna()])
+                          for entity,rows in selected.groupby('entity_id',sort=False)}
         for number,game in enumerate(games,1):
             try:
                 cutoff=game.event_date
                 own=player_histories[str(game.entity_id)]
-                past=estimation_history(own,cutoff,lookback,entity='entity_id')
+                past=own.before(cutoff,lookback,entity='entity_id')
                 if key=='whp':
                     if progress:progress(number-1,len(games),f'Calculating WHP: {game.entity_name} ({number:,}/{len(games):,})')
                     fitted=whp.forecast(past,cutoff,nonnegative=spec.nonnegative,count=spec.count)

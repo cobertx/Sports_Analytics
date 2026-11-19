@@ -24,7 +24,7 @@ class NCAAFELOModel(ELOModel):
         history=self._history(observations,as_of)
         if any(history.team.eq(t).sum()<3 for t in [home_team,away_team]):
             raise PPPError('Each college school needs at least 3 completed games for ELO.')
-        result=super().predict(observations,home_team,away_team,as_of,neutral)
+        result=self._predict_history(history,home_team,away_team,as_of,neutral)
         result.diagnostics.update(sport='NCAAF',opportunity_unit='offensive plays',
             limitations='College selected-school cohort, total scoring/play, college-only calibration; no conference hierarchy or roster adjustments.')
         return NCAAFPPPForecast(**asdict(result))

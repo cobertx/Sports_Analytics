@@ -26,6 +26,7 @@ class BacktestingModel:
     description:str
     evaluation:str
     inputs:str
+    sports:frozenset=frozenset(SPORTS)
 
     @property
     def directory(self):
@@ -53,6 +54,21 @@ CATALOG=(
         'Update ratings after each available result. Reconcile Elo and point margins using earlier '
         'calibration games, then score held-forward margins and totals.',
         'Chronological completed team results, home/neutral venue, opponents, scoring and game volume.'),
+    BacktestingModel('game-outcome','pace','Pace_Possession','Pace & Possession (PACE)',
+        'Estimate shared regulation possessions and opposing scoring efficiencies, then simulate final NBA scores including overtime.',
+        'Replay forecasts using earlier available games. Evaluate margins, totals, win probabilities and empirical score intervals.',
+        'Paired NBA box scores with points, estimated possessions, elapsed minutes, venue and availability dates.',
+        sports=frozenset({'NBA'})),
+    BacktestingModel('game-outcome','aode','Adjusted_Offensive_Defensive_Efficiency','Adjusted Offensive & Defensive Efficiency (AODE)',
+        'Estimate schedule-adjusted offensive and defensive ratings, then simulate scores with shared pace and correlated scoring rates.',
+        'Refit ratings on earlier games and compare full-game margins, totals, winner probabilities and empirical intervals.',
+        'Paired NBA box scores with points, estimated possessions, elapsed minutes, venue and availability dates.',
+        sports=frozenset({'NBA'})),
+    BacktestingModel('game-outcome','ff','Four_Factors','Four Factors (FF)',
+        'Project shooting, turnovers, offensive rebounding and free throws against the opponent, then convert those factors into full-game scores.',
+        'Replay opponent-adjusted factor forecasts and compare margins, totals, win probabilities and empirical intervals.',
+        'Paired NBA shooting, turnovers, rebounds and points, plus observed game duration and publication dates.',
+        sports=frozenset({'NBA'})),
     BacktestingModel('player-stats','whp','Weighted_Historical_Performance','Weighted Historical Performance (WHP)',
         'Weight recent player appearances and estimate uncertainty from earlier forecast errors.',
         'Walk forward one appearance at a time. Predict each game from prior observed performances, '
@@ -82,7 +98,7 @@ CATALOG=(
 
 def available_models(sport,group=None):
     if sport not in SPORTS:return []
-    return [model for model in CATALOG if (group is None or model.group==group)
+    return [model for model in CATALOG if sport in model.sports and (group is None or model.group==group)
             and (model.directory/'__init__.py').is_file()]
 
 
@@ -158,17 +174,8 @@ def model_config(model,sport):
                      'oam':('config','MatchupConfig'),'pge':('config','PaceConfig')}[model.key]
         config=getattr(import_module(f'models.Player_Stats.{model.folder}.{module}'),name).for_sport(sport)
     else:
-        module,name={
-            ('ppp','NBA'):('PPP.NBA_PPP','NBAPPPModel'),('ppp','NFL'):('PPP.PPP','PPPModel'),
-            ('ppp','NCAAF'):('PPP.NCAAF_PPP','NCAAFPPPModel'),
-            ('epa','NBA'):('EPA.NBA_EPA','NBAEPAModel'),('epa','NFL'):('EPA.EPA','EPAModel'),
-            ('epa','NCAAF'):('EPA.NCAAF_EPA','NCAAFEPAModel'),
-            ('elo','NBA'):('ELO.ELO','ELOModel'),('elo','NFL'):('ELO.ELO','ELOModel'),
-            ('elo','NCAAF'):('ELO.NCAAF_ELO','NCAAFELOModel'),
-        }[model.key,sport]
-        imported=import_module('models.Game_Outcome.'+module)
-        config=(getattr(imported,name)(imported.ELOConfig.nba()).config if model.key=='elo' and sport=='NBA'
-                else getattr(imported,name)().config)
+        from .backtesting_service import game_model
+        config=game_model(sport,model.key).config
     return asdict(config)
 
 

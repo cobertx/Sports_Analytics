@@ -3,20 +3,22 @@ import math
 import json
 import threading
 from hashlib import sha256
+from itertools import accumulate
 from pathlib import Path
 
 from .navigation import scoped_callback
 
 from dash import Input,Output,State,ctx,dcc,html,no_update
 from dash.exceptions import PreventUpdate
+import numpy as np
 import plotly.graph_objects as go
 
 from .backtesting_view import SPORTS,GROUPS,PERFORMANCE_ROUTE,available_models,model_config,model_name,summary_href
 from .backtesting_service import evaluation_bounds,current_player_cohort
-from .backtesting_results import field,figure,range_accuracy
+from .backtesting_results import field,figure,range_accuracy,valid_prediction_interval
 from .comparison import Comparisons,compare_reports
 from .data import DataSourceError
-from .display_time import format_eastern
+from .display_time import eastern_datetime,format_eastern
 from models.Player_Stats.Weighted_Historical_Performance.markets import NBA,FOOTBALL
 from models.Player_Stats.Usage_Opportunity.markets import market_spec
 
@@ -148,8 +150,10 @@ def layout():
                 field('Evaluation team',dcc.Dropdown(id='performance-team',options=[dict(label='All teams',value='__all__')],value='__all__',clearable=False)),
                 field('Evaluation games',dcc.Input(id='performance-limit',type='number',min=1,max=10000,step=1,value=100),
                       'Latest eligible games; player markets include appearances from those games.'),
-                field('Evaluation start (EDT)',dcc.DatePickerSingle(id='performance-start',display_format='MM/DD/YYYY',clearable=True)),
-                field('Evaluation end (EDT)',dcc.DatePickerSingle(id='performance-end',display_format='MM/DD/YYYY',clearable=True)),
+                field('Evaluation start (EDT)',dcc.DatePickerSingle(id='performance-start',display_format='MM/DD/YYYY',
+                    placeholder='',clearable=True)),
+                field('Evaluation end (EDT)',dcc.DatePickerSingle(id='performance-end',display_format='MM/DD/YYYY',
+                    placeholder='',clearable=True)),
                 field('Postseason',dcc.Dropdown(id='performance-playoffs',options=[dict(label='Regular season only',value='exclude'),dict(label='Include postseason',value='include')],value='exclude',clearable=False)),
                 html.Div(field('Player reference line (optional)',dcc.Input(id='performance-line',type='number',step='any'),
                     'Required for Over accuracy, Brier score and log loss.'),id='performance-line-field',style={'display':'none'}),
@@ -166,51 +170,107 @@ def layout():
     ],id='performance-summary-page',className='performance-summary-page',style={'display':'none'})
 
 
+def rolling_coverage(rows,intervals,window):
+    """Summarize the full sample before reducing the number of displayed points."""
+    samples=list(accumulate((bounds is not None for bounds in intervals),initial=0))
+    hits=list(accumulate((bounds is not None and bounds[0]<=row['actual']<=bounds[1]
+                          for row,bounds in zip(rows,intervals)),initial=0))
+    step=max(1,math.ceil(len(rows)/150))
+    endpoints={eastern_datetime(rows[end-1]['date']).date().isoformat():end
+               for end in [*range(step,len(rows),step),len(rows)]}
+    for day,end in endpoints.items():
+        start=max(0,end-window)
+        count=samples[end]-samples[start]
+        covered=hits[end]-hits[start]
+        yield day,covered/count if count else None,[covered,count,end-start]
+
+
+def prediction_groups(rows):
+    predicted=np.asarray([row['predicted'] for row in rows])
+    actual=np.asarray([row['actual'] for row in rows])
+    # Quantile boundaries keep dense regions readable without splitting tied forecasts.
+    edges=np.unique(np.quantile(predicted,np.linspace(0,1,min(10,len(rows))+1)))
+    bins=np.searchsorted(edges[1:-1],predicted,side='right')
+    for index in np.unique(bins):
+        mask=bins==index
+        yield float(predicted[mask].mean()),float(actual[mask].mean()),int(mask.sum())
+
+
 def comparison_charts(data,metrics,basis):
     summary=list(metrics.values());records=data.get('records',{})
     if not any(row.get('compared') for row in summary):
         return html.P('No shared evaluated observations to plot. Choose All evaluated observations per model to inspect each saved sample.',className='backtest-status')
     labels=[row['method'] for row in summary]
+    rates=[row['range_accuracy'] for row in summary]
     hover=[[row['label'],row['range_samples'],row['compared']] for row in summary]
-    accuracy=figure('Accuracy inside the 80% prediction range','Model','Actual outcomes inside range')
-    accuracy.add_trace(go.Bar(x=labels,y=[row['range_accuracy'] for row in summary],name='80% range accuracy',
-        marker_color='#57dbc4',customdata=hover,
-        hovertemplate='%{customdata[0]}<br>Accuracy: %{y:.1%}<br>Hits / valid ranges: %{customdata[1]}<br>Compared: %{customdata[2]}<extra></extra>'))
-    accuracy.add_hline(y=.8,line_dash='dash',line_color='#f6c667',annotation_text='80% calibration target')
-    accuracy.update_yaxes(range=[0,1.08],tickformat='.0%')
-    if not any(row['range_accuracy'] is not None for row in summary):
-        accuracy.add_annotation(text='No valid 80% ranges in these saved results.<br>Rerun legacy player backtests.',
-                                showarrow=False,x=.5,y=.5,xref='paper',yref='paper')
-    errors=figure('Forecast error by model','Model','Error in statistic units')
-    for key,label,color in [('mae','MAE','#57dbc4'),('rmse','RMSE','#8197ff'),('baseline_mae','Baseline MAE','#f6c667')]:
-        errors.add_trace(go.Bar(x=labels,y=[row.get(key) for row in summary],name=label,marker_color=color,
-            customdata=hover,hovertemplate='%{customdata[0]}<br>%{y:.3f} statistic units<br>Compared: %{customdata[2]}<extra>%{fullData.name}</extra>'))
-    errors.update_layout(barmode='group');errors.update_yaxes(rangemode='tozero')
-    trend=figure('Recent 80% range accuracy by model','Evaluated observation (chronological)','Trailing 10-observation accuracy')
-    colors=['#57dbc4','#8197ff','#f6c667','#ef96d0']
+    accuracy=figure('Coverage of 80% prediction intervals','Model','Actual outcomes inside interval')
+    accuracy.add_trace(go.Bar(x=labels,y=rates,
+        marker_color=['#57dbc4' if rate is not None and rate>=.8 else '#ffa3af' for rate in rates],
+        texttemplate='%{y:.1%}',textposition='outside',customdata=hover,
+        hovertemplate='%{customdata[0]}<br>Coverage: %{y:.1%}<br>Hits / valid intervals: %{customdata[1]}<br>Compared: %{customdata[2]}<extra></extra>'))
+    accuracy.update_layout(bargap=.42)
+    accuracy.update_yaxes(range=[0,1.12],tickformat='.0%')
+
+    window=max(100,math.ceil(max((len(rows) for rows in records.values()),default=0)/100))
+    trend=figure('Rolling 80% interval coverage','Evaluation date (EDT)',f'Trailing {window:,} observations')
+    parity=figure('Predicted vs. actual','Mean prediction','Mean actual')
+    widths=figure('80% prediction interval widths','Model','Width in statistic units')
+    colors=('#57dbc4','#8197ff','#f6c667','#ef96d0')
+    dashes=('solid','dash','dot','dashdot')
+    trend_values=[]
+    parity_values=[]
     for index,(key,rows) in enumerate(records.items()):
         if not rows:continue
-        rolling=[range_accuracy(rows[max(0,i-9):i+1]) for i in range(len(rows))]
-        trend.add_trace(go.Scatter(x=list(range(1,len(rows)+1)),y=[point['range_accuracy'] for point in rolling],
-            name=key.upper(),mode='lines+markers',connectgaps=False,
-            line=dict(color=colors[index%len(colors)]),marker=dict(size=3),
-            customdata=[[format_eastern(row['date']),row.get('label',''),min(i+1,10),rolling[i]['range_samples']]
-                        for i,row in enumerate(rows)],
-            hovertemplate='%{customdata[0]}<br>%{customdata[1]}<br>Accuracy: %{y:.1%}<br>Hits / valid 80% ranges: %{customdata[3]}<br>Observations in window: %{customdata[2]}<extra>%{fullData.name}</extra>'))
-    trend.add_hline(y=.8,line_dash='dash',line_color='#f6c667',annotation_text='80% calibration target')
-    trend.update_yaxes(range=[0,1.08],tickformat='.0%')
-    if not any(point is not None for trace in trend.data for point in trace.y):
-        trend.add_annotation(text='No valid 80% ranges in these saved results.<br>Rerun legacy player backtests.',
-                             showarrow=False,x=.5,y=.5,xref='paper',yref='paper')
-    notes=[
-        'The dashed line is the expected 80% coverage. Read coverage alongside errors: wider prediction ranges can increase coverage.',
-        'Lower MAE and RMSE mean smaller misses; RMSE gives larger misses more weight. Baseline MAE uses the same compared observations.',
-        'Each point shows the percentage of actual outcomes inside their 80% prediction ranges over the last up to 10 evaluated games or player appearances. '
-        'Only valid 80% ranges count; hover for hits and sample counts. The dashed line is the 80% calibration target; wider ranges can increase coverage. '+
-        ('Models use the same shared observations.' if basis=='common' else 'Each model uses its own sample; equal positions can represent different games.')]
+        color=colors[index%len(colors)]
+        intervals=[valid_prediction_interval(row) for row in rows]
+        days,coverage,counts=zip(*rolling_coverage(rows,intervals,window))
+        valid_coverage=[value for value in coverage if value is not None]
+        trend_values.extend(valid_coverage)
+        if valid_coverage:
+            trend.add_trace(go.Scatter(x=days,y=coverage,name=key.upper(),
+                mode='lines' if len(valid_coverage)>1 else 'markers',connectgaps=False,
+                marker=dict(color=color,size=7),line=dict(color=color,width=2,dash=dashes[index%len(dashes)]),
+                customdata=counts,hovertemplate='%{x|%b %d, %Y}<br>Coverage: %{y:.1%}<br>Hits / valid intervals: '
+                '%{customdata[0]} / %{customdata[1]}<br>Observations in window: %{customdata[2]}<extra>%{fullData.name}</extra>'))
+
+        predictions,actuals,counts=zip(*prediction_groups(rows))
+        parity_values.extend([*predictions,*actuals])
+        parity.add_trace(go.Scatter(x=predictions,y=actuals,name=key.upper(),mode='lines+markers',
+            line=dict(color=color,dash=dashes[index%len(dashes)]),marker=dict(size=7),customdata=counts,
+            hovertemplate='Mean prediction: %{x:.2f}<br>Mean actual: %{y:.2f}<br>Observations: %{customdata}<extra>%{fullData.name}</extra>'))
+
+        span=[bounds[1]-bounds[0] for bounds in intervals if bounds is not None]
+        if span:
+            p05,q1,median,q3,p95=np.percentile(span,[5,25,50,75,95]).tolist()
+            widths.add_trace(go.Box(x=[key.upper()],name=key.upper(),q1=[q1],median=[median],q3=[q3],
+                lowerfence=[p05],upperfence=[p95],boxpoints=False,marker_color=color,showlegend=False))
+
+    for chart in (accuracy,trend):
+        chart.add_hline(y=.8,line_dash='dash',line_color='#f6c667',annotation_text='80% target')
+    for chart,empty in ((accuracy,all(rate is None for rate in rates)),(trend,not trend_values),(widths,not widths.data)):
+        if empty:
+            chart.add_annotation(text='No valid 80% intervals in these saved results.',showarrow=False,x=.5,y=.5,xref='paper',yref='paper')
+    trend.update_xaxes(type='date',nticks=7)
+    trend.update_yaxes(range=[max(0,min([.7,*trend_values])-.04),min(1.04,max([.9,*trend_values])+.04)],tickformat='.0%')
+    if parity_values:
+        low,high=min(parity_values),max(parity_values)
+        pad=max(.5,(high-low)*.06)
+        parity.add_shape(type='line',x0=low-pad,x1=high+pad,y0=low-pad,y1=high+pad,
+                         line=dict(color='#a8b8cc',dash='dash',width=1),layer='below')
+        parity.update_xaxes(range=[low-pad,high+pad])
+        parity.update_yaxes(range=[low-pad,high+pad])
+    widths.update_yaxes(rangemode='tozero')
+    charts=[
+        (accuracy,'Teal bars meet or exceed 80% coverage. Coral bars fall below it. Wider prediction intervals can increase coverage.',True),
+        (trend,f'Coverage over up to {window:,} trailing evaluated observations. Hover for counts of hits and valid intervals. '+
+         ('Models use the same shared observations.' if basis=='common' else 'Each model uses its own evaluated observations.'),True),
+        (parity,'Points group similar predictions. Above the diagonal, the model tended to underpredict. Below it, the model tended to overpredict.',False),
+        (widths,'Boxes show the middle 50% of interval widths. Whiskers span the 5th to 95th percentiles. Read narrower intervals alongside coverage.',False),
+    ]
     return html.Div([html.Div([dcc.Graph(figure=chart,config={'displaylogo':False}),
-                              html.P(note,className='backtest-status backtest-chart-note')],className='panel backtest-chart')
-                     for chart,note in zip([accuracy,errors,trend],notes)],className='performance-chart-grid')
+                              html.P(note,className='backtest-status backtest-chart-note')],
+                              className='panel backtest-chart'+(' performance-chart-wide' if wide else ''))
+                     for chart,note,wide in charts],className='performance-chart-grid')
 
 
 def render(manager,manifest,market,tolerance,basis='all'):

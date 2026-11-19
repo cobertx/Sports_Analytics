@@ -104,17 +104,20 @@ def per_game_axis(fig,data):
     return x,[[format_eastern(r.date),r.label,str(r.game_id)] for r in data.itertuples()]
 
 
+def valid_prediction_interval(row,level=PREDICTIVE_INTERVAL):
+    recorded_level=row.get('interval_level')
+    actual,lower,upper=(row.get(key) for key in ('actual','lower','upper'))
+    if (isinstance(recorded_level,(int,float)) and math.isclose(recorded_level,level,rel_tol=1e-5)
+            and all(isinstance(v,(int,float)) and math.isfinite(v) for v in (actual,lower,upper))
+            and lower<=upper):
+        return lower,upper
+    return None
+
+
 def range_accuracy(records,level=PREDICTIVE_INTERVAL):
     """Inclusive interval coverage, using only valid ranges at the requested level."""
-    hits=[]
-    for row in records:
-        recorded_level=row.get('interval_level')
-        values=[row.get(key) for key in ('actual','lower','upper')]
-        if (not isinstance(recorded_level,(int,float)) or not math.isclose(recorded_level,level,rel_tol=1e-5)
-                or not all(isinstance(v,(int,float)) and math.isfinite(v) for v in values)):
-            continue
-        actual,lower,upper=values
-        if lower<=upper:hits.append(lower<=actual<=upper)
+    hits=[bounds[0]<=row['actual']<=bounds[1] for row in records
+          if (bounds:=valid_prediction_interval(row,level)) is not None]
     return dict(range_accuracy=sum(hits)/len(hits) if hits else None,range_samples=f'{sum(hits)} / {len(hits)}')
 
 

@@ -17,6 +17,15 @@ from check_kalshi import components
 
 
 class SummaryFilteringChecks(TestCase):
+    def test_all_methods_reuse_one_quote_preparation(self):
+        from sports_analytics import market_summary
+        with patch.object(market_summary,'entries',wraps=market_summary.entries) as entries:
+            result=self.run_filter(methods=['PPP','EPA','ELO'],players=['WHP','UO','OAM','PGE'])
+        entries.assert_called_once()
+        self.assertTrue(result['matches'])
+        self.assertEqual(self.game.call_count,3)
+        self.assertEqual(self.player.call_count,4)
+
     def run_filter(self,criteria=None,methods=None,players=None,game=None,player=None):
         self.game=game or Mock(return_value=(GameForecast(),None))
         self.player=player or Mock(return_value=(PlayerForecast(),None,{}))

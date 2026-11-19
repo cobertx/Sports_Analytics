@@ -13,6 +13,7 @@ from time import time
 from threading import Lock
 
 from dash import ALL, Dash, Input, MATCH, Output, State, ctx, dash_table, dcc, html, no_update, set_props
+from dash._utils import to_json
 from dash.exceptions import PreventUpdate, MissingCallbackContextException
 from flask import abort, send_from_directory
 import pandas as pd
@@ -78,7 +79,7 @@ from .parlay_view import slip_layout,slip_contents,odds as parlay_odds
 from .ncaaf_model_data import NcaafModelData
 from .ncaaf_forecast_service import NCAAFMarketForecastService
 from models.season_weights import POLICY_VERSION
-from .market_view import _market_probability,selection_text
+from .market_view import _market_probability,market_provider_brand,selection_text
 from .market_view import CATEGORIES, NBA_LOGO_DIRECTORY, NBA_LOGO_FILES, NFL_LOGO_DIRECTORY, NFL_LOGO_FILES, NCAAF_LOGO_DIRECTORY, NCAAF_LOGO_FILES, game_header, latest_pull_status, latest_pull_text, logo_badge, market_sections
 from .market_navigation import remembered_market
 from .history_scope import analysis_scope, career_scope
@@ -101,6 +102,9 @@ from .epa_service import EPAMarketService
 from .nba_ppp_service import NBAPPPMarketService
 from .nba_epa_service import NBAEPAMarketService
 from .elo_service import ELOMarketService, NBAELOMarketService
+from .nba_pace_service import NBAPaceMarketService
+from .nba_adjusted_efficiency_service import NBAAdjustedEfficiencyMarketService
+from .nba_four_factors_service import NBAFourFactorsMarketService
 
 ALL_TEAMS = "__all__"
 
@@ -336,7 +340,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                whp_service=None, usage_opportunity_service=None, opponent_adjusted_service=None, pace_game_environment_service=None,
                ncaaf_model_data=None,ncaaf_forecast_services=None,backtesting_service=None,in_game_service=None,kalshi_service=None,
                polymarket_service=None,information_service=None,ledger=None,structure_service=None,filtered_results_service=None,
-               game_information_service=None,availability_service=None,draftkings_services=None):
+               game_information_service=None,availability_service=None,draftkings_services=None,nba_pace_service=None,
+               nba_aode_service=None,nba_four_factors_service=None):
     service = service or DataService()
     history_updater=HistoryUpdater(data=service)
     filtered_results_service = filtered_results_service or FilteredResults(service.path.with_name('filtered_results.sqlite3'))
@@ -366,6 +371,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     nba_epa_service = nba_epa_service or NBAEPAMarketService()
     elo_service = elo_service or ELOMarketService()
     nba_elo_service = nba_elo_service or NBAELOMarketService()
+    nba_pace_service = nba_pace_service or NBAPaceMarketService()
+    pace_data = nba_pace_service.data if isinstance(nba_pace_service, NBAPaceMarketService) else None
+    nba_aode_service = nba_aode_service or NBAAdjustedEfficiencyMarketService(data=pace_data)
+    nba_four_factors_service = nba_four_factors_service or NBAFourFactorsMarketService(data=pace_data)
     whp_service = whp_service or WHPMarketService()
     usage_opportunity_service = usage_opportunity_service or UsageOpportunityMarketService()
     opponent_adjusted_service = opponent_adjusted_service or OpponentAdjustedMarketService()
@@ -373,6 +382,12 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     ncaaf_model_data = ncaaf_model_data or NcaafModelData()
     ncaaf_forecast_services = ncaaf_forecast_services or {
         method:NCAAFMarketForecastService(method,data=ncaaf_model_data) for method in ['PPP','EPA','ELO']}
+    game_services={
+        'NBA':{'PPP':nba_ppp_service,'EPA':nba_epa_service,'ELO':nba_elo_service,
+               'PACE':nba_pace_service,'AODE':nba_aode_service,'FF':nba_four_factors_service},
+        'NFL':{'PPP':ppp_service,'EPA':epa_service,'ELO':elo_service},
+        'NCAAF':ncaaf_forecast_services,
+    }
     data_directory = Path(__file__).resolve().parent.parent / "data"
     nfl_market_service = nfl_market_service or NflMarketService(odds_service, service.path.with_name("nfl_markets.sqlite3"),
                                                               data_directory / "market_data", usage_log=api_usage_log)
@@ -428,6 +443,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if model is None or not (model.directory/'README.md').is_file():abort(404)
         return send_from_directory(model.directory,'README.md',as_attachment=True,
                                    download_name=f'{model.folder}_README.md')
+
+    research_menus=to_json({sport:research_view.navigation(sport) for sport in SOURCES})
+    app.clientside_callback('function(sport){const menus='+research_menus+';return menus[sport]||[];}',
+                            Output('research-navigation','children'),Input('research-sport','value'))
 
     app.layout = html.Div([
         dcc.Interval(id='history-update-poll',interval=60_000,n_intervals=0),
@@ -586,13 +605,15 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     ], id="historical-page", className="workspace"),
                     html.Section([
                         html.Div([
-                            html.Div([
-                                html.Div([html.Div("FANDUEL MARKET", className="eyebrow accent"),
-                                          html.H2("NBA · Upcoming games", id="market-title"),
-                                          html.P("Browse scheduled matchups, then open FanDuel to explore available markets.")]),
-                                html.A("Open FanDuel ↗", id="fanduel-link", href=FANDUEL_LINKS["NBA"],
-                                       target="_blank", rel="noopener noreferrer", className="market-link"),
-                            ], className="panel market-heading"),
+                            html.Div([html.Div("FANDUEL MARKET", className="eyebrow accent"),
+                                      html.H2("NBA · Upcoming games", id="market-title"),
+                                      html.P("Browse scheduled matchups, then open FanDuel to explore available markets.")],
+                                     className="market-provider-intro"),
+                            market_provider_brand("FanDuel"),
+                            html.A("Open FanDuel ↗", id="fanduel-link", href=FANDUEL_LINKS["NBA"],
+                                   target="_blank", rel="noopener noreferrer", className="market-link"),
+                        ], className="panel market-heading market-provider-heading"),
+                        html.Div([
                             html.Div([
                                 field("Schedule window", dcc.Dropdown(id="market-days", value=7, clearable=False,
                                       options=[{"label": "Next 7 days", "value": 7}, {"label": "Next 14 days", "value": 14}])),
@@ -629,8 +650,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                             html.Div([
                               html.Div([
                                 field("Game Outcome Forecast Method", dcc.Dropdown(id="market-forecast-method", value="PPP",
-                                           options=[{"label": "PPP", "value": "PPP"}, {"label": "EPA", "value": "EPA"},
-                                                    {"label": "ELO / Power Rating", "value": "ELO"}],
+                                           options=quick_methods.game_options(),
                                            clearable=False)),
                                 html.P("Latest historical game used: Not calculated yet", id="game-forecast-history",
                                        className="forecast-history", role="status"),
@@ -1065,10 +1085,15 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         return ['#'+sport+'-games','FanDuel only ? Up to '+({nba:13,nfl:17,ncaaf:17}[sport])+' credits per new pull'];}''',
         Output('market-back-link','href'),Output('market-detail-credit','children'),Input('market-url','hash'))
 
+    quick_methods.register_controls(app,'market')
     app.clientside_callback('''function(hash,previous,saved){const no=window.dash_clientside.no_update;
         const route=window.dash_clientside.market_navigation.route(hash),entry=route&&window.dash_clientside.market_navigation.entry(saved,route.sport);
-        const desired=entry?.route===hash&&entry.method||(['PPP','EPA','ELO'].includes(previous)?previous:'PPP');
-        return [no,desired===previous?no:desired];}''',
+        if(!route)return [no,no];
+        const options=route.sport==='NBA'?${nba}:${other};
+        const allowed=value=>options.some(option=>option.value===value);
+        const desired=entry?.route===hash&&allowed(entry.method)?entry.method:(allowed(previous)?previous:'PPP');
+        return [options,desired===previous?no:desired];}'''.replace('${nba}',json.dumps(quick_methods.game_options('NBA')))
+            .replace('${other}',json.dumps(quick_methods.game_options())),
         Output('market-forecast-method','options'),Output('market-forecast-method','value'),Input('market-url','hash'),
         State('market-forecast-method','value'),State('market-return','data'))
 
@@ -1272,7 +1297,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         if not clicks:raise PreventUpdate
         try:
             criteria=criteria_values(probability,edge)
-            methods,player_methods=selected_methods(methods,player_methods)
+            methods,player_methods=selected_methods(methods,player_methods,market_game_sport(location_hash))
             if not market_game_id(location_hash) or not selection:
                 raise ValueError('Choose a saved game snapshot before using Quick Filtering.')
             overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope(
@@ -1331,23 +1356,40 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 label("player", player_method or "WHP", "Latest historical performance used: "))
 
     model_sources=sorted((Path(__file__).resolve().parents[1]/'models').rglob('*.py'))
-    def forecast_identity(snapshot,method,category=None):
-        sport=snapshot['sport']
-        if method in {'WHP','UO','OAM','PGE'}:
-            source={'WHP':whp_service,'UO':usage_opportunity_service,'OAM':opponent_adjusted_service,'PGE':pace_game_environment_service}[method]
-        else:
-            source=(ncaaf_forecast_services if sport=='NCAAF' else
-                    {'PPP':nba_ppp_service,'EPA':nba_epa_service,'ELO':nba_elo_service} if sport=='NBA' else
-                    {'PPP':ppp_service,'EPA':epa_service,'ELO':elo_service})[method]
-        revisions=forecast_revision(source,sport)
+    def forecast_environment(sport):
+        revisions=[]
         for path in model_sources:
             stat=path.stat();revisions.append((str(path),stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns))
         if sport in {'NBA','NFL'}:revisions.append(availability_service.revision(sport))
         if sport=='NCAAF':revisions+=forecast_revision(ncaaf_model_data,sport)
-        scope={key:value for key,value in snapshot.items() if key!='raw_response'}
+        return revisions,int(time()//300)
+
+    def has_game_lines(snapshot):
+        return any(row['market_key'] in {'alternate_spreads','alternate_totals','team_totals'} for row in snapshot['rows'])
+
+    def forecast_snapshot_key(snapshot,game=False):
+        if game:
+            # Native game engines fit team history and ignore the individual
+            # quoted lines. Retain both timestamps for snapshot diagnostics.
+            return request_key([*(snapshot.get(key) for key in ('sport','game_id','home_team','away_team',
+                    'pulled_at','commence_time')), snapshot.get('game'), has_game_lines(snapshot)])
+        return request_key({key:value for key,value in snapshot.items() if key!='raw_response'})
+
+    def forecast_identity(snapshot,method,category=None,*,environment=None,snapshot_keys=None):
+        sport=snapshot['sport']
+        if method in {'WHP','UO','OAM','PGE'}:
+            source={'WHP':whp_service,'UO':usage_opportunity_service,'OAM':opponent_adjusted_service,'PGE':pace_game_environment_service}[method]
+        else:
+            source=game_services[sport][method]
+        revisions=forecast_revision(source,sport)
+        common,epoch=forecast_environment(sport) if environment is None else environment
+        game=type(source) in (PPPMarketService,EPAMarketService,ELOMarketService,
+                              NBAPPPMarketService,NBAEPAMarketService,NBAELOMarketService,NBAPaceMarketService,
+                              NBAAdjustedEfficiencyMarketService,NBAFourFactorsMarketService,NCAAFMarketForecastService)
+        scope=forecast_snapshot_key(snapshot,game) if snapshot_keys is None else snapshot_keys[game]
         parameters=[repr(getattr(source,'config',None)),repr(getattr(source,'scenarios',None)),
                     repr(getattr(getattr(source,'model',None),'config',None))]
-        return request_key([method,category,POLICY_VERSION,revisions,parameters,int(time()//300),scope])
+        return request_key([method,category,POLICY_VERSION,revisions,common,parameters,epoch,scope])
 
     def forecast_player_markets(snapshot,player_method,category=None):
         scope=category if player_method=='WHP' else None
@@ -1388,11 +1430,9 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         return filter_jobs.forecast(forecast_identity(snapshot,method),lambda:calculate_game_markets(snapshot,method))
 
     def calculate_game_markets(snapshot,method):
-        if not any(row['market_key'] in {'alternate_spreads','alternate_totals','team_totals'} for row in snapshot['rows']):return None,None
+        if not has_game_lines(snapshot):return None,None
         try:
-            if snapshot['sport']=='NCAAF':service=ncaaf_forecast_services[method]
-            elif snapshot['sport']=='NBA':service={'PPP':nba_ppp_service,'EPA':nba_epa_service,'ELO':nba_elo_service}[method]
-            else:service={'PPP':ppp_service,'EPA':epa_service,'ELO':elo_service}[method]
+            service=game_services[snapshot['sport']][method]
             return availability_service.apply(snapshot,service.forecast(snapshot),method),None
         except (DataSourceError,OSError,ValueError) as exc:return None,str(exc)
 
@@ -1414,7 +1454,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
         # Fitting starts when the button publishes a new request.
         if page is not None and isinstance(ctx.triggered_id,dict):return changed_selection()
         try:
-            methods,player_methods=selected_methods(methods,player_methods)
+            methods,player_methods=selected_methods(methods,player_methods,market_game_sport(location_hash))
             criteria=criteria_values(probability,edge)
             overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope(
                 'market',market_game_sport(location_hash),market_game_id(location_hash)))
@@ -1442,7 +1482,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             if report:report(5,'Preparing saved quotes and forecast methods')
             assignments=quick_methods.plan(snapshot['rows'],methods,player_methods,overrides)
             needed={method for choices in assignments.values() for method in choices}
-            game_methods=[method for method in quick_methods.GAME_METHODS if method in needed]
+            game_methods=[method for method in quick_methods.game_methods(snapshot['sport']) if method in needed]
             chosen_players=[method for method in quick_methods.PLAYER_METHODS if method in needed]
             tasks={method:lambda method=method:forecast_game_markets(snapshot,method) for method in game_methods}
             tasks.update({method:lambda method=method:forecast_player_markets(snapshot,method) for method in chosen_players})
@@ -1471,7 +1511,10 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 errors.append('Quick Filtering completed, but its report was not saved: '+str(exc))
             return mispricing_results(snapshot,ranked,criteria,errors),history
         if page is None:return calculate_filter()
-        identities=[forecast_identity(snapshot,method) for method in [*methods,*player_methods]]
+        environment=forecast_environment(snapshot['sport'])
+        snapshot_keys={game:forecast_snapshot_key(snapshot,game) for game in (False,True)}
+        identities=[forecast_identity(snapshot,method,environment=environment,snapshot_keys=snapshot_keys)
+                    for method in [*methods,*player_methods]]
         job=request_key([{key:value for key,value in request.items() if key!='sequence'},identities])
         explicit=ctx.triggered_id=='mispricing-request'
         result,pending,error=filter_jobs.tasks.scan(job,calculate_filter,refresh=explicit,force=explicit)
@@ -1499,7 +1542,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             raise PreventUpdate
         if category in {FILTER_CATEGORY,ADDITIONAL_INFORMATION}:return [],no_update
         method = method or "PPP"
-        if method not in ("PPP", "EPA", "ELO"):
+        if method not in quick_methods.game_methods(market_game_sport(location_hash)):
             raise PreventUpdate
         context = [location_hash, selection]
         previous = previous_history if previous_history and previous_history.get("context") == context else {}
@@ -1530,10 +1573,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
             # change a forecast. Reuse the exact saved-snapshot calculation.
             forecast_scope=['game',method] if category=='Game' else ['player',player_method,category if player_method=='WHP' else 'all']
             if category=='Game':
-                sources=ncaaf_forecast_services if snapshot['sport']=='NCAAF' else (
-                    {'PPP':nba_ppp_service,'EPA':nba_epa_service,'ELO':nba_elo_service} if snapshot['sport']=='NBA' else
-                    {'PPP':ppp_service,'EPA':epa_service,'ELO':elo_service})
-                source=sources[method]
+                source=game_services[snapshot['sport']][method]
             else:source={'WHP':whp_service,'UO':usage_opportunity_service,'OAM':opponent_adjusted_service,'PGE':pace_game_environment_service}[player_method]
             revision=forecast_revision(source,snapshot['sport'])
             if snapshot['sport'] in {'NBA','NFL'}:revision.append(availability_service.revision(snapshot['sport']))
@@ -2130,9 +2170,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     register_kalshi_callbacks(app,kalshi_service,pages=exchange_pages.get('Kalshi'))
     def exchange_source_revision(game,method,player_method):
         sport=game['sport']
-        games=(ncaaf_forecast_services if sport=='NCAAF' else
-               {'PPP':nba_ppp_service,'EPA':nba_epa_service,'ELO':nba_elo_service} if sport=='NBA' else
-               {'PPP':ppp_service,'EPA':epa_service,'ELO':elo_service})
+        games=game_services[sport]
         players={'WHP':whp_service,'UO':usage_opportunity_service,
                  'OAM':opponent_adjusted_service,'PGE':pace_game_environment_service}
         return [forecast_revision(games[method],sport),forecast_revision(players[player_method],sport)]

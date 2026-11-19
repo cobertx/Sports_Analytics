@@ -6,7 +6,7 @@ import json
 
 from .navigation import scoped_callback
 
-from dash import Input, Output, State, ctx, dcc, no_update
+from dash import Input, Output, State, ctx, dcc, html, no_update
 from dash.exceptions import PreventUpdate
 
 from .data import DataSourceError
@@ -189,12 +189,22 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
                     snapshot['notices']=[*snapshot.get('notices',[]),
                         f'{len(missing)} selections were absent from the latest response. Previously loaded quotes remain visible with their original timestamps.']
                     if not snapshot.get('fetched_at'):snapshot['fetched_at']=previous_snapshot.get('fetched_at')
-            stamp = format_eastern(snapshot['fetched_at']) if snapshot.get('fetched_at') else 'No live quote timestamp'
-            status = ('SAVED SNAPSHOT' if archived else 'PUBLIC REST QUOTES') + f" · {len(snapshot['rows'])} contracts · Fetched {stamp}."
-            if snapshot.get('notices'): status += ' ' + ' '.join(snapshot['notices'])
-            if snapshot.get('saved'): status += ' JSON/CSV snapshot saved: ' + snapshot['saved']
+            notices=list(snapshot.get('notices') or [])
             if not snapshot['rows']:
-                status += (' Loading this category…' if snapshot.get('updating') else f' {provider} has no contracts for this linked category.')
+                status='Loading market odds…' if snapshot.get('updating') else 'No market odds for this category.'
+            elif snapshot.get('saved'):
+                status='Odds snapshot saved'
+                notices.append(snapshot['saved'])
+            elif archived:
+                status='SAVED SNAPSHOT'
+            elif snapshot.get('updating'):
+                status='Updating market odds'
+            else:
+                status='Market odds update notice' if notices else 'Market odds updated'
+            if snapshot.get('fetched_at'):
+                status+=' · Fetched '+format_eastern(snapshot['fetched_at'])
+            if notices:
+                status=html.Span(status,title=' '.join(notices)).to_plotly_json()
             if pull: options = history_options(game, category)
             chosen = 'live' if pull else selected
             snapshot={**snapshot,'selection':chosen}
@@ -202,15 +212,18 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
             return (no_update if snapshot==previous_snapshot else snapshot,
                     no_update if status==previous_status else status,options,chosen if chosen != selection_before else no_update)
         except (DataSourceError, OSError, ValueError, TypeError) as exc:
-            message=f'{provider} quotes unavailable: '+str(exc)
+            message='Market odds unavailable.'
             same=(previous_snapshot and (previous_snapshot.get('sport'),previous_snapshot.get('game_id'),
                 previous_snapshot.get('category'),previous_snapshot.get('selection'))==(sport,game['id'],category,selected))
             snapshot={**(previous_snapshot if same else {}),'sport':sport,'game_id':game['id'],'category':category,
                 'rows':[{**row,'quote_stale':True,'quote_fetched_at':row.get('quote_fetched_at') or previous_snapshot.get('fetched_at')}
                         for row in previous_snapshot.get('rows',[])] if same else [],'selection':selected,
                 'error':str(exc),'updating':False,'page_pending':False}
-            if same and snapshot['rows']:message+=' Showing previously loaded quotes; see their timestamp.'
-            return snapshot, message, no_update, no_update
+            if same and snapshot['rows']:
+                message='Odds refresh failed · Showing previously loaded quotes'
+                if snapshot.get('fetched_at'):
+                    message+=' · Fetched '+format_eastern(snapshot['fetched_at'])
+            return snapshot, html.Span(message,title=str(exc)).to_plotly_json(), no_update, no_update
         finally:
             with polling_lock:
                 polling[key] -= 1

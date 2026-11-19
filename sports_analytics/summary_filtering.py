@@ -1,10 +1,12 @@
 """Button-triggered method consensus using each provider's settlement rules."""
 import math
+from threading import Lock
 
 from models.Game_Outcome.PPP.PPP import fair_american_odds
 from .filter_jobs import forecast_progress
-from .market_summary import calculate,entries
+from .market_summary import calculate,prepare_forecast
 from .market_view import criteria_match
+from .mispricing import run_forecasts
 
 
 def selection_key(row):return row['provider'],row['index'],row['side'] or ''
@@ -12,18 +14,35 @@ def selection_key(row):return row['provider'],row['index'],row['side'] or ''
 
 def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player_forecast,report=None):
     values={};errors=[]
+    prepared=prepare_forecast(bundle)
     total=len(methods)+len(player_methods)
     forecast_progress(report,0,total)
-    for kind,selected in [('game',methods),('player',player_methods)]:
+    progress_lock=Lock()
+    completed=0
+
+    def evaluate(kind,selected):
+        nonlocal completed
+        results=[]
         for method in selected:
             result=calculate(bundle,method if kind=='game' else methods[0],
-                method if kind=='player' else player_methods[0],game_forecast,player_forecast,kinds=(kind,))
+                method if kind=='player' else player_methods[0],game_forecast,player_forecast,
+                kinds=(kind,),prepared=prepared,inline=True)
+            results.append((method,result))
+            with progress_lock:
+                completed+=1
+                forecast_progress(report,completed,total)
+        return results
+
+    # One pool level. Within each family, preserve the selected method order.
+    results=run_forecasts({'game':lambda:evaluate('game',methods),'player':lambda:evaluate('player',player_methods)},
+                          bundle['sport'])
+    for kind,ranked in results.items():
+        for method,result in ranked:
             errors.extend(result['errors'])
             values[kind,method]={selection_key(row):row for row in result['rows']}
-            forecast_progress(report,len(values),total)
     if report:report(85,'Applying thresholds and ranking selections')
     matches=[];evaluated=unavailable=0
-    for row in entries(bundle):
+    for row in prepared[0]:
         kind='player' if row['category']=='Player Props' else 'game'
         selected=player_methods if kind=='player' else methods
         estimates=[values[kind,method].get(selection_key(row)) for method in selected]

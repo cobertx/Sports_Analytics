@@ -7,7 +7,7 @@ from time import sleep
 import pandas as pd
 
 from .data import DataSourceError,Query
-from .nba_model_data import NbaModelData
+from .nba_model_data import FACTOR_INPUTS,NBA_PACE_INPUT_METHODS,NbaModelData,NbaPaceData
 
 
 @contextmanager
@@ -40,12 +40,19 @@ class NBAReplayHistory:
         self.backtesting=backtesting
         self.root=Path(root or ROOT)
         self.boxes=NbaModelData(self.root/'data/modeling/nba',service=backtesting.data)
+        self.pace=NbaPaceData(self.boxes.directory/'pace',service=backtesting.data)
         self.locks=Path(backtesting.data.path).parent/'backtest_sources'
 
-    def box_season(self,season,phases,refresh_current=False):
+    def box_season(self,season,phases,refresh_current=False,*,require_minutes=False,require_factors=False):
+        require_minutes=require_minutes or require_factors
         for phase in phases:
             with source_lock(self.locks/f'nba_{season}_{phase}.lock'):
-                if not refresh_current and (self.boxes.directory/f'team_games_{season}_{phase}.csv').exists():continue
+                path=self.boxes.directory/f'team_games_{season}_{phase}.csv'
+                pace_path=self.pace.directory/path.name
+                if not refresh_current and path.exists() and (not require_minutes or pace_path.exists()):
+                    if not require_factors:continue
+                    with pace_path.open(encoding='utf-8') as prepared:
+                        if FACTOR_INPUTS <= set(prepared.readline().strip().split(',')):continue
                 query=Query('NBA',season,'team',phase)
                 dataset=self.backtesting.data.cached(self.backtesting.data.key(query))
                 # Finished seasons are reused locally, independent of live-page TTLs.
@@ -55,6 +62,7 @@ class NBAReplayHistory:
                 if dataset.frame.empty:
                     raise DataSourceError(f'No completed NBA {season} {phase} box scores are available.')
                 self.boxes._prepare_dataset(dataset,query)
+                if require_minutes:self.pace._prepare_dataset(dataset,query)
 
     def epa_season(self,season,progress):
         from models.Game_Outcome.EPA.nba_epa_training import NBAEPAData
@@ -79,7 +87,10 @@ class NBAReplayHistory:
             try:
                 # No postseason exists yet before spring of a season's ending year.
                 active=[phase for phase in phases if phase=='regular' or latest>=pd.Timestamp(f'{season+1}-04-01',tz='UTC')]
-                self.box_season(season,active,refresh_current=season==current)
+                if key in NBA_PACE_INPUT_METHODS:
+                    self.box_season(season,active,refresh_current=season==current,require_minutes=True,require_factors=key=='ff')
+                else:
+                    self.box_season(season,active,refresh_current=season==current)
                 if key=='epa' and season<current:
                     notify(f'Downloading/reconciling NBA EPA {season}-{str(season+1)[-2:]} events; saved inputs are reused')
                     self.epa_season(season,lambda done,total,message:notify(message))
@@ -95,6 +106,15 @@ class NBAReplayHistory:
                 except DataSourceError:continue
                 training=season_phases(training,'NBA');training=training[training.season_type.isin(phases)]
                 prior=training[training.event_date.lt(earliest)&training.available_at.lt(earliest)]
+                if key in NBA_PACE_INPUT_METHODS:
+                    prior=prior[prior.elapsed_minutes.notna()] if 'elapsed_minutes' in prior else prior.iloc[:0]
+                    if key=='ff':
+                        if not FACTOR_INPUTS<=set(prior):continue
+                        from models.Game_Outcome.Four_Factors.NBA_FF import valid_box_counts
+                        _,complete=valid_box_counts(prior)
+                        prior=prior[complete]
+                    if prior.empty or prior.loc[prior.elapsed_minutes.eq(48),'game_id'].nunique()<config.minimum_calibration_games:
+                        continue
                 warmup=config.minimum_training_games+config.maximum_calibration_games
                 teams=set(games[0].team)
                 if (prior.game_id.nunique()>=warmup and all(

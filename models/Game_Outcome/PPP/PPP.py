@@ -24,7 +24,7 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from models.replay import replay_memoized, calibration_tail
+from models.replay import CalibrationRows, FoldTeamStats, replay_memoized, calibration_tail
 from models.season_weights import calendar_weights
 
 
@@ -237,22 +237,22 @@ class PPPModel:
             coefficients[0] += center
         return {"teams": index, "coefficients": coefficients, "league": league}
 
-    def _means(self, frame, ratings, home, away, neutral=False):
+    def _means(self, frame, ratings, home, away, neutral=False, *, stats=None):
         n = len(ratings["teams"])
-        own = {team: frame[frame["team"].eq(team)] for team in (home, away)}
+        stats = stats if stats is not None else FoldTeamStats(frame)
+        own = {team: stats.rows(team) for team in (home, away)}
         if any(len(rows) < self.config.minimum_team_games for rows in own.values()):
             raise PPPError(f"Both teams need at least {self.config.minimum_team_games} prior games for a PPP estimate.")
-        def average(rows, column):
-            return np.average(rows[column], weights=rows["weight"])
+        average = stats.average
         # Share a matchup-level drive forecast; each side has its own plays/drive.
-        drives = np.mean([average(own[home], "offensive_drives"), average(own[home], "defensive_drives"),
-                          average(own[away], "offensive_drives"), average(own[away], "defensive_drives")])
-        league_delta = np.average(frame["non_offensive_points"], weights=frame["weight"])
+        drives = np.mean([average(home, "offensive_drives"), average(home, "defensive_drives"),
+                          average(away, "offensive_drives"), average(away, "defensive_drives")])
+        league_delta = average(FoldTeamStats.LEAGUE, "non_offensive_points")
         means, detail = [], {}
         for team, opponent, sign in ((home, away, 1), (away, home, -1)):
-            rows, other = own[team], own[opponent]
-            length = (average(rows, "offensive_plays") / average(rows, "offensive_drives") +
-                      average(other, "defensive_plays") / average(other, "defensive_drives")) / 2
+            rows = own[team]
+            length = (average(team, "offensive_plays") / average(team, "offensive_drives") +
+                      average(opponent, "defensive_plays") / average(opponent, "defensive_drives")) / 2
             plays = drives * length
             beta, indices = ratings["coefficients"], ratings["teams"]
             rate = math.exp(beta[0] + beta[1] * sign * (not neutral) / 2 + beta[2 + indices[team]] + beta[2 + n + indices[opponent]])
@@ -266,6 +266,7 @@ class PPPModel:
     def _validation_fold(self, training, held_out, cutoff):
         training = self._history(training, cutoff)
         ratings = self._fit(training)
+        stats = FoldTeamStats(training)
         errors = []
         for game_id, game in held_out.groupby("game_id"):
             home = game[game["is_home"].eq(1)]
@@ -274,7 +275,7 @@ class PPPModel:
                 continue
             h, a = home.iloc[0], away.iloc[0]
             try:
-                means, _ = self._means(training, ratings, h["team"], a["team"], bool(h["neutral"]))
+                means, _ = self._means(training, ratings, h["team"], a["team"], bool(h["neutral"]), stats=stats)
             except PPPError:
                 continue
             errors.append({"game_id": game_id, "date": h["event_date"].isoformat(),
@@ -285,17 +286,19 @@ class PPPModel:
         if home_team == away_team:
             raise PPPError("Choose two different NFL teams.")
         history = self._history(observations, as_of)
+        # Outer weights differ for each forecast. The calibration fold computes
+        # its own weights, so prepare the unweighted source once.
+        calibration = history.drop(columns="weight")
+        folds = CalibrationRows(calibration)
         # Entire game weeks are held out: no observation from a predicted week
         # enters its fit. Residuals are genuinely forward predictions, not fit errors.
         def evaluate(held_out):
-            training = history[history["available_at"].lt(held_out["event_date"].min())]
+            cutoff = held_out["event_date"].min()
+            training = calibration[calibration["available_at"].lt(cutoff)]
             if training["game_id"].nunique() < self.config.minimum_training_games:
                 return []
-            # Outer forecast weights change each game; the fold recomputes its
-            # own weights at its original cutoff, so omit outer weights from keys.
-            return self._validation_fold(training.drop(columns="weight"),
-                held_out.drop(columns="weight"), held_out["event_date"].min())
-        errors = calibration_tail(history, ["season", "week"], self.config.maximum_calibration_games, evaluate)
+            return folds.fold(self,self._validation_fold,training,held_out,cutoff)
+        errors = calibration_tail(calibration, ["season", "week"], self.config.maximum_calibration_games, evaluate)
         if len(errors) < self.config.minimum_calibration_games:
             raise PPPError(f"PPP needs at least {self.config.minimum_calibration_games} chronological validation games; found {len(errors)}.")
         residuals = np.array([[row["home_error"], row["away_error"]] for row in errors])

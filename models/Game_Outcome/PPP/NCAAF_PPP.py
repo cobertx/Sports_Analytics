@@ -61,14 +61,17 @@ class NCAAFPPPModel(PPPModel):
         frame['weight']=calendar_weights(frame,as_of,self.config.half_life_days,'NCAAF',self.config.prior_season_weight)
         return frame
 
-    def _means(self,frame,ratings,home,away,neutral=False):
+    def _means(self,frame,ratings,home,away,neutral=False,*,stats=None):
         n=len(ratings['teams']);beta=ratings['coefficients'];indices=ratings['teams']
         means,details=[],{}
         for team,opponent,sign in [(home,away,1),(away,home,-1)]:
-            own=frame[frame.team.eq(team)];other=frame[frame.team.eq(opponent)]
+            own=stats.rows(team) if stats is not None else frame[frame.team.eq(team)]
+            other=stats.rows(opponent) if stats is not None else frame[frame.team.eq(opponent)]
             if min(len(own),len(other))<self.config.minimum_team_games:
                 raise PPPError('Both college schools need earlier appearances for a forecast.')
-            plays=(np.average(own.offensive_plays,weights=own.weight)+np.average(other.defensive_plays,weights=other.weight))/2
+            offense=stats.average(team,'offensive_plays') if stats is not None else np.average(own.offensive_plays,weights=own.weight)
+            defense=stats.average(opponent,'defensive_plays') if stats is not None else np.average(other.defensive_plays,weights=other.weight)
+            plays=(offense+defense)/2
             rate=float(np.exp(beta[0]+beta[1]*sign*(not neutral)/2+beta[2+indices[team]]+beta[2+n+indices[opponent]]))
             means.append(float(plays*rate))
             details[team]=dict(expected_plays=float(plays),matchup_ppp=rate,prior_games=len(own))

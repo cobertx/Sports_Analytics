@@ -91,7 +91,8 @@ class ProviderReturnChecks(TestCase):
             result=self.cb['kalshi_quotes']('kalshi','NFL',self.f.game,'Game Lines','live',1,0,5,route,None,None,previous)
             self.assertEqual(result[0]['rows'],[{**row,'quote_stale':True,'quote_fetched_at':previous['fetched_at']} for row in previous['rows']])
             self.assertFalse(result[0]['updating'])
-            self.assertIn('previously loaded',result[1])
+            self.assertIn('previously loaded',result[1]['props']['children'])
+            self.assertEqual(result[1]['props']['title'],'offline fixture')
             different={**previous,'game_id':'different'}
             result=self.cb['kalshi_quotes']('kalshi','NFL',self.f.game,'Game Lines','live',1,0,5,route,None,None,different)
             self.assertEqual(result[0]['rows'],[])

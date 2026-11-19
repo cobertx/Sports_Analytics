@@ -30,6 +30,12 @@ def season_factors(frame, sport, as_of=None, discount=PRIOR_SEASON_WEIGHT):
     if not len(frame):
         return np.empty(0)
     seasons = season_ids(frame, sport).to_numpy(dtype=float)
+    return season_factors_from_ids(seasons, sport, as_of, discount)
+
+
+def season_factors_from_ids(seasons, sport, as_of=None, discount=PRIOR_SEASON_WEIGHT):
+    if not len(seasons):
+        return np.empty(0)
     if as_of is None:
         current = seasons.max()
     else:

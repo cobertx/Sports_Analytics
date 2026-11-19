@@ -244,7 +244,7 @@ class ResponsivenessChecks(TestCase):
             self.assertEqual(loader.custom_spinner.role,'status')
             self.assertIn('action-loading-overlay',loader.custom_spinner.className)
             self.assertFalse(getattr(loader,'fullscreen',False))
-        for identity in ['kalshi-quick-status','market-detail-pull-status','performance-results','load-status','pnl-import-message']:
+        for identity in ['kalshi-quote-status','kalshi-model-status','market-detail-pull-status','performance-results','load-status','pnl-import-message']:
             self.assertTrue(any(any(getattr(child,'id',None)==identity for child in components(loader.children)) for loader in loaders),identity)
         identifiers=[node.id for node in nodes if isinstance(getattr(node,'id',None),str)]
         self.assertEqual(len(identifiers),len(set(identifiers)))
@@ -255,7 +255,8 @@ class ResponsivenessChecks(TestCase):
         with fixture.app.server.test_client() as client:
             self.assertEqual(client.get('/_dash-layout').status_code,200)
             self.assertEqual(client.get('/assets/loading.css').status_code,200)
-        self.assertIn('kalshi-quick-status',MESSAGES)
+        self.assertIn('kalshi-quick-status',identifiers)
+        self.assertNotIn('kalshi-quick-status',MESSAGES)
         css=(Path(__file__).resolve().parents[1]/'sports_analytics/assets/loading.css').read_text(encoding='utf-8')
         # Dash uses parent_className twice: wrapper -> content -> actual child.
         # A descendant :last-child rule also disables the entire content child.

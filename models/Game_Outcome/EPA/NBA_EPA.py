@@ -16,7 +16,7 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from models.replay import cached_calculation, fingerprint, calibration_tail
+from models.replay import CalibrationRows, FoldTeamStats, cached_calculation, fingerprint, calibration_tail
 from models.season_weights import calendar_weights
 from models.Game_Outcome.PPP.PPP import PPPError
 from models.Game_Outcome.PPP.NBA_PPP import NBAPPPConfig, NBAPPPForecast, NBAPPPModel
@@ -105,24 +105,27 @@ class NBAEPAModel(NBAPPPModel):
             team_beta[0] += center
         return {"state_beta": state_beta, "team_beta": team_beta, "teams": mapping}
 
-    def _epv_means(self, history, fitted, home, away, as_of, neutral=False):
-        own = {team: history[history.team.eq(team)] for team in (home, away)}
+    def _team_stats(self, history, as_of):
+        return FoldTeamStats(history, lambda frame: calendar_weights(
+            frame, as_of, self.config.half_life_days, 'NBA', self.config.prior_season_weight).to_numpy(), float_values=True)
+
+    def _epv_means(self, history, fitted, home, away, as_of, neutral=False, *, stats=None):
+        stats = stats if stats is not None else self._team_stats(history, as_of)
+        own = {team: stats.rows(team) for team in (home, away)}
         if home == away or any(len(frame) < self.config.minimum_team_games for frame in own.values()):
             raise PPPError("Both NBA teams need enough reconciled prior games for EPA/EPV.")
-        def average(frame, columns):
-            weights = calendar_weights(frame, as_of, self.config.half_life_days, 'NBA', self.config.prior_season_weight).to_numpy()
-            return np.average(frame[columns].to_numpy(float), weights=weights, axis=0)
-        pace = float(np.mean([average(own[home], "offensive_possessions"), average(own[home], "defensive_possessions"),
-                              average(own[away], "offensive_possessions"), average(own[away], "defensive_possessions")]))
-        league_extra = float(average(history, "additional_points"))
+        average = stats.average
+        pace = float(np.mean([average(home, "offensive_possessions"), average(home, "defensive_possessions"),
+                              average(away, "offensive_possessions"), average(away, "defensive_possessions")]))
+        league_extra = float(average(FoldTeamStats.LEAGUE, "additional_points"))
         means, details = [], {}
         n, beta, mapping = len(fitted["teams"]), fitted["team_beta"], fitted["teams"]
         for team, opponent, sign in [(home, away, 1), (away, home, -1)]:
-            frame, other = own[team], own[opponent]
+            frame = own[team]
             # Project starting context from earlier own/offensive and opposing
             # defensive possession contexts. No future actual context/pace is used.
-            start = (average(frame, ["start_"+x for x in FEATURES]) +
-                     average(other, ["def_start_"+x for x in FEATURES])) / 2
+            start = (average(team, tuple("start_"+x for x in FEATURES)) +
+                     average(opponent, tuple("def_start_"+x for x in FEATURES))) / 2
             baseline = float(start @ fitted["state_beta"])
             if not math.isfinite(baseline) or baseline <= 0:
                 raise PPPError("NBA EPV projected starting value is invalid.")
@@ -131,7 +134,7 @@ class NBAEPAModel(NBAPPPModel):
             efficiency = baseline + advantage
             if not math.isfinite(efficiency) or efficiency <= 0:
                 raise PPPError("NBA EPA/EPV fitted an invalid matchup efficiency.")
-            extra = (float(average(frame, "additional_points"))*len(frame) + 10*league_extra)/(len(frame)+10)
+            extra = (float(average(team, "additional_points"))*len(frame) + 10*league_extra)/(len(frame)+10)
             means.append(pace*efficiency + extra)
             details[team] = {"expected_possessions": pace, "starting_epv": baseline,
                              "epa_advantage_per_possession": advantage, "expected_points_per_possession": efficiency,
@@ -144,11 +147,12 @@ class NBAEPAModel(NBAPPPModel):
 
     def _validation_fold(self, training, held, cutoff, dataset, state_key):
         fitted = self._cached_fit_epv(training, dataset, cutoff, state_key)
+        stats = self._team_stats(training, cutoff)
         errors = []
         for game_id, game in held.groupby("game_id"):
             h, a = game[game.is_home.eq(1)].iloc[0], game[game.is_home.eq(0)].iloc[0]
             try:
-                means, _ = self._epv_means(training, fitted, h.team, a.team, cutoff)
+                means, _ = self._epv_means(training, fitted, h.team, a.team, cutoff, stats=stats)
             except PPPError:
                 continue
             errors.append({"game_id": game_id, "date": h.event_date.isoformat(),
@@ -163,13 +167,14 @@ class NBAEPAModel(NBAPPPModel):
         # The changing dataset.games is already represented by each training
         # frame. Fingerprint the shared sufficient statistics once per forecast.
         state_key = fingerprint((dataset.game_ids, dataset.state_xx, dataset.state_xy))
+        folds = CalibrationRows(history)
         weeks = history.event_date.dt.strftime("%G-%V")
         def evaluate(held):
             cutoff = held.event_date.min()
             training = history[history.available_at.lt(cutoff) & history.event_date.lt(cutoff)]
             if training.game_id.nunique() < self.config.minimum_training_games:
                 return []
-            return cached_calculation(self, 'epv_validation_fold', (training, held, cutoff, state_key),
+            return cached_calculation(self, 'epv_validation_fold', lambda: (folds.key(training), folds.key(held), cutoff, state_key),
                 lambda: self._validation_fold(training, held, cutoff, dataset, state_key))
         errors = calibration_tail(history, weeks, self.config.maximum_calibration_games, evaluate)
         if len(errors) < self.config.minimum_calibration_games:

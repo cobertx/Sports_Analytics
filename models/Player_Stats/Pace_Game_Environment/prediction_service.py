@@ -21,6 +21,7 @@ from .features import volume_rows
 from .pace_model import PaceModel
 from models.Player_Stats.Usage_Opportunity.prediction_service import UsageMarketForecast
 from .historical_data import PaceHistoryRepository, eligible, match_player, identity_name
+from models.Player_Stats.Weighted_Historical_Performance.prediction_service import PlayerHistoryIndex
 from models.Player_Stats.Usage_Opportunity.market_comparison import compare_price
 from models.Player_Stats.Usage_Opportunity.markets import market_spec, prop_key, quote_index
 from models.Player_Stats.Usage_Opportunity.nba_model import simulate_nba
@@ -84,7 +85,9 @@ class PaceGameEnvironmentMarketService:
         # Retain all clubs while resolving current identity. Otherwise filtering
         # first could erase a player's later trade away from this matchup.
         subjects = {identity_name(row['subject']) for row in snapshot['rows'] if row['market_key'].startswith('player_')}
-        players = players[players.entity_name.map(identity_name).isin(subjects)].copy()
+        player_names = players.entity_name.map(identity_name)
+        subject_mask = player_names.isin(subjects)
+        players = players[subject_mask].copy()
         if teams.empty or players.empty:
             raise DataSourceError('No saved matchup team/player inputs before the snapshot cutoff. Run Pace_Game_Environment --prepare.')
         signature = sha256(b''.join(path.read_bytes() for path in sorted([*Path(__file__).parent.glob('*.py'), *(Path(__file__).parent.parent/'Usage_Opportunity').glob('*.py')]))).hexdigest()
@@ -110,9 +113,10 @@ class PaceGameEnvironmentMarketService:
         volumes = volume_rows(sport,all_teams)
         model = replay_instance(PaceModel, config).fit(volumes)
         valid_keys = set(zip(volumes.game_id,volumes.team))
-        teams = teams[[ (str(r.game_id),r.team) in valid_keys for _,r in teams.iterrows() ]].copy()
+        teams = teams[[key in valid_keys for key in zip(teams.game_id,teams.team)]].copy()
         result, matched, failed_players = PaceMarketForecast(), {}, {}
-        players['_whp_name'] = players.entity_name.map(identity_name)
+        players['_whp_name'] = player_names[subject_mask].to_numpy()
+        player_index = PlayerHistoryIndex(players)
         for row in snapshot['rows']:
             if not row['market_key'].startswith('player_'):
                 continue
@@ -127,7 +131,7 @@ class PaceGameEnvironmentMarketService:
                 result.errors[key] = failed_players[row['subject']]
                 continue
             try:
-                history = match_player(players, snapshot, row['subject'], cutoff)
+                history = match_player(players, snapshot, row['subject'], cutoff,index=player_index)
                 latest = history.iloc[-1]
                 # Only current-club appearances enter opportunity ratios.
                 matched[row['subject']] = dict(team=latest.team, history=history[history.team.eq(latest.team)])

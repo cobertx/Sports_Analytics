@@ -283,6 +283,9 @@ class AvailabilityAdjuster:
     def _game(self,snapshot,result,games,ledger,outs,cutoff,info):
         sport = snapshot['sport']
         variance_margin = variance_total = 0.
+        simulate_adjustment = getattr(result, 'apply_score_adjustment', None)
+        initial_scores = np.array([result.home_mean, result.away_mean])
+        added_covariance = np.zeros((2, 2))
         try:covariance = np.asarray(result.diagnostics.get('score_covariance'),dtype=float)
         except (ValueError,TypeError):covariance = np.asarray(None,dtype=float)
         covariance = covariance.copy() if covariance.shape==(2,2) and np.isfinite(covariance).all() else None
@@ -298,6 +301,8 @@ class AvailabilityAdjuster:
             setattr(result,side+'_mean',float(after[0])); setattr(result,other+'_mean',float(after[1]))
             variance_margin += max(0.,float(np.array([1,-1]) @ effect.covariance @ np.array([1,-1])))
             variance_total += max(0.,float(np.ones(2) @ effect.covariance @ np.ones(2)))
+            if simulate_adjustment:
+                added_covariance += effect.covariance if side=='home' else effect.covariance[::-1,::-1]
             if covariance is not None:
                 # Effect coordinates are own/opponent; the forecast covariance
                 # is always home/away, including when an away player is absent.
@@ -305,6 +310,9 @@ class AvailabilityAdjuster:
             info['applied'].append(dict(team=team,**effect.evidence,
                 description=f'{team} scoring {before[0]:.2f} → {after[0]:.2f}, opponent scoring {before[1]:.2f} → {after[1]:.2f} points',
                 score_change=(after-np.asarray(before)).tolist()))
+        if simulate_adjustment and info['applied']:
+            simulate_adjustment(np.array([result.home_mean, result.away_mean]) - initial_scores, added_covariance)
+            return
         result.margin_sd = math.sqrt(result.margin_sd**2+variance_margin)
         result.total_sd = math.sqrt(result.total_sd**2+variance_total)
         if covariance is not None:result.diagnostics['score_covariance']=covariance.tolist()

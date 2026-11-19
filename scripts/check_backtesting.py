@@ -14,9 +14,9 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from models.replay import calibration_tail, cached_calculation, replay_cache, fingerprint
+from models.replay import CalibrationRows, calibration_tail, cached_calculation, replay_cache, fingerprint
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.backtesting_service import BacktestingService, estimation_history, game_model, eligible_pairs
+from sports_analytics.backtesting_service import BacktestingService, ReplayHistory, estimation_history, game_model, eligible_pairs
 from models.Player_Stats.Weighted_Historical_Performance.core import WHPConfig, WeightedHistoricalPerformance, eligible_history
 from models.Player_Stats.Usage_Opportunity.historical_data import UsageHistoryRepository
 from models.Player_Stats.Pace_Game_Environment.config import PaceConfig
@@ -61,6 +61,21 @@ def saved_game_report(run_id='a'*64,created='2025-10-01T12:00:00Z'):
 
 
 class ReplayChecks(TestCase):
+    def test_prepared_replay_preserves_fold_keys_and_point_in_time_rows(self):
+        frame=team_history().sample(frac=1,random_state=5)
+        frame.loc[frame.index%7==0,'available_at']+=pd.Timedelta(days=4)
+        frame.loc[frame.index%11==0,'available_at']=pd.NaT
+        history=ReplayHistory(frame)
+        with replay_cache():
+            folds=CalibrationRows(history.rows)
+            dates=sorted(frame.event_date.unique())[::5]
+            for cutoff in dates:
+                for limit in (None,4):
+                    expected=estimation_history(frame,cutoff,limit,paired=True)
+                    actual=history.before(cutoff,limit,paired=True)
+                    pd.testing.assert_frame_equal(actual,expected)
+                    self.assertEqual(folds.key(actual),fingerprint(expected))
+
     def test_prediction_timeline_omits_offseason_gaps_and_retains_dates_and_intervals(self):
         from copy import deepcopy
         from sports_analytics.backtesting_results import render

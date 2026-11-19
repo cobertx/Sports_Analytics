@@ -16,13 +16,15 @@ from dash.exceptions import PreventUpdate
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.backtesting_service import BacktestingService,NFL_PLAYER_COHORT
+from sports_analytics.backtesting_service import BacktestingService,NFL_PLAYER_COHORT,PREDICTIVE_Z
 from sports_analytics.backtesting_view import GROUPS,available_models,model_config,navigation,page,PERFORMANCE_ROUTE,summary_route
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.performance_summary import PerformanceSummaries,settings,render,range_accuracy,comparison_charts
 from check_backtesting import saved_game_report
 from check_kalshi import components
+
+NBA_GAME_KEYS = tuple(model.key for model in available_models('NBA','game-outcome'))
 
 
 def performance_rows(content):
@@ -203,7 +205,7 @@ class PerformanceSummaryChecks(TestCase):
             self.assertEqual(values['performance-limit'],10)
             self.assertEqual(values['performance-state']['source'],'latest-saved')
             payload=self.post_callback(app,'performance_results',values,'performance-state.data')
-            self.assertIn('Recent 80% range accuracy by model',str(payload))
+            self.assertIn('Rolling 80% interval coverage',str(payload))
             values['performance-team']='BOS'
             self.post_callback(app,'performance_load',values,'performance-team.value')
             self.assertEqual(values['performance-limit'],20)
@@ -236,71 +238,72 @@ class PerformanceSummaryChecks(TestCase):
         self.assertEqual(values['performance-state']['id'],pending['id'])
         self.assertTrue(any(e['state']=='running' for e in values['performance-state']['entries'].values()))
 
-    def test_comparison_charts_plot_coverage_error_and_chronological_rolling_accuracy_from_the_same_sample(self):
+    def test_comparison_charts_use_the_same_cohort_for_coverage_forecast_calibration_and_interval_widths(self):
         reports={key:self.seed(key) for key in ['ppp','epa']}
-        for report in reports.values():
+        for key,report in reports.items():
             for index,row in enumerate(report['records']):
-                row.update(predicted_margin=row['actual_margin']+10*index,margin_sd=1)
+                row.update(predicted_margin=row['actual_margin']+(10*index if key=='ppp' else 0),margin_sd=1)
         manager=SimpleNamespace(reports=lambda _:reports)
         manifest=dict(context=self.context,settings=self.request,entries={key:dict(state='completed') for key in reports})
         content=render(manager,manifest,'margin',5,'common')
         charts=[c.figure for c in components(content) if c.__class__.__name__=='Graph']
-        self.assertEqual(len(charts),3)
-        self.assertEqual(list(charts[0].data[0].y),[.5,.5])
+        self.assertEqual(len(charts),4)
+        self.assertEqual(sum('performance-chart-wide' in (getattr(c,'className','') or '') for c in components(content)),2)
+        self.assertEqual(list(charts[0].data[0].y),[.5,1])
+        self.assertEqual(list(charts[0].data[0].marker.color),['#ffa3af','#57dbc4'])
         self.assertEqual(charts[0].layout.shapes[0].y0,.8)
-        self.assertEqual(list(charts[1].data[0].y),[5,5])
-        self.assertAlmostEqual(charts[1].data[1].y[0],50**.5)
-        self.assertEqual(list(charts[1].data[2].y),[2.5,2.5])
-        self.assertEqual(list(charts[2].data[0].y),[1,.5])
-        self.assertEqual(list(charts[2].data[0].x),[1,2])
-        self.assertEqual(charts[2].data[0].customdata[-1][3],'1 / 2')
-        self.assertEqual(charts[2].layout.shapes[0].y0,.8)
-        self.assertEqual(charts[2].layout.yaxis.tickformat,'.0%')
+        self.assertEqual(list(charts[1].data[0].y),[1,.5])
+        self.assertEqual(list(charts[1].data[0].x),['2025-09-19','2025-09-20'])
+        self.assertEqual(charts[1].data[0].customdata[-1],[1,2,2])
+        self.assertEqual(charts[1].layout.shapes[0].y0,.8)
+        self.assertEqual(charts[1].layout.yaxis.tickformat,'.0%')
+        self.assertEqual(list(charts[2].data[0].x),[5,16])
+        self.assertEqual(list(charts[2].data[0].y),[5,6])
+        self.assertEqual(sum(charts[2].data[0].customdata),2)
+        self.assertAlmostEqual(charts[3].data[0].median[0],2*PREDICTIVE_Z)
         self.assertIn('same shared observations',str(content))
         full=render(manager,manifest,'margin',5,'all')
-        self.assertIn('equal positions can represent different games',str(full))
+        self.assertIn('Each model uses its own evaluated observations',str(full))
         reports['epa']['records'][0]['game_id']='another-game'
         reports['epa']['records']=reports['epa']['records'][:1]
         empty=render(manager,manifest,'margin',5,'common')
         self.assertIn('No shared evaluated observations to plot',str(empty))
         self.assertFalse(any(c.__class__.__name__=='Graph' for c in components(empty)))
 
-    def test_accuracy_trend_rolls_ten_observations_and_excludes_invalid_or_other_level_ranges(self):
-        rows=[dict(actual=10,lower=10,upper=20,interval_level=.8,date=pd.Timestamp('2026-01-01',tz='UTC'),label='Player')
-              for _ in range(12)]
+    def test_accuracy_trend_uses_a_longer_window_and_excludes_invalid_or_other_level_ranges(self):
+        rows=[dict(actual=10,predicted=10,lower=10,upper=20,interval_level=.8,date=day,label='Player')
+              for day in pd.date_range('2026-01-01',periods=104,tz='UTC')]
         rows[0]['interval_level']=.9
         rows[2]['lower']=None
         rows[3]['upper']=float('nan')
         rows[4].update(lower=20,upper=10)
         rows[6]['actual']=21
         rows[10]['actual']=20
-        rows[11]['date']=pd.Timestamp('2026-10-01',tz='UTC')
         metric=dict(method='WHP',label='Player points',compared=12,**range_accuracy(rows))
         content=comparison_charts(dict(records={'whp':rows}),{'whp':metric},'all')
-        chart=[c.figure for c in components(content) if c.__class__.__name__=='Graph'][2]
-        self.assertEqual(list(chart.data[0].x),list(range(1,13)))
+        chart=[c.figure for c in components(content) if c.__class__.__name__=='Graph'][1]
         self.assertIsNone(chart.data[0].y[0])
         self.assertEqual(chart.data[0].y[1],1)
         self.assertAlmostEqual(chart.data[0].y[10],6/7)
-        self.assertAlmostEqual(chart.data[0].y[11],6/7)
-        self.assertEqual(chart.data[0].customdata[11][2:],[10,'6 / 7'])
-        self.assertIn('09/30/2026',chart.data[0].customdata[11][0])
+        self.assertAlmostEqual(chart.data[0].y[11],7/8)
+        self.assertEqual(chart.data[0].customdata[-1],[98,99,100])
+        self.assertEqual(chart.data[0].x[-1],'2026-04-13')
         self.assertFalse(chart.data[0].connectgaps)
         for row in rows:row['interval_level']=.9
         empty=comparison_charts(dict(records={'whp':rows}),{'whp':{**metric,**range_accuracy(rows)}},'all')
-        chart=[c.figure for c in components(empty) if c.__class__.__name__=='Graph'][2]
-        self.assertTrue(all(value is None for value in chart.data[0].y))
-        self.assertTrue(any('No valid 80% ranges' in note.text for note in chart.layout.annotations))
+        chart=[c.figure for c in components(empty) if c.__class__.__name__=='Graph'][1]
+        self.assertFalse(chart.data)
+        self.assertTrue(any('No valid 80% intervals' in note.text for note in chart.layout.annotations))
 
     def test_matching_completed_reports_load_without_starting_jobs_and_reuse_the_manifest(self):
-        for key in ['ppp','epa','elo']:self.seed(key)
+        for key in NBA_GAME_KEYS:self.seed(key)
         with patch.object(self.backend,'start',side_effect=AssertionError('Do not refit saved results')):
             manifest=self.manager.ensure(self.context,self.request,'__all__')
             self.assertTrue(all(e['state']=='completed' and e['reused'] for e in manifest['entries'].values()))
-            self.assertEqual(len(self.manager.reports(manifest)),3)
+            self.assertEqual(len(self.manager.reports(manifest)),len(NBA_GAME_KEYS))
             self.assertEqual(self.manager.ensure(self.context,self.request,'__all__')['id'],manifest['id'])
         restarted=PerformanceSummaries(BacktestingService(root=self.backend.root),watch=False)
-        self.assertEqual(len(restarted.reports(restarted.read(self.context,manifest['id']))),3)
+        self.assertEqual(len(restarted.reports(restarted.read(self.context,manifest['id']))),len(NBA_GAME_KEYS))
 
     def test_only_missing_models_run_in_the_shared_progress_monitor_and_repeat_clicks_join(self):
         self.seed('ppp');entered=Event();release=Event()
@@ -314,10 +317,10 @@ class PerformanceSummaryChecks(TestCase):
                 self.assertTrue(entered.wait(2))
                 self.assertEqual(manifest['entries']['ppp']['state'],'completed')
                 jobs=self.backend.active_jobs()
-                self.assertEqual({j['parameters']['key'] for j in jobs},{'epa','elo'})
+                self.assertEqual({j['parameters']['key'] for j in jobs},set(NBA_GAME_KEYS)-{'ppp'})
                 self.assertTrue(all('Performance Summary' in j['display_label'] for j in jobs))
                 joined=self.manager.ensure(self.context,self.request,'__all__')
-                self.assertEqual(joined['id'],manifest['id']);self.assertEqual(len(self.backend.active_jobs()),2)
+                self.assertEqual(joined['id'],manifest['id']);self.assertEqual(len(self.backend.active_jobs()),len(NBA_GAME_KEYS)-1)
             finally:release.set()
             for entry in manifest['entries'].values():
                 job=entry.get('job_id')
@@ -328,7 +331,7 @@ class PerformanceSummaryChecks(TestCase):
                     self.assertEqual(self.backend.progress(job)['state'],'completed')
         completed=self.manager.refresh(self.context,manifest['id'])
         self.assertTrue(all(e['state']=='completed' for e in completed['entries'].values()))
-        self.assertEqual(len(self.manager.reports(completed)),3)
+        self.assertEqual(len(self.manager.reports(completed)),len(NBA_GAME_KEYS))
 
     def test_scope_defaults_and_reference_lines_must_match_before_reuse(self):
         original=self.seed('ppp')
@@ -348,7 +351,7 @@ class PerformanceSummaryChecks(TestCase):
             self.assertIsNone(self.manager.matching(player,model,{**request,**changes}))
 
     def test_total_metrics_do_not_mislabel_winner_probabilities_and_common_sample_is_exact(self):
-        reports={key:self.seed(key) for key in ['ppp','epa','elo']}
+        reports={key:self.seed(key) for key in NBA_GAME_KEYS}
         changed=reports['epa'];changed['records']=changed['records'][1:]
         path=self.backend.root/'nba/game-outcome/epa'/(changed['run_id']+'.json')
         path.write_text(json.dumps(dict(result=changed)),encoding='utf-8')
@@ -364,7 +367,8 @@ class PerformanceSummaryChecks(TestCase):
         margin=render(self.manager,manifest,'margin',5,'common')
         self.assertIn('Winner accuracy',str(margin));self.assertIn('Open results',str(margin));self.assertIn('100.0%',str(margin))
         full=render(self.manager,manifest,'margin',5,'all')
-        self.assertEqual([row['Compared'] for row in performance_rows(full)],['2','1','2'])
+        self.assertEqual([row['Compared'] for row in performance_rows(full)],
+                         ['1' if key=='epa' else '2' for key in NBA_GAME_KEYS])
         self.assertIn('Each model uses its own evaluated sample',str(full))
 
     def test_range_accuracy_includes_endpoints_and_excludes_invalid_or_other_level_ranges(self):
@@ -455,7 +459,7 @@ class PerformanceSummaryChecks(TestCase):
         with self.assertRaises(PreventUpdate):callbacks['performance_results'](None,None,None,None,None,None,None,None,None,5,None)
 
     def test_dash_http_load_results_and_changed_filters_do_not_show_wrong_scope(self):
-        for key in ['ppp','epa','elo']:self.seed(key)
+        for key in NBA_GAME_KEYS:self.seed(key)
         app,callbacks=self.app()
         values={'performance-load':1,'performance-context':self.context,'performance-poll':0,'performance-market':'margin',
                 'performance-team':'__all__','performance-limit':10,'performance-start':None,'performance-end':None,
@@ -491,7 +495,8 @@ class PerformanceSummaryChecks(TestCase):
         self.assertEqual(failed['entries']['ppp']['state'],'completed')
         with patch.object(self.backend,'start',return_value='new-job') as start:
             retried=self.manager.ensure(self.context,self.request,'__all__')
-        self.assertNotEqual(retried['id'],failed['id']);self.assertEqual(start.call_count,2)
+        self.assertNotEqual(retried['id'],failed['id'])
+        self.assertEqual({call.kwargs['key'] for call in start.call_args_list},set(NBA_GAME_KEYS)-{'ppp'})
         restarted=PerformanceSummaries(BacktestingService(root=self.backend.root),watch=False)
         interrupted=restarted.refresh(self.context,retried['id'])
         self.assertEqual(interrupted['entries']['epa']['state'],'interrupted')

@@ -94,7 +94,7 @@ class ComparisonChecks(TestCase):
     def test_navigation_and_page_controls_for_both_groups_and_every_sport(self):
         self.app()
         for sport in ['NBA','NFL','NCAAF']:
-            for group,count in [('game-outcome',3),('player-stats',4)]:
+            for group,count in [('game-outcome',6 if sport=='NBA' else 3),('player-stats',4)]:
                 href=f'#research-{group}-comparison'
                 self.assertEqual(page_route('RESEARCH',href,sport),dict(sport=sport,group=group))
                 links=[c for c in components(research_view.navigation(sport,href)) if getattr(c,'href',None)==href]

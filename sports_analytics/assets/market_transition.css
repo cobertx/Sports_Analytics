@@ -18,6 +18,33 @@
 .market-screen-pending #market-transition-status { display: block; }
 .market-screen-pending #market-list,.market-screen-pending #kalshi-list,.market-screen-pending #polymarket-list,
 .market-screen-pending #market-game-detail,.market-screen-pending #kalshi-detail,.market-screen-pending #polymarket-detail { display: none !important; }
+.market-provider-brand,.market-provider-heading.draftkings-game-heading { display: none; }
+:is(.market-screen-detail,.market-screen-draftkings:has(#summary-detail[style*="block"])) .market-provider-heading {
+  display: flex; align-items: center; flex-direction: row; gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+:is(.market-screen-detail,.market-screen-draftkings:has(#summary-detail[style*="block"])) .market-provider-intro,
+.market-screen-detail .kalshi-connection-note { display: none; }
+:is(.market-screen-detail,.market-screen-draftkings:has(#summary-detail[style*="block"])) .market-provider-brand {
+  display: flex; align-items: center; gap: var(--space-2); min-width: 0;
+}
+.market-provider-brand img {
+  flex: none; padding: 3px; background: #eef4f9; border-radius: var(--radius-sm); object-fit: contain;
+}
+.app-shell .market-provider-heading .market-provider-brand h2 {
+  margin: 0; font-size: clamp(15px, 3vw, 18px); line-height: 1.25; overflow-wrap: anywhere;
+}
+:is(.market-screen-detail,.market-screen-draftkings:has(#summary-detail[style*="block"])) .market-provider-heading .market-link {
+  display: inline-flex; flex: none; align-items: center; min-height: 36px; padding: 6px var(--space-3);
+}
+@media (max-width: 700px) {
+  .app-shell .market-provider-heading .market-provider-brand img { width: 24px; height: 24px; }
+  :is(.market-screen-detail,.market-screen-draftkings:has(#summary-detail[style*="block"])) .market-provider-heading .market-link {
+    min-height: 44px; font-size: 12px; padding-inline: var(--space-2);
+  }
+}
+.market-screen-detail #market-page > .market-provider-heading { margin-bottom: var(--space-3); }
+.market-screen-pending:not(.market-screen-detail) #market-page > .market-provider-heading { display: none; }
 .market-screen-unavailable #market-transition-status { display: block; }
 .market-screen-unavailable .market-transition-loading { display: none; }
 .market-screen-unavailable .market-transition-unavailable { display: inline; }
@@ -46,6 +73,9 @@
 .market-model-pending .market-criteria-match,.exchange-model-pending .market-criteria-match { border-color: transparent; background: var(--panel); }
 .navigation-feedback { color: var(--muted); font-size: 13px; margin: 0 0 12px; min-height: 20px; }
 .navigation-feedback:empty,.market-return-status:empty { display: none; }
+.app-shell:is(.market-screen-kalshi,.market-screen-polymarket).market-screen-detail:not(.market-screen-pending,.market-screen-unavailable) .navigation-feedback {
+  position: absolute; inline-size: 1px; block-size: 1px; margin: 0; overflow: hidden; clip-path: inset(50%);
+}
 .market-return-status { padding: 8px 0; }
 .section-page-status { display: none; padding: 24px; min-height: 220px; }
 .market-screen-pending > .section-page-status,.market-screen-unavailable > .section-page-status { display: block; }
@@ -57,7 +87,7 @@
 .summary-quotes-pending { min-height: 220px; }
 .summary-quotes-pending > * { display: none !important; }
 .summary-quotes-pending::before { content: 'Loading the selected game’s markets…'; color: var(--muted); display: block; padding: 16px 0; }
-.market-view-updating::before { content: 'Updating · Previously loaded data retains its timestamp.'; display: block; color: var(--muted); padding: 8px 0; font-size: 12px; }
+.market-view-updating:not(.kalshi-sportsbook,.market-screen-kalshi,.market-screen-polymarket)::before { content: 'Updating · Previously loaded data retains its timestamp.'; display: block; color: var(--muted); padding: 8px 0; font-size: 12px; }
 .market-model-pending::before { content: 'Quotes available · Calculating probabilities…'; display: block; color: var(--muted); padding: 8px 0; font-size: 12px; }
 /* Leaving a market must hide it before the new page's server callbacks finish. */
 .workspace-screen #historical-page,.workspace-screen #market-page,.workspace-screen #kalshi-page,

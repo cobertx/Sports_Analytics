@@ -18,7 +18,7 @@ from .config import UsageOpportunityConfig
 from .distributions import UsageOpportunityForecast
 from .efficiency_model import conversion,yards_per_event
 from .errors import UsageOpportunityError
-from .historical_data import eligible,match_player
+from .historical_data import eligible,match_player,PlayerHistoryIndex
 from models.replay import replay_instance,input_digest
 from .markets import market_spec,prop_key
 from .nfl_model import split_completions
@@ -231,18 +231,26 @@ class CollegePlayerMarketService:
                                            {tuple(r['key']):r['error'] for r in saved['errors']})
             except (ValueError,KeyError,TypeError):pass
         result,matched=CollegeForecast(),{}
+        player_index=PlayerHistoryIndex(players)
+        failed_players={}
         for row in snapshot['rows']:
             if not row['market_key'].startswith('player_'):continue
             key=prop_key(row)
             if market_spec('NCAAF',row['market_key']) is None:
                 result.errors[key]='No connected college red-zone/scorer-order model for this touchdown market.'
                 continue
+            subject=row['subject']
+            if subject in matched:continue
+            if subject in failed_players:
+                result.errors[key]=failed_players[subject]
+                continue
             try:
-                history=match_player(players,snapshot,row['subject'],cutoff)
+                history=match_player(players,snapshot,subject,cutoff,index=player_index)
                 club=history.iloc[-1].team
                 if club not in clubs:raise ValueError('Latest observed team is outside this matchup.')
-                matched[row['subject']]=dict(team=club,history=history[history.team.eq(club)])
-            except ValueError as exc:result.errors[key]=str(exc)
+                matched[subject]=dict(team=club,history=history[history.team.eq(club)])
+            except ValueError as exc:
+                failed_players[subject]=result.errors[key]=str(exc)
         if matched:
             matched=dict(sorted(matched.items()))
             seed=int(sha256(f'NCAAF:{snapshot["game_id"]}:{base.seed}'.encode()).hexdigest()[:16],16)

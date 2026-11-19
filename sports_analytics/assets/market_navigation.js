@@ -23,7 +23,7 @@
       const r=routeFor(value?.route);if(!r||saved?.v===2&&key!==r.key)continue;
       const entry={route:value.route};
       for(const name of ['snapshot','category','section','prompt'])if(typeof value[name]==='string'&&value[name].length<=1500)entry[name]=value[name];
-      if(['PPP','EPA','ELO'].includes(value.method))entry.method=value.method;
+      if(['PPP','EPA','ELO'].includes(value.method)||r.sport==='NBA'&&['PACE','AODE','FF'].includes(value.method))entry.method=value.method;
       if(['WHP','UO','OAM','PGE'].includes(value.player_method))entry.player_method=value.player_method;
       if(Number.isInteger(value.rows)&&value.rows>=0&&value.rows<=5000)entry.rows=value.rows;
       result[r.key]=entry;

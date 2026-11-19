@@ -139,7 +139,7 @@ def current_models(models,bundle,method,player_method):
                 [models.get('bundle_id'),models.get('method'),models.get('player_method')]==[bundle['id'],method,player_method])
 
 
-def calculate(bundle,method,player_method,game_forecast,player_forecast,*,kinds=('game','player')):
+def prepare_forecast(bundle):
     rows=entries(bundle);game=bundle['game'];sport=bundle['sport']
     stamps=[parse_time(record['snapshot'].get('pulled_at') or record['snapshot'].get('fetched_at') or
                        record['snapshot'].get('metadata_fetched_at')) for record in bundle['providers'].values() if record.get('snapshot')]
@@ -149,18 +149,35 @@ def calculate(bundle,method,player_method,game_forecast,player_forecast,*,kinds=
     for row in rows:
         target=row['target']
         if target:unique.setdefault(tuple(target.get(key) for key in ('market_key','subject','selection','line')),target)
-    if not cutoff:
-        return dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(rows),cutoff=None,weighting_policy=POLICY_VERSION,
-                    errors=['Timestamped quotes and a game start are required for calculated probabilities.'])
+    if not cutoff:return rows,None
     source=dict(sport=sport,game_id=str(game['id']),home_team=team_identity(game['home']['name'],sport)['name'],
                 away_team=team_identity(game['away']['name'],sport)['name'],commence_time=start.isoformat(),
                 pulled_at=cutoff.isoformat(),game={'neutral':bool(game.get('neutral',False))},rows=list(unique.values()))
+    return rows,source
+
+
+def target_key(target):
+    key=tuple(target.items())
+    try:hash(key)
+    except TypeError:return None
+    return key
+
+
+def calculate(bundle,method,player_method,game_forecast,player_forecast,*,kinds=('game','player'),prepared=None,inline=False):
+    base_rows,source=prepare_forecast(bundle) if prepared is None else prepared
+    sport=bundle['sport']
+    if source is None:
+        return dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(base_rows),cutoff=None,weighting_policy=POLICY_VERSION,
+                    errors=['Timestamped quotes and a game start are required for calculated probabilities.'])
+    cutoff=source['pulled_at']
     tasks={}
-    if 'game' in kinds and any(not target['market_key'].startswith('player_') for target in unique.values()):
+    if 'game' in kinds and any(not target['market_key'].startswith('player_') for target in source['rows']):
         tasks['game']=lambda:game_forecast(source,method)
-    if 'player' in kinds and any(target['market_key'].startswith('player_') for target in unique.values()):
+    if 'player' in kinds and any(target['market_key'].startswith('player_') for target in source['rows']):
         tasks['player']=lambda:player_forecast(source,player_method)
-    forecasts=run_forecasts(tasks,sport) if tasks else {}
+    forecasts={kind:work() for kind,work in tasks.items()} if inline else run_forecasts(tasks,sport) if tasks else {}
+    rows=[dict(row) for row in base_rows]
+    estimates={}
     for row in rows:
         target=row['target']
         if not target:continue
@@ -168,12 +185,18 @@ def calculate(bundle,method,player_method,game_forecast,player_forecast,*,kinds=
         player=target['market_key'].startswith('player_');row['method']=player_method if player else method
         forecast=forecasts.get('player' if player else 'game',(None,None))[0]
         try:
-            if forecast and target['market_key']=='alternate_spreads':
-                team=forecast.diagnostics.get('team_aliases',{}).get(target['subject']) or (
-                    forecast.home_team if target['subject']==source['home_team'] else
-                    forecast.away_team if target['subject']==source['away_team'] else None)
-                estimate=forecast.spread(team,target['line']) if team else None
-            else:estimate=_market_probability(target,forecast)
+            # Include every target field, including provider-specific metadata.
+            # An alternate quote or its opposite exchange side can share pricing.
+            key=target_key(target)
+            if key is None or key not in estimates:
+                if forecast and target['market_key']=='alternate_spreads':
+                    team=forecast.diagnostics.get('team_aliases',{}).get(target['subject']) or (
+                        forecast.home_team if target['subject']==source['home_team'] else
+                        forecast.away_team if target['subject']==source['away_team'] else None)
+                    estimate=forecast.spread(team,target['line']) if team else None
+                else:estimate=_market_probability(target,forecast)
+                if key is not None:estimates[key]=estimate
+            else:estimate=estimates[key]
             probability=(estimate.probability if row['provider'] in SPORTSBOOKS else
                          estimate.loss if row['invert'] else estimate.win) if estimate else None
             if row['side']=='no' and probability is not None:probability=1-probability
@@ -181,9 +204,9 @@ def calculate(bundle,method,player_method,game_forecast,player_forecast,*,kinds=
         except (TypeError,ValueError,OverflowError):probability=None
         row.update(probability=probability,model_odds=fair_american_odds(probability),
                    edge=probability-row['implied'] if probability is not None and row['implied'] is not None else None,
-                   detail='Forecast as of '+cutoff.isoformat() if probability is not None else 'History or this forecast target is unavailable.')
+                   detail='Forecast as of '+cutoff if probability is not None else 'History or this forecast target is unavailable.')
     injuries=availability_note(*(record[0] for record in forecasts.values()))
-    return dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(rows),cutoff=cutoff.isoformat(),weighting_policy=POLICY_VERSION,
+    return dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(rows),cutoff=cutoff,weighting_policy=POLICY_VERSION,
                 availability_revision=availability_revision(sport),
                 errors=[f'{method if kind=="game" else player_method}: {record[1]}' for kind,record in forecasts.items() if record[1]]+
                        ([injuries] if injuries else []))

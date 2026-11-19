@@ -5,8 +5,8 @@ import math
 from dash import dcc,html
 
 from .display_time import format_eastern
-from .market_view import logo_badge,probability_text
-from .mispricing import GAME_METHODS,PLAYER_METHODS
+from .market_view import logo_badge,market_provider_brand,probability_text
+from .mispricing import GAME_METHODS,PLAYER_METHODS,QUICK_DEFAULT_PROBABILITY,QUICK_DEFAULT_EDGE
 from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
 from .market_summary import PROVIDERS
@@ -37,12 +37,16 @@ def quick_controls():
             'under every selected method for its market type. Qualifying game lines also appear in the probability charts.',
             className='ppp-comparison-note'),
         html.Div([
-            field('Game Outcome methods',dcc.Dropdown(id='summary-quick-game-methods',options=list(GAME_METHODS),value=['PPP'],multi=True)),
-            field('Player Forecast methods',dcc.Dropdown(id='summary-quick-player-methods',options=list(PLAYER_METHODS),value=['WHP'],multi=True)),
+            field('Game Outcome methods',dcc.Dropdown(id='summary-quick-game-methods',options=list(GAME_METHODS),
+                value=list(GAME_METHODS),multi=True)),
+            field('Player Forecast methods',dcc.Dropdown(id='summary-quick-player-methods',options=list(PLAYER_METHODS),
+                value=list(PLAYER_METHODS),multi=True)),
         ],className='forecast-methods'),
         html.Div([
-            field('Calculated probability above (%)',dcc.Input(id='summary-quick-probability',type='number',value=75,min=0,max=100,step='any')),
-            field('Edge above (percentage points)',dcc.Input(id='summary-quick-edge',type='number',value=5,min=-100,max=100,step='any')),
+            field('Calculated probability above (%)',dcc.Input(id='summary-quick-probability',type='number',
+                value=QUICK_DEFAULT_PROBABILITY,min=0,max=100,step='any')),
+            field('Edge above (percentage points)',dcc.Input(id='summary-quick-edge',type='number',
+                value=QUICK_DEFAULT_EDGE,min=-100,max=100,step='any')),
             html.Button('Run Quick Filtering',id='summary-quick-run',n_clicks=0,className='apply-criteria-button'),
         ],className='criteria-controls'),
         html.Div(id='summary-quick-status',role='status',className='criteria-status'),
@@ -93,13 +97,18 @@ def layout():
         dcc.Store(id='summary-catalog'),dcc.Store(id='summary-quotes'),dcc.Store(id='summary-models'),dcc.Store(id='summary-rendered'),
         dcc.Store(id='summary-model-completed'),
         dcc.Interval(id='summary-cache-poll',interval=1500,n_intervals=0,disabled=True),
+        html.Div([
+            market_provider_brand('DraftKings'),
+            html.A('Open DraftKings ↗', href='https://sportsbook.draftkings.com/', target='_blank',
+                   rel='noopener noreferrer', className='market-link'),
+        ],className='panel market-heading market-provider-heading draftkings-game-heading'),
         html.Section([
             html.Div([html.Div('MARKET DATA',className='eyebrow accent'),
                       html.H2('Market Summary',className='summary-multi-source'),
                       html.H2('DraftKings Market',className='summary-draftkings-only'),
                       html.P('Compare FanDuel, DraftKings, Kalshi and Polymarket quotes for one upcoming game.',className='summary-multi-source'),
                       html.P('Browse DraftKings game lines and player props from The Odds API.',className='summary-draftkings-only')],
-                     className='market-heading'),
+                     className='market-heading market-provider-intro'),
             html.Div([
                 field('Game window',dcc.Dropdown(id='summary-days',options=[dict(label='Next 7 days',value=7),dict(label='Next 14 days',value=14)],value=7,clearable=False)),
                 html.Button('Refresh upcoming games',id='summary-refresh',n_clicks=0,className='export-button'),

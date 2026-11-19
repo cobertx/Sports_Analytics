@@ -227,10 +227,9 @@ def market_detail_labels(location_hash):
 
 
 def forecast_methods(location_hash, previous):
-    options = [{"label": "PPP", "value": "PPP"},
-               {"label": "EPA", "value": "EPA"},
-               {"label": "ELO / Power Rating", "value": "ELO"}]
-    return options, previous if previous in {"PPP", "EPA", "ELO"} else "PPP"
+    from .quick_methods import game_methods,game_options
+    sport=market_game_sport(location_hash)
+    return game_options(sport),previous if previous in game_methods(sport) else 'PPP'
 
 
 

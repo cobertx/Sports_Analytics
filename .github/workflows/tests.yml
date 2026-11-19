@@ -37,6 +37,11 @@ jobs:
         run: python scripts/check_backtesting.py
       - name: Check requested NBA team game counts and automatic history preparation
         run: python scripts/check_backtest_history.py
+      - name: Check NBA pace, adjusted efficiency and Four Factors forecasting
+        run: |
+          python scripts/check_nba_pace.py
+          python scripts/check_nba_aode.py
+          python scripts/check_nba_four_factors.py
       - name: Check automatic source updates and history freshness
         run: |
           python scripts/check_history_updates.py

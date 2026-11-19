@@ -13,8 +13,8 @@ from .backtesting_view import CATALOG, GROUPS
 from models.Player_Stats.Weighted_Historical_Performance.historical_data import atomic_json
 
 
-def methods(group):
-    return [model for model in CATALOG if model.group==group]
+def methods(group,sport=None):
+    return [model for model in CATALOG if model.group==group and (sport in model.sports if sport else len(model.sports)>1)]
 
 
 def page_route(tab,location_hash,sport):
@@ -23,11 +23,12 @@ def page_route(tab,location_hash,sport):
     return dict(sport=sport,group=selected[0]) if tab=='RESEARCH' and selected and selected[1]=='comparison' and sport in {'NBA','NFL','NCAAF'} else None
 
 
-def selected_methods(group,keys):
-    allowed={model.key for model in methods(group)}
+def selected_methods(group,keys,sport=None):
+    supported=methods(group,sport)
+    allowed={model.key for model in supported}
     if not isinstance(keys,list) or not keys or len(keys)!=len(set(keys)) or not set(keys)<=allowed:
         raise ValueError('Select at least one method from this comparison group.')
-    return [model.key for model in methods(group) if model.key in keys]
+    return [model.key for model in supported if model.key in keys]
 
 
 class Comparisons:
@@ -62,7 +63,7 @@ class Comparisons:
             with self.lock:result=json.loads(self.path(context,identity).read_text(encoding='utf-8'))
             if result.get('context')!=context or result.get('id')!=identity:return None
             if not isinstance(result.get('entries'),dict):return None
-            selected_methods(context['group'],list(result['entries']))
+            selected_methods(context['group'],list(result['entries']),context['sport'])
             return result
         except FileNotFoundError:return None
         except OSError:
@@ -85,7 +86,7 @@ class Comparisons:
 
     def launch(self,context,keys,*,entity='__all__',market=None,team_filter=None,start=None,end=None,
                limit=100,tolerance=5,line=None,include_playoffs=False,lookback='Model Default'):
-        keys=selected_methods(context['group'],keys)
+        keys=selected_methods(context['group'],keys,context['sport'])
         if not isinstance(entity,str) or not entity:raise ValueError('Choose an evaluation team or player cohort.')
         if isinstance(limit,bool) or not isinstance(limit,(int,float)) or not math.isfinite(limit) or int(limit)!=limit or not 1<=limit<=10000:
             raise ValueError('Choose 1–10,000 whole evaluation games.')
@@ -118,7 +119,7 @@ class Comparisons:
             return manifest
 
     def from_saved(self,context,keys,run_ids):
-        keys=selected_methods(context['group'],keys)
+        keys=selected_methods(context['group'],keys,context['sport'])
         entries={}
         for key in keys:
             report=self.backtesting.saved(context['sport'],context['group'],key,run_ids.get(key))
@@ -189,7 +190,7 @@ def compare_reports(context,reports,target='margin',basis='common',tolerance=5):
     inconsistent={identity for identity in common if len({rows[identity]['actual'] for rows in by_method.values()})!=1}
     common-=inconsistent
     output={};summary=[]
-    for model in methods(context['group']):
+    for model in methods(context['group'],context['sport']):
         if model.key not in by_method:continue
         key=model.key;available=by_method[key]
         identities=common if basis=='common' else set(available)

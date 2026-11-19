@@ -6,7 +6,7 @@ from sports_analytics.data import DataSourceError, Query
 from models.Player_Stats.Weighted_Historical_Performance.historical_data import (
     PlayerHistoryRepository, model_frame, seasons_for, identity_name, atomic_json,
 )
-from models.Player_Stats.Weighted_Historical_Performance.prediction_service import WHPMarketService
+from models.Player_Stats.Weighted_Historical_Performance.prediction_service import WHPMarketService, PlayerHistoryIndex
 from .errors import UsageOpportunityError
 
 ROOT = Path(__file__).resolve().parents[3] / 'data/modeling/player_stats/usage_opportunity'
@@ -98,7 +98,7 @@ class UsageHistoryRepository:
         return f'{total:,} saved team-game rows. ' + ' '.join(dict.fromkeys(notices))
 
 
-def match_player(data, snapshot, subject, cutoff):
+def match_player(data, snapshot, subject, cutoff, *, index=None):
     # Share the existing exact identity + latest known team rules, not the WHP
     # statistical engine. This also rejects stale/ambiguous name matches.
-    return WHPMarketService._player(data, snapshot, subject, cutoff)
+    return WHPMarketService._player(data, snapshot, subject, cutoff,index=index)

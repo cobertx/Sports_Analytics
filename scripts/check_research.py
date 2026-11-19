@@ -12,7 +12,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts.check_backtesting import team_history
 from scripts.callback_fixtures import callback_functions
 from sports_analytics.backtesting_service import BacktestingService,estimation_history,game_model
-from sports_analytics.backtesting_view import CATALOG
+from sports_analytics.backtesting_view import available_models
 from sports_analytics.research_config import default_config,configured,parameter_fields,form_parameters
 from sports_analytics import research_view
 from sports_analytics.dashboard import create_app
@@ -40,9 +40,20 @@ def callbacks_for(service):
 
 
 class ResearchChecks(TestCase):
+    def test_simulation_mass_counts_match_sorted_reference(self):
+        from models.Player_Stats.Usage_Opportunity.distributions import UsageOpportunityForecast
+
+        for samples in (np.array([-2, 1, 1, 1, 3, 3]), np.array([0, 0, 10**9]),
+                        np.array([3., 1., 3.]), np.array([5, 5, 5], dtype=np.uint64)):
+            with self.subTest(samples=samples):
+                values, counts = np.unique(samples, return_counts=True)
+                forecast = UsageOpportunityForecast.from_samples(samples)
+                self.assertEqual(forecast.values, values.astype(int).tolist())
+                self.assertEqual(forecast.probabilities, (counts / len(samples)).tolist())
+
     def test_every_configuration_leaf_is_editable_and_round_trips_for_all_sports(self):
         for sport in ['NBA','NFL','NCAAF']:
-            for model in CATALOG:
+            for model in available_models(sport):
                 default=default_config(sport,model.group,model.key)
                 editor=research_view.editor(sport,model.group,model.key)
                 ids=[row.children[1].id for row in editor];values=[row.children[1].value for row in editor]

@@ -11,13 +11,15 @@ from models.season_weights import POLICY_VERSION
 from .market_view import MARKET_NAMES, _line_values, criteria_match, probability_text, selection_text
 from .prompt_history import button as history_button
 from .market_structure_link import button as structure_button
-from .quick_methods import GAME_METHODS,PLAYER_METHODS
+from .quick_methods import GAME_METHODS,PLAYER_METHODS,game_methods as supported_game_methods,game_options
 from .lazy_markets import markets as lazy_markets
 from .filter_jobs import forecast_progress
 
 
 FILTER_CATEGORY = 'Mispricing'
 ALL_PROBABILITIES = dict(probability=-1, edge=-2)
+QUICK_DEFAULT_PROBABILITY = 80
+QUICK_DEFAULT_EDGE = 5
 _method_workers=ThreadPoolExecutor(max_workers=2,thread_name_prefix='market-filter')
 _college_preparation=Lock()
 
@@ -33,12 +35,12 @@ def quick_controls(prefix, result_id):
                'These inputs are independent of Apply Criteria.', className='ppp-comparison-note'),
         html.Div([
             field('Default Game Outcome methods', dcc.Dropdown(id=prefix+'-quick-game-methods', multi=True,
-                options=[dict(label=label,value=value) for label,value in
-                         [('PPP','PPP'),('EPA','EPA'),('ELO / Power Rating','ELO')]], value=['PPP'], clearable=True)),
+                options=game_options(), value=list(GAME_METHODS), clearable=True)),
             field('Default Player Forecast methods', dcc.Dropdown(id=prefix+'-quick-player-methods', multi=True,
                 options=[dict(label=label,value=value) for label,value in
                          [('Weighted Historical Performance (WHP)','WHP'),('Usage & Opportunity (UO)','UO'),
-                          ('Opponent-Adjusted Matchup (OAM)','OAM'),('Pace & Game Environment (PGE)','PGE')]], value=['WHP'], clearable=True)),
+                          ('Opponent-Adjusted Matchup (OAM)','OAM'),('Pace & Game Environment (PGE)','PGE')]],
+                value=list(PLAYER_METHODS), clearable=True)),
         ], className='forecast-methods'),
         html.Details([
             html.Summary('Methods by prompt'),
@@ -49,8 +51,10 @@ def quick_controls(prefix, result_id):
             dcc.Loading(html.Div(id=prefix+'-quick-prompts'),delay_show=500,color='#57dbc4'),
         ],id=prefix+'-quick-prompts-panel',open=False,className='quick-prompt-panel'),
         html.Div([
-            field('Estimated Probability (%)', dcc.Input(id=prefix+'-quick-probability', type='number', value=75, min=0, max=100, step='any')),
-            field('Edge (percentage points)', dcc.Input(id=prefix+'-quick-edge', type='number', value=5, min=-100, max=100, step='any')),
+            field('Estimated Probability (%)', dcc.Input(id=prefix+'-quick-probability', type='number',
+                value=QUICK_DEFAULT_PROBABILITY, min=0, max=100, step='any')),
+            field('Edge (percentage points)', dcc.Input(id=prefix+'-quick-edge', type='number',
+                value=QUICK_DEFAULT_EDGE, min=-100, max=100, step='any')),
             html.Button('Quick Filtering', id=prefix+'-quick-filter', n_clicks=0, className='apply-criteria-button quick-filter-button'),
         ], className='criteria-controls'),
         html.Div(id=prefix+'-quick-status', className='criteria-status', role='status'),
@@ -58,12 +62,12 @@ def quick_controls(prefix, result_id):
     ], className='quick-filter-section')
 
 
-def selected_methods(game_methods, player_methods):
+def selected_methods(game_methods, player_methods, sport=None):
     def validate(values, supported):
         if not isinstance(values, list) or not values or any(value not in supported for value in values):
             raise ValueError('Select at least one supported Game Outcome method and one Player Forecast method.')
         return list(dict.fromkeys(values))
-    return validate(game_methods, GAME_METHODS), validate(player_methods, PLAYER_METHODS)
+    return validate(game_methods, supported_game_methods(sport)), validate(player_methods, PLAYER_METHODS)
 
 
 def quick_progress(tasks, key, prefix):

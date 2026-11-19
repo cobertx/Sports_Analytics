@@ -43,13 +43,16 @@ class NCAAFEPAModel(NCAAFPPPModel):
         bridge=min(candidates,key=lambda b:float(np.dot(w,(y-bridge_x@b)**2)+25*b[1]**2))
         return dict(teams=teams,coefficients=beta,bridge=bridge)
 
-    def _means(self,frame,ratings,home,away,neutral=False):
+    def _means(self,frame,ratings,home,away,neutral=False,*,stats=None):
         n=len(ratings['teams']);beta=ratings['coefficients'];index=ratings['teams']
         means,details=[],{}
         for team,opponent,sign in [(home,away,1),(away,home,-1)]:
-            rows=frame[frame.team.eq(team)];other=frame[frame.team.eq(opponent)]
+            rows=stats.rows(team) if stats is not None else frame[frame.team.eq(team)]
+            other=stats.rows(opponent) if stats is not None else frame[frame.team.eq(opponent)]
             if min(len(rows),len(other))<self.config.minimum_team_games:raise PPPError('College EPA needs prior PPA appearances for both schools.')
-            plays=(np.average(rows.offensive_plays,weights=rows.weight)+np.average(other.defensive_plays,weights=other.weight))/2
+            offense=stats.average(team,'offensive_plays') if stats is not None else np.average(rows.offensive_plays,weights=rows.weight)
+            defense=stats.average(opponent,'defensive_plays') if stats is not None else np.average(other.defensive_plays,weights=other.weight)
+            plays=(offense+defense)/2
             ppa=float(beta[2+index[team]]+beta[2+n+index[opponent]]+beta[1]*sign*(not neutral)/2)
             rate=max(.001,float(ratings['bridge'][0]+ratings['bridge'][1]*ppa))
             means.append(float(plays*rate))

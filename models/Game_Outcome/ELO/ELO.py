@@ -16,7 +16,7 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from models.replay import replay_memoized
+from models.replay import CalibrationRows, FoldTeamStats, replay_memoized
 from models.season_weights import calendar_weights, season_ids
 from models.Game_Outcome.PPP.PPP import PPPError, PPPForecast
 from models.Game_Outcome.PPP.NBA_PPP import NBAPPPForecast, NBAPPPModel
@@ -242,23 +242,22 @@ class ELOModel:
             beta[0] += sign*center
         return {"teams": teams, "power": power, "scoring": beta, "elo": self._elo(history, cutoff)}
 
-    def _raw(self, history, fitted, home, away, cutoff, neutral=False):
-        own = {team: history[history.team.eq(team)] for team in (home, away)}
+    def _raw(self, history, fitted, home, away, cutoff, neutral=False, *, stats=None):
+        stats = stats if stats is not None else FoldTeamStats(history, lambda rows: self._weights(rows, cutoff))
+        own = {team: stats.rows(team) for team in (home, away)}
         if home == away or any(len(rows) < self.config.minimum_team_games for rows in own.values()):
             raise ELOError("Both teams need enough earlier appearances for ELO.")
-        def average(rows, column):
-            return float(np.average(rows[column], weights=self._weights(rows, cutoff)))
-        pace = np.mean([average(own[t], col) for t in (home, away)
+        pace = np.mean([float(stats.average(t, col)) for t in (home, away)
                         for col in ("offensive_drives", "defensive_drives")])
         mapping, beta, power = fitted["teams"], fitted["scoring"], fitted["power"]
         n = len(mapping)
-        league_extra = average(history, "non_offensive_points")
+        league_extra = float(stats.average(FoldTeamStats.LEAGUE, "non_offensive_points"))
         means, details = [], {}
         for team, opponent, sign in [(home, away, 1), (away, home, -1)]:
             rate = math.exp(float(beta[0]+beta[2+mapping[team]]-beta[2+n+mapping[opponent]] +
                                   (0 if neutral else sign*beta[1]/2)))
             rows = own[team]
-            w = self._weights(rows, cutoff)
+            w = stats.weights(team)
             extra = (float(np.dot(w, rows.non_offensive_points))+2*league_extra)/(w.sum()+2)
             means.append(float(pace*rate+extra))
             details[team] = {"elo": float(fitted["elo"].get(team, 1500.)),
@@ -326,11 +325,12 @@ class ELOModel:
     @replay_memoized
     def _validation_fold(self, training, held, cutoff):
         fitted = self._fit(training, cutoff)
+        stats = FoldTeamStats(training, lambda rows: self._weights(rows, cutoff))
         errors = []
         for game_id, game in held.groupby("game_id", sort=True):
             h, a = game[game.is_home.eq(1)].iloc[0], game[game.is_home.eq(0)].iloc[0]
             try:
-                raw = self._raw(training, fitted, h.team, a.team, cutoff, bool(h.neutral))
+                raw = self._raw(training, fitted, h.team, a.team, cutoff, bool(h.neutral), stats=stats)
             except ELOError:
                 continue
             errors.append({"game_id": game_id, "date": h.event_date.isoformat(),
@@ -340,6 +340,10 @@ class ELOModel:
 
     def predict(self, observations, home_team, away_team, as_of, neutral=False):
         history = self._history(observations, as_of)
+        return self._predict_history(history, home_team, away_team, as_of, neutral)
+
+    def _predict_history(self, history, home_team, away_team, as_of, neutral):
+        folds = CalibrationRows(history)
         errors = []
         grouping = [history.season, history.week] if self.config.sport in {"NFL", "NCAAF"} else history.event_date
         # Only the latest eligible calibration pairs are needed. Evaluate folds
@@ -349,7 +353,7 @@ class ELOModel:
             training = history[history.available_at.lt(cutoff) & history.event_date.lt(cutoff)]
             if training.game_id.nunique() < self.config.minimum_training_games:
                 continue
-            errors.extend(self._validation_fold(training, held, cutoff))
+            errors.extend(folds.fold(self,self._validation_fold,training,held,cutoff))
             if len(errors) >= self.config.maximum_calibration_games:
                 break
         errors = sorted(errors, key=lambda row: (row["date"], row["game_id"]))[-self.config.maximum_calibration_games:]

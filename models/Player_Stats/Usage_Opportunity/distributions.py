@@ -23,8 +23,19 @@ class UsageOpportunityForecast:
     @classmethod
     def from_samples(cls, samples, diagnostics=None):
         x = np.asarray(samples)
-        if x.ndim != 1 or not len(x) or not np.isfinite(x).all() or not np.equal(x % 1, 0).all():
+        integer_samples = x.dtype.kind in 'iu'
+        if x.ndim != 1 or not len(x) or (
+            not integer_samples and (not np.isfinite(x).all() or not np.equal(x % 1, 0).all())
+        ):
             raise UsageOpportunityError('Simulation must produce observed-unit integer outcomes.')
+        if integer_samples:
+            minimum, maximum = int(x.min()), int(x.max())
+            index_range = np.iinfo(np.intp)
+            if index_range.min <= minimum <= maximum <= index_range.max and maximum - minimum < len(x):
+                frequencies = np.bincount(x.astype(np.intp, copy=False) - minimum)
+                positions = np.flatnonzero(frequencies)
+                return cls((positions + minimum).tolist(), (frequencies[positions] / len(x)).tolist(),
+                           len(x), diagnostics or {})
         values, counts = np.unique(x, return_counts=True)
         return cls(values.astype(int).tolist(), (counts/len(x)).tolist(), len(x), diagnostics or {})
 

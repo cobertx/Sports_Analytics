@@ -9,7 +9,7 @@ from statistics import NormalDist
 import numpy as np
 import pandas as pd
 from models.replay import cached_calculation
-from models.season_weights import apply_season_weights, season_factors
+from models.season_weights import season_ids, season_factors_from_ids
 
 from .distributions import settlement
 from .errors import WHPError
@@ -119,19 +119,24 @@ class WeightedHistoricalPerformance:
             raise WHPError("Predictive SD must be positive.")
         return 1 - NormalDist(mean, calibrated_predictive_std).cdf(line)
 
-    def _point(self, history, as_of, opportunity_override=None):
+    def _point(self, history, as_of, opportunity_override=None, *, season_years=None):
         sample = history.tail(self.config.window)
         if len(sample) < self.config.minimum_games:
             raise WHPError(f"Need at least {self.config.minimum_games} completed target observations.")
+        if season_years is None:
+            season_years = season_ids(history, self.config.sport).to_numpy(dtype=float)
         ages = ((pd.Timestamp(as_of) - sample["event_date"]).dt.total_seconds() / 86400
                 if self.config.weighting == "calendar" else None)
         w = recency_weights(len(sample), self.config.half_life, self.config.weighting, ages=ages)
-        w = apply_season_weights(w, sample, self.config.sport, self.config.prior_season_weight)
+        w = w * season_factors_from_ids(season_years[-len(sample):], self.config.sport,
+                                        discount=self.config.prior_season_weight)
+        w = w / w.sum()
         result = summarize(sample["value"], w)
         # Disjoint older appearances form an empirical player prior. Never add
         # invented rookie or cross-position production when this pool is absent.
         prior_sample = history.iloc[:-len(sample)]
-        prior_factors = season_factors(prior_sample, self.config.sport, as_of, self.config.prior_season_weight)
+        prior_factors = season_factors_from_ids(season_years[:-len(sample)], self.config.sport, as_of,
+                                                self.config.prior_season_weight)
         prior = float(np.average(prior_sample["value"], weights=prior_factors)) if len(prior_sample) >= 3 else None
         opportunity = {}
         if "opportunity" in sample:
@@ -155,7 +160,10 @@ class WeightedHistoricalPerformance:
         history = eligible_history(frame, as_of)
         if (nonnegative or count or self.config.distribution == "count") and history["value"].lt(0).any():
             raise WHPError("A nonnegative count/statistic cannot contain negative observations.")
-        point, sample, w = self._point(history, as_of, opportunity_override)
+        if len(history) < self.config.minimum_games:
+            raise WHPError(f"Need at least {self.config.minimum_games} completed target observations.")
+        season_years = season_ids(history, self.config.sport).to_numpy(dtype=float)
+        point, sample, w = self._point(history, as_of, opportunity_override, season_years=season_years)
         # At each held-out game's start, exclude even earlier-starting games
         # whose results were not yet available. Realized workload is never used.
         records = []
@@ -176,7 +184,7 @@ class WeightedHistoricalPerformance:
                 # use the exact noncontiguous set of eligible observations.
                 past = (history.iloc[:len(positions)] if positions[-1]+1 == len(positions)
                         else history.iloc[positions])
-                return self._point(past, game.event_date)[0]['adjusted_mean']
+                return self._point(past, game.event_date, season_years=season_years[positions])[0]['adjusted_mean']
             predicted = cached_calculation(self, 'calibration_point',
                 lambda: (event_times[positions], values[positions],
                          seasons[positions] if seasons is not None else None,

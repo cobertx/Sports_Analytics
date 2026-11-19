@@ -16,7 +16,7 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from models.replay import replay_memoized, calibration_tail
+from models.replay import CalibrationRows, replay_memoized, calibration_tail
 from models.season_weights import calendar_weights
 from models.Game_Outcome.PPP.PPP import MarketProbability, PPPError, PPPForecast
 
@@ -144,13 +144,14 @@ class NBAPPPModel:
 
     def predict(self, frame, home_team, away_team, as_of, neutral=False):
         history = self._history(frame, as_of)
+        folds = CalibrationRows(history)
         # Refit by held-out date. Actual target pace/scores never enter a mean.
         def evaluate(held):
             held_date = held.event_date.iloc[0]
             training = history[history.available_at.lt(held_date) & history.event_date.lt(held_date)]
             if training.game_id.nunique() < self.config.minimum_training_games:
                 return []
-            return self._validation_fold(training, held, held_date)
+            return folds.fold(self,self._validation_fold,training,held,held_date)
         errors = calibration_tail(history, 'event_date', self.config.maximum_calibration_games, evaluate)
         if len(errors) < self.config.minimum_calibration_games:
             raise PPPError(f"NBA PPP needs {self.config.minimum_calibration_games} chronological validation games; found {len(errors)}.")

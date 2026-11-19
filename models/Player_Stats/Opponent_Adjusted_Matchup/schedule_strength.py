@@ -97,12 +97,15 @@ class ScheduleAdjustedDefense:
                 self._components[component]=state
             league,offense,defense,pending=(state[key] for key in ['league','offense','defense','pending'])
             offset=len(state['frame'])
+            league_rate,_=_prior_rate(league,cfg.league_window,cfg.baseline.efficiency_half_life,cfg)
             for seq,row in enumerate(frame.iloc[offset:].itertuples(index=False),offset):
                 # Availability, not merely start order, controls admission. Equal
                 # timestamps are excluded, including concurrent slate results.
+                league_changed=False
                 while pending and pending[0][0] < row.event_date.value:
                     _,_,finished=heapq.heappop(pending)
                     league.append(finished); offense[finished['offense']].append(finished)
+                    league_changed=True
                     if finished['expected'] > 0:
                         defense[finished['defense']].append(finished)
                 old=list(defense[row.defense])
@@ -112,7 +115,8 @@ class ScheduleAdjustedDefense:
                         if len(old)>=cfg.minimum_defense_games else 1.)
                 factor=float(np.clip(factor,cfg.factor_floor,cfg.factor_ceiling))
                 self.historical[(component,str(row.game_id),row.offense)]=factor
-                league_rate,_=_prior_rate(league,cfg.league_window,cfg.baseline.efficiency_half_life,cfg)
+                if league_changed:
+                    league_rate,_=_prior_rate(league,cfg.league_window,cfg.baseline.efficiency_half_life,cfg)
                 rate,n=_prior_rate(offense[row.offense],cfg.baseline.efficiency_window,cfg.baseline.efficiency_half_life,cfg)
                 expected=0.
                 if len(league)>=cfg.minimum_league_games and league_rate is not None and league_rate>0:

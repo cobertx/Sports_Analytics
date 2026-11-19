@@ -29,6 +29,14 @@ def prop_key(row):
     return (row["subject"], row["market_key"].removesuffix("_alternate"))
 
 
+class PlayerHistoryIndex:
+    """Match exact names and IDs without rescanning the entire player table."""
+    def __init__(self,data):
+        names=data["_whp_name"] if "_whp_name" in data else data.entity_name.map(identity_name)
+        self.names=data.groupby(names,sort=False).indices
+        self.identities=data.groupby('entity_id',sort=False).indices
+
+
 @dataclass
 class PlayerMarketForecast:
     forecasts: dict = field(default_factory=dict)
@@ -91,9 +99,9 @@ class WHPMarketService:
                                        [snapshot["home_team"], snapshot["away_team"]], refresh)
 
     @staticmethod
-    def _player(data, snapshot, subject, cutoff):
-        names = data["_whp_name"] if "_whp_name" in data else data["entity_name"].map(identity_name)
-        found = data[names.eq(identity_name(subject))].copy()
+    def _player(data, snapshot, subject, cutoff, *, index=None):
+        if index is None:index=PlayerHistoryIndex(data)
+        found = data.iloc[index.names.get(identity_name(subject), [])]
         found = found[found["event_date"].lt(cutoff) & found["available_at"].lt(cutoff)]
         codes = NBA_TEAM_CODES if snapshot["sport"] == "NBA" else NFL_TEAM_CODES
         clubs = {identity_name(name) for name in (snapshot["home_team"], snapshot["away_team"])}
@@ -112,7 +120,7 @@ class WHPMarketService:
         if len(candidates) != 1:
             raise WHPError(f"Cannot uniquely match {subject} to a saved player ID on this matchup's teams. "
                            "Prepare history or add a canonical import; fuzzy name matches are not used.")
-        selected = data[data["entity_id"].eq(candidates[0])].copy()
+        selected = data.iloc[index.identities[candidates[0]]]
         selected = selected[selected["available_at"].lt(cutoff) & selected["event_date"].lt(cutoff)]
         if selected.empty or (cutoff - selected["event_date"].max()).days > 450:
             raise WHPError("Player history is too old for a current role forecast.")
@@ -154,6 +162,7 @@ class WHPMarketService:
 
     def _calculate(self,snapshot,sport,cutoff,data,result,config,implementation,cache_key):
         players, failed_players = {}, {}
+        index = PlayerHistoryIndex(data)
         for row in snapshot["rows"]:
             if not row["market_key"].startswith("player_") or prop_key(row) in result.forecasts or prop_key(row) in result.errors:
                 continue
@@ -168,7 +177,7 @@ class WHPMarketService:
                     raise WHPError(failed_players[subject])
                 if subject not in players:
                     try:
-                        players[subject] = self._player(data, snapshot, subject, cutoff)
+                        players[subject] = self._player(data, snapshot, subject, cutoff,index=index)
                     except WHPError as exc:
                         failed_players[subject] = str(exc)
                         raise

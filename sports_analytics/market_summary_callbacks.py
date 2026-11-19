@@ -16,7 +16,8 @@ from .market_view import game_header
 from .nba_markets import NBA_MARKETS
 from .nfl_markets import NFL_MARKETS
 from .ncaaf_markets import NCAAF_MARKETS
-from .mispricing import GAME_METHODS,PLAYER_METHODS,criteria_values
+from .mispricing import PLAYER_METHODS,criteria_values
+from .quick_methods import game_methods,register_controls
 from .filter_jobs import request_key
 from .availability import revision as availability_revision
 from .summary_quote_jobs import SummaryQuoteJobs
@@ -39,6 +40,7 @@ def quote_version(sport,game,providers):
 
 
 def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast,pages=None,tasks=None,source_revision=None,*,draftkings=None):
+    register_controls(app,'summary',single='summary-game-method')
     quote_jobs=SummaryQuoteJobs()
     books={'FanDuel':markets,'DraftKings':draftkings or {}}
     from .summary_filter_callbacks import register as register_quick
@@ -322,7 +324,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         if page!='market-summary' or not bundle or bundle.get('sport')!=sport or str(bundle['game']['id'])!=selected:raise PreventUpdate
         if not any((record.get('snapshot') or {}).get('rows') for record in bundle.get('providers',{}).values()) and any(
                 (record.get('snapshot') or {}).get('page_pending') for record in bundle.get('providers',{}).values()):raise PreventUpdate
-        if method not in GAME_METHODS or player_method not in PLAYER_METHODS:raise PreventUpdate
+        if method not in game_methods(sport) or player_method not in PLAYER_METHODS:raise PreventUpdate
         revision=source_revision(dict(sport=sport),method,player_method) if source_revision else []
         if (analysis.current_models(previous,bundle,method,player_method) and stored_models(previous) is not None
                 and (previous or {}).get('source_revision',[])==revision

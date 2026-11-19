@@ -26,7 +26,7 @@ def register(app,backtesting):
         context=page_route(tab,location_hash,sport);hidden={'display':'none'}
         if not context:return hidden,{},None,[],[],hidden,hidden,hidden,hidden,'Team'
         player=context['group']=='player-stats'
-        models=methods(context['group']);player_style={'display':'block' if player else 'none'}
+        models=methods(context['group'],sport);player_style={'display':'block' if player else 'none'}
         return ({'display':'block'},hidden,context,[dict(label=m.label,value=m.key) for m in models],[m.key for m in models],
                 player_style,player_style,player_style,{'display':'none' if player else 'block'},'Player cohort' if player else 'Team')
 
@@ -34,7 +34,7 @@ def register(app,backtesting):
                   State('comparison-context','data'),prevent_initial_call=True)
     def comparison_select_all(clicks,context):
         if not clicks or not context:raise PreventUpdate
-        return [m.key for m in methods(context['group'])]
+        return [m.key for m in methods(context['group'],context['sport'])]
 
     @app.callback(Output('comparison-entity','options'),Output('comparison-entity','value'),
                   Output('comparison-team','options'),Output('comparison-team','value'),Output('comparison-input-status','children'),
@@ -45,7 +45,7 @@ def register(app,backtesting):
         options={};errors=[];teams=all_teams
         if context['group']=='game-outcome':
             options['__all__']=dict(label='All teams',value='__all__')
-            for model in methods(context['group']):
+            for model in methods(context['group'],context['sport']):
                 try:
                     entities,_,_=backtesting.options(context['sport'],context['group'],model.key)
                     for entity in entities:options[entity['value']]=entity
@@ -67,7 +67,7 @@ def register(app,backtesting):
     def comparison_statistics(context,keys,entity,previous):
         if not context or context['group']!='player-stats' or entity is None:return [],None
         try:
-            keys=selected_methods(context['group'],keys)
+            keys=selected_methods(context['group'],keys,context['sport'])
             choices=[backtesting.options(context['sport'],context['group'],key,entity)[1] for key in keys]
             shared=set.intersection(*({o['value'] for o in options} for options in choices))
             options=[o for o in choices[0] if o['value'] in shared]
@@ -80,10 +80,10 @@ def register(app,backtesting):
     def comparison_saved_selectors(context,keys,opened,identities,values):
         if not context or not opened:return []
         previous={item['method']:value for item,value in zip(identities or [],values or [])}
-        try:keys=selected_methods(context['group'],keys)
+        try:keys=selected_methods(context['group'],keys,context['sport'])
         except ValueError:return html.P('Select methods above to choose previous simulations.',className='backtest-status')
         controls=[]
-        for model in methods(context['group']):
+        for model in methods(context['group'],context['sport']):
             if model.key not in keys:continue
             reports=backtesting.history(context['sport'],context['group'],model.key)
             options=[dict(label=f"{format_eastern(r['created_at'])} · {r['entity_label']} · {r.get('market') or 'Game outcomes'} · {r['evaluated']} evaluated · {r['run_id'][:8]}",
@@ -164,7 +164,7 @@ def register(app,backtesting):
         if signature==rendered:raise PreventUpdate
         reports=comparisons.reports(manifest)
         if not reports:return html.P('Results appear as each method completes. Failed methods and reasons are shown above.',className='backtest-status'),True,[],None,signature
-        options=[dict(label=model.label,value=model.key) for model in methods(context['group']) if model.key in reports]
+        options=[dict(label=model.label,value=model.key) for model in methods(context['group'],context['sport']) if model.key in reports]
         try:content,_=render(context,reports,target,basis,tolerance)
         except (ValueError,TypeError,KeyError) as exc:return html.P(str(exc),className='backtest-status'),True,options,options[0]['value'],signature
         settings=manifest.get('settings',{})

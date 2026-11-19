@@ -20,12 +20,16 @@ import json
 _active = ContextVar('model_replay_cache', default=None)
 
 
+def frame_key(frame,hashes):
+    schema = (tuple(frame.columns), tuple(map(repr, frame.dtypes)),
+              repr(frame.index.dtype), tuple(frame.index.names))
+    return ('frame',schema,sha256(hashes.tobytes()).digest())
+
+
 def fingerprint(value):
     """Content key retaining column types, order, index and subsecond times."""
     if isinstance(value, pd.DataFrame):
-        schema = (tuple(value.columns), tuple(map(repr, value.dtypes)),
-                  repr(value.index.dtype), tuple(value.index.names))
-        return ('frame', schema, sha256(pd.util.hash_pandas_object(value, index=True).to_numpy().tobytes()).digest())
+        return frame_key(value,pd.util.hash_pandas_object(value,index=True).to_numpy())
     if isinstance(value, np.ndarray):
         if value.dtype.hasobject:
             # Object-array bytes contain memory addresses, not value contents.
@@ -139,7 +143,63 @@ def replay_memoized(function):
     def wrapped(self, *args, **kwargs):
         return cached_calculation(self, function.__qualname__, (args, kwargs),
                                   lambda: function(self, *args, **kwargs))
+    wrapped._replay_calculation = function
     return wrapped
+
+
+class CalibrationRows:
+    """Use precomputed row hashes for unmodified subsets of one fold source."""
+    def __init__(self,frame):
+        self.index=frame.index
+        self.hashes=None
+        if _active.get() is not None and self.index.is_unique:
+            try:self.hashes=pd.util.hash_pandas_object(frame,index=True).to_numpy()
+            except (TypeError,ValueError):pass
+
+    def key(self,rows):
+        if self.hashes is None:return rows
+        positions=self.index.get_indexer(rows.index)
+        if (positions<0).any():return rows
+        return frame_key(rows,self.hashes[positions])
+
+    def fold(self,model,method,training,held,cutoff):
+        calculate=getattr(method,'_replay_calculation',None)
+        if self.hashes is None or calculate is None:return method(training,held,cutoff)
+        return cached_calculation(model,calculate.__qualname__,(self.key(training),self.key(held),cutoff),
+                                  lambda:calculate(model,training,held,cutoff))
+
+
+class FoldTeamStats:
+    """Reuse the original per-team reductions within one unchanged training fold."""
+    LEAGUE = object()
+
+    def __init__(self,frame,weights=None,*,float_values=False):
+        self.frame=frame
+        self.weight_function=weights
+        self.float_values=float_values
+        self.teams={}
+        self.weights_by_team={}
+        self.averages={}
+
+    def rows(self,team):
+        if team is self.LEAGUE:return self.frame
+        if team not in self.teams:
+            self.teams[team]=self.frame[self.frame.team.eq(team)]
+        return self.teams[team]
+
+    def weights(self,team):
+        if team not in self.weights_by_team:
+            rows=self.rows(team)
+            self.weights_by_team[team]=rows['weight'] if self.weight_function is None else self.weight_function(rows)
+        return self.weights_by_team[team]
+
+    def average(self,team,columns):
+        key=(team,columns)
+        if key not in self.averages:
+            values=self.rows(team)[list(columns) if isinstance(columns,tuple) else columns]
+            if self.float_values:values=values.to_numpy(float)
+            self.averages[key]=np.average(values,weights=self.weights(team),axis=0)
+        return self.averages[key]
 
 
 def replay_repository(function):

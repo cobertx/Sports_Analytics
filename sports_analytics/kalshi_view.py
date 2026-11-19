@@ -11,7 +11,7 @@ from dash.dash_table.Format import Format, Scheme, Symbol
 
 from .kalshi import CATEGORIES, DOCS, KalshiService, category, ticker
 from .display_time import format_eastern
-from .market_view import logo_badge, NBA_LOGO_FILES, NFL_LOGO_FILES, NCAAF_LOGO_FILES
+from .market_view import logo_badge, market_provider_brand, NBA_LOGO_FILES, NFL_LOGO_FILES, NCAAF_LOGO_FILES
 from .nba_markets import NBA_TEAM_CODES
 from .nfl_markets import NFL_TEAM_CODES
 from .mispricing import quick_controls
@@ -21,7 +21,6 @@ from models.Game_Outcome.PPP.PPP import fair_american_odds
 from .prompt_history import button as history_button
 from .lazy_markets import markets as lazy_markets
 from .market_structure_link import button as structure_button
-from .loading import indicator
 from .kalshi_labels import selection, selection_rows, player_market
 from .kalshi_analysis import player_subject
 
@@ -149,9 +148,11 @@ def layout(provider='Kalshi'):
         dcc.Store(id=f'{prefix}-cache-state'),dcc.Interval(id=f'{prefix}-cache-poll',interval=1500,disabled=True),
         html.Section([
             html.Div([html.Div([html.Div('PUBLIC EXCHANGE DATA', className='eyebrow accent'),
-                html.H2(provider+' Market'), html.P(f'Browse game contracts and pull current outcome quotes directly from {provider}.')]),
+                html.H2(provider+' Market'), html.P(f'Browse game contracts and pull current outcome quotes directly from {provider}.')],
+                className='market-provider-intro'),
+                market_provider_brand(provider),
                 html.A(f'Open {provider} ↗', href='https://polymarket.com/sports' if polymarket else 'https://kalshi.com/sports', target='_blank', rel='noopener noreferrer', className='market-link')],
-                className='market-heading'),
+                className='market-heading market-provider-heading'),
             html.P('Public REST connection · No API key or paid odds subscription needed. '
                    'Game discovery refreshes every minute while this page is open. '
                    'Quotes refresh only for the selected game category; timestamps show when they were fetched.', className='kalshi-connection-note'),
@@ -178,16 +179,12 @@ def layout(provider='Kalshi'):
             dcc.Tabs(id=f'{prefix}-category', value='Game Lines', children=[], mobile_breakpoint=0, className='market-category-tabs'),
             filter_panel() if not polymarket else None,
             html.Div([
-                html.Div(id=f'{prefix}-quote-status', className='load-status', role='status'),
-                html.Div(id='kalshi-model-status',className='forecast-history',role='status') if not polymarket else None,
-                html.P('Market odds use American format, converted from each outcome’s quoted buying price divided by its payout. '
-                       'Market implied probability uses that same price; each outcome has its own quote. '
-                       'Raw bids, asks and last trades in cents are available in the detailed quote table. '
-                       'Quotes are before fees and subject to available liquidity. Read each contract’s settlement rules.', className='kalshi-connection-note'),
-                html.P('Market implied = ask price / contract payout. Edge = calculated probability minus market implied, before fees. '
-                       'Yes and No have their own buying costs. Estimates describe full-game outcomes; live game state is not modeled.',
-                       className='ppp-comparison-note') if not polymarket else None,
-                html.Div(indicator('Loading the selected markets…'),className='exchange-sections-transition'),
+                html.Div([
+                    html.Div(id=f'{prefix}-quote-status',className='load-status exchange-update-line',role='status'),
+                    html.Div(id='kalshi-model-status',className='forecast-history exchange-update-line',role='status')
+                    if not polymarket else None,
+                ],className='exchange-update-status'),
+                html.Div(className='exchange-sections-transition'),
                 html.Div(id=f'{prefix}-market-sections'),
                 html.Div(id='kalshi-game-distributions') if not polymarket else None,
                 html.Details([html.Summary('Detailed quote table & CSV export'),

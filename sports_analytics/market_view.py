@@ -32,6 +32,8 @@ if "los angeles clippers" in NBA_LOGO_FILES:
     NBA_LOGO_FILES["la clippers"] = NBA_LOGO_FILES["los angeles clippers"]
 NCAAF_LOGO_DIRECTORY = Path(__file__).resolve().parent.parent / "images" / "NCAAF" / "Team Logos"
 NCAAF_LOGO_FILES = {path.stem.casefold(): path.name for path in NCAAF_LOGO_DIRECTORY.glob("*.png")}
+
+
 CATEGORIES = [("Game", "Game Lines"), ("Passing", "Passing Props"), ("Receiving", "Receiving Props"),
               ("Rushing", "Rushing Props"), ("Touchdowns", "TD Scorer Props")]
 MARKET_NAMES = {
@@ -59,6 +61,14 @@ MARKET_NAMES = {
     "player_reception_tds_alternate": ("Alt Receiving TDs", "Receiving TDs"),
     "player_tds": ("Total Touchdowns", "TDs"),
 }
+
+
+def market_provider_brand(provider):
+    extension = "png" if provider == "DraftKings" else "ico"
+    return html.Div([
+        html.Img(src=f"/assets/providers/{provider.lower()}.{extension}", alt="", width=28, height=28),
+        html.H2(f"{provider} Market"),
+    ], className="market-provider-brand")
 
 
 def latest_pull_text(snapshot):
@@ -265,6 +275,19 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=N
         methodology = ("ELO uses sequential neutral ratings, opponent-adjusted ridge power margins and a separate positive offense/defense "
                        "scoring/pace model for totals. Elo calibration and the margin blend are fitted on chronological forecast records. "
                        "This is a normal research baseline; weather and explicit drive/possession/overtime simulation are not modeled. Availability adjustments are shown separately when supported.")
+    if method == "PACE":
+        methodology = ("PACE fits shared regulation possessions and opponent-adjusted scoring rates, then simulates both teams’ "
+                       "integer scores together with overtime. Availability adjustments are shown separately when supported.")
+        if forecast:
+            pace = forecast.diagnostics.get("projected_possessions")
+            if pace is not None:
+                status += f" Projected regulation pace {pace:.1f} possessions per team."
+    if method == "AODE":
+        methodology = ("AODE fits each team’s offensive strength and defensive suppression jointly, then uses "
+                       "shared pace and correlated scoring rates to simulate full-game scores including overtime.")
+    if method == "FF":
+        methodology = ("Four Factors reconstructs scoring efficiency from opponent-adjusted shooting, turnovers, "
+                       "offensive rebounds and free throws. It simulates shared pace, paired factor errors and overtime.")
     if snapshot.get("sport") == "NCAAF":
         methodology = (f"NCAAF {method} uses selected-school CFBD CSV history and college-only chronological score-error calibration. "
                        "PPP models total scoring per play; EPA uses signed provider PPA with a fitted scoring bridge; ELO combines ratings/power with scoring. "

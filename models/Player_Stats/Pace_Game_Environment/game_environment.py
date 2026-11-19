@@ -12,38 +12,41 @@ class GameEnvironment:
         self.bandwidth = max(1.,float(model.history.margin.std()))
         paired = []
         errors = pd.DataFrame(model.residuals).tail(2*config.league_window)
-        for _,game in errors.groupby('game_id',sort=False):
-            if len(game) == 2:
-                records = [row for _,row in game.iterrows()]
-                paired.extend([records,records[::-1]])
+        for positions in errors.groupby('game_id',sort=False).indices.values():
+            if len(positions) == 2:
+                paired.extend([positions,positions[::-1]])
         if not paired:
             raise ValueError('No paired chronological pace residuals are available.')
         # Both orientations of a donor game have exactly equal prior mass.
-        pair_weights = np.repeat(weights(len(paired)//2,config.scenario_half_life),2)
-        pair_weights = apply_season_weights(pair_weights, pd.DataFrame([r[0] for r in paired]),
+        donors = np.asarray(paired)
+        pair_weights = np.repeat(weights(len(donors)//2,config.scenario_half_life),2)
+        pair_weights = apply_season_weights(pair_weights, errors.iloc[donors[:,0]],
                                              config.baseline.sport, config.baseline.prior_season_weight)
         target_margin = self.projections[clubs[0]]['margin']
-        distance = np.array([r[0].predicted_margin-target_margin for r in paired])/self.bandwidth
+        predicted_margin = errors.predicted_margin.to_numpy()
+        distance = (predicted_margin[donors[:,0]]-target_margin)/self.bandwidth
         pair_weights *= np.exp(-.5*distance**2)
         pair_weights /= pair_weights.sum()
-        indices = rng.choice(len(paired),config.baseline.simulations,p=pair_weights)
-        drawn = [[paired[index][i] for index in indices] for i in range(2)]
-        margin = np.array([r.margin-r.predicted_margin for r in drawn[0]])+target_margin
+        indices = rng.choice(len(donors),config.baseline.simulations,p=pair_weights)
+        drawn = donors[indices].T
+        margin = (errors.margin.to_numpy()-predicted_margin)[drawn[0]]+target_margin
+        residuals = errors.residual.to_numpy()[drawn]
+        extra = errors.extra.to_numpy()[drawn]
         self.margins = {clubs[0]:margin,clubs[1]:-margin}
         self.volume,self.duration,self.regulation,self.extra = {},{},{},{}
         if sport == 'NBA':
             base = np.mean([p['volume'] for p in self.projections.values()])
-            residual = np.mean([[r.residual for r in d] for d in drawn],axis=0)
+            residual = np.mean(residuals,axis=0)
             regulation = np.maximum(1.,base+residual)
-            duration = 48+np.array([r.extra for r in drawn[0]])
+            duration = 48+extra[0]
             for club in clubs:
                 self.volume[club] = regulation*duration/48
                 self.duration[club] = duration
                 self.regulation[club],self.extra[club] = regulation,self.volume[club]-regulation
         else:
-            for club,records in zip(clubs,drawn):
-                self.regulation[club] = np.maximum(1.,self.projections[club]['volume']+np.array([r.residual for r in records]))
-                self.extra[club] = np.array([r.extra for r in records])
+            for club,residual,overtime in zip(clubs,residuals,extra):
+                self.regulation[club] = np.maximum(1.,self.projections[club]['volume']+residual)
+                self.extra[club] = overtime
                 self.volume[club] = self.regulation[club]+self.extra[club]
                 self.duration[club] = np.full(config.baseline.simulations,60.)
         self.margins_by_game = model.history.set_index(['game_id','team']).margin.to_dict()

@@ -24,7 +24,7 @@ if __name__ == "__main__":
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from models.replay import replay_memoized
+from models.replay import FoldTeamStats, replay_memoized
 from models.Game_Outcome.PPP.PPP import PPPConfig, PPPError, PPPForecast, PPPModel
 
 
@@ -129,24 +129,25 @@ class EPAModel(PPPModel):
         ratings["bridge"] = min(candidates, key=lambda beta: float(np.dot(weight, (y - bridge_x @ beta) ** 2) + np.dot(bridge_penalty, beta ** 2)))
         return ratings
 
-    def _means(self, frame, ratings, home, away, neutral=False):
-        own = {team: frame[frame["team"].eq(team)] for team in (home, away)}
+    def _means(self, frame, ratings, home, away, neutral=False, *, stats=None):
+        stats = stats if stats is not None else FoldTeamStats(frame)
+        own = {team: stats.rows(team) for team in (home, away)}
         if any(len(rows) < self.config.minimum_team_games for rows in own.values()):
             raise EPAError(f"Both teams need at least {self.config.minimum_team_games} prior games for an EPA estimate.")
-        def average(rows, column):
-            return float(np.average(rows[column], weights=rows["weight"]))
-        drives = np.mean([average(own[home], "offensive_drives"), average(own[home], "defensive_drives"),
-                          average(own[away], "offensive_drives"), average(own[away], "defensive_drives")])
-        league_extra = average(frame, "non_offensive_points")
+        def average(team, column):
+            return float(stats.average(team, column))
+        drives = np.mean([average(home, "offensive_drives"), average(home, "defensive_drives"),
+                          average(away, "offensive_drives"), average(away, "defensive_drives")])
+        league_extra = average(FoldTeamStats.LEAGUE, "non_offensive_points")
         n, indices = len(ratings["teams"]), ratings["teams"]
         baseline, conversion = map(float, ratings["bridge"])
         means, details = [], {}
         for team, opponent, sign in ((home, away, 1), (away, home, -1)):
-            rows, other = own[team], own[opponent]
-            length = (average(rows, "offensive_plays") / average(rows, "offensive_drives") +
-                      average(other, "defensive_plays") / average(other, "defensive_drives")) / 2
-            share = (average(rows, "off_pass_epa_plays") / average(rows, "off_epa_plays") +
-                     average(other, "def_pass_epa_plays") / average(other, "def_epa_plays")) / 2
+            rows = own[team]
+            length = (average(team, "offensive_plays") / average(team, "offensive_drives") +
+                      average(opponent, "defensive_plays") / average(opponent, "defensive_drives")) / 2
+            share = (average(team, "off_pass_epa_plays") / average(team, "off_epa_plays") +
+                     average(opponent, "def_pass_epa_plays") / average(opponent, "def_epa_plays")) / 2
             by_type = {}
             for kind in ("pass", "rush"):
                 beta = ratings["coefficients"][kind]
