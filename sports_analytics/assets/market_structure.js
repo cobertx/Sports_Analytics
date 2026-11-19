@@ -1,5 +1,10 @@
 /* Keyboard access and focus return for the shared activity dialog. */
 (() => {
+  document.addEventListener('click',event=>{
+    const button=event.target.closest?.('button[data-structure-context]');
+    if(!button||button.disabled||!window.dash_clientside?.set_props)return;
+    window.dash_clientside.set_props('structure-click',{data:{context:button.dataset.structureContext,nonce:Date.now()}});
+  });
   let previous = null;
   function bind() {
     const modal = document.getElementById('structure-modal');

@@ -4,13 +4,13 @@ from dash import ALL, Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 
 from .display_time import format_eastern
-from .market_structure import PROVIDERS, validate
+from .market_structure import PROVIDERS, validate, flow_summary
 from .presentation import PALETTE, chart_style
 
 
 def layout():
     return html.Div([
-        dcc.Store(id='structure-request'), dcc.Store(id='structure-data'),
+        dcc.Store(id='structure-request'), dcc.Store(id='structure-data'),dcc.Store(id='structure-click'),
         dcc.Interval(id='structure-poll', interval=1500, disabled=True),
         html.Div([
             html.Button(id='structure-backdrop', className='structure-backdrop', n_clicks=0,
@@ -39,6 +39,7 @@ def layout():
 def amount(value, money=False):
     if value is None:
         return 'Unavailable'
+    if money and 0<value<.01:return '<$0.01'
     return f'${value:,.2f}' if money else f'{value:,.2f}'.rstrip('0').rstrip('.')
 
 
@@ -95,8 +96,31 @@ def price_history(trades, labels):
                 className='structure-table-scroll',tabIndex=0,role='region',**{'aria-label':'Returned trade prices'})])],className='structure-history')
 
 
+def flow_bars(labels, sides, *, kalshi, complete):
+    """Two absolute scales; partial samples never imply market-wide shares."""
+    panels=[]
+    for field,title,money in [('buys','Trade count' if kalshi else 'Purchase count',False),
+                             ('buy_dollars','Traded value (USD)' if kalshi else 'Purchase value (USD)',True)]:
+        maximum=max((sides[s][field] for s in ('yes','no') if sides[s][field] is not None),default=0)
+        rows=[]
+        for side in ('yes','no'):
+            value=sides[side][field]
+            width=100*value/maximum if value is not None and maximum else 0
+            rows.append(html.Div([
+                html.Div([html.Span(labels[side]),html.Strong(amount(value,money))],className='structure-bar-label'),
+                html.Div(html.Span(style={'width':f'{width:.6f}%'},className='structure-bar-fill structure-bar-fill--'+side),
+                    className='structure-bar-track',**{'aria-hidden':'true'}),
+            ],className='structure-bar-row',**{'data-side':side,'data-value':str(value) if value is not None else 'unavailable'}))
+        panels.append(html.Figure([
+            html.Figcaption(title),html.Small('Complete API window' if complete else 'Returned sample only'),*rows,
+            html.Div([html.Span(amount(0,money)),html.Span(amount(maximum,money))],className='structure-bar-scale',**{'aria-hidden':'true'})
+                if any(sides[s][field] is not None for s in ('yes','no')) else html.P('No usable trade data',className='structure-note'),
+        ],className='structure-flow-chart',role='group',**{'aria-label':title+' by outcome','data-metric':field}))
+    return html.Div(panels,className='structure-flow-charts')
+
+
 def activity(market, provider):
-    labels = market['labels'];trades = market.get('trades');book = market.get('book');holders = market.get('holders')
+    labels = market['labels'];trades = flow_summary(market.get('trades'),provider);book = market.get('book');holders = market.get('holders')
     content = [html.Div([html.H4(market['title']),html.Span('Related contract' if market.get('match') == 'related' else
         'Equivalent contract' if market.get('match') == 'equivalent' else 'Selected contract',className='structure-badge')],className='structure-contract-heading'),
         html.Small(market['ticker'], className='structure-contract')]
@@ -123,8 +147,9 @@ def activity(market, provider):
     if trades:
         sides = trades['sides']
         def values(field):
-            return {side:sides[side][field] for side in ('yes','no')}
+            return {side:sides[side].get(field) for side in ('yes','no')}
         def percentages(field):
+            if any(sides[side].get(field) is None for side in ('yes','no')):return dict(yes=None,no=None)
             total = sum(sides[side][field] for side in ('yes','no'))
             return {side:100*sides[side][field]/total if total else None for side in ('yes','no')}
         metrics = [(count_label, values('buys'), False),
@@ -141,16 +166,15 @@ def activity(market, provider):
                       'Through '+stamp(trades['end']),className='structure-time')],className='structure-coverage'),
             html.P('Fetched '+stamp(trades.get('fetched_at')),className='structure-time'),
             html.Div([html.Div([html.Small(side.upper()+' DIRECTION' if is_kalshi else side.upper()+' PURCHASES'),
-                html.Strong(labels[side]),html.Div([html.B(amount(sides[side]['buy_dollars'],True)),html.Span(value_label)]),
-                html.P(amount(sides[side]['buys'])+' executions · '+amount(sides[side]['buy_contracts'])+
+                html.Strong(labels[side]),html.Div([html.B(amount(sides[side]['buys'])),html.Span('Trade count (executions)' if is_kalshi else 'Purchase count (executions)')]),
+                html.Div([html.B(amount(sides[side]['buy_dollars'],True)),html.Span(value_label)]),
+                html.P(amount(sides[side]['buy_contracts'])+
                        (' contracts' if is_kalshi else ' shares'))],className='structure-outcome structure-outcome--'+side)
-                for side in ('yes','no')],className='structure-outcomes')]
-        if clean and sum(values('buys').values()):
-            shares = percentages('buys')
-            content.append(html.Div([
-                html.P(f"Taker execution share · YES {shares['yes']:.1f}% / NO {shares['no']:.1f}%"),
-                html.Div([html.Span(style={'width':f"{shares['yes']}%"}),html.Span(style={'width':f"{shares['no']}%"})],
-                    className='structure-share-bar',**{'aria-hidden':'true'})],className='structure-share'))
+                for side in ('yes','no')],className='structure-outcomes'),
+            flow_bars(labels,sides,kalshi=is_kalshi,complete=clean)]
+        if not trades['classified']:
+            content.append(html.P('No executions were returned for this contract in the requested window.' if clean else
+                'No usable executions were returned. Side counts and traded values are unavailable.',className='structure-note'))
         if not clean:
             content.append(html.P('Counts and values are lower bounds from the returned sample; market-wide shares are unavailable. '
                 'Reads are limited to 2,000 records across live and archived trades.',className='structure-note'))
@@ -247,18 +271,22 @@ def register(app, service):
     @app.callback(Output('structure-request','data'), Output('structure-modal','style'), Output('structure-prompt','children'),
         Input(buttons,'n_clicks'), Input('structure-close','n_clicks'), Input('structure-backdrop','n_clicks'),
         Input('market-url','hash'), Input('sport','value'), Input('workspace-page','value'), State(buttons,'id'),
+        Input('structure-click','data'),
         prevent_initial_call=True)
-    def structure_open(clicks, close, backdrop, location, sport, page, identities):
+    def structure_open(clicks, close, backdrop, location, sport, page, identities, selection=None):
         triggered = ctx.triggered_id
         if isinstance(triggered, str) and triggered in {'structure-close','structure-backdrop','market-url','sport','workspace-page'}:
             return None, {'display':'none'}, ''
-        if not isinstance(triggered, dict):
-            raise PreventUpdate
-        index = next((i for i,identity in enumerate(identities) if identity == triggered), None)
-        if index is None or not clicks[index]:
-            raise PreventUpdate
+        if triggered=='structure-click':
+            if not selection or page!='market-summary':raise PreventUpdate
+            target=selection.get('context')
+        else:
+            if not isinstance(triggered, dict):raise PreventUpdate
+            index = next((i for i,identity in enumerate(identities) if identity == triggered), None)
+            if index is None or not clicks[index]:raise PreventUpdate
+            target=triggered['context']
         try:
-            request = validate(json.loads(triggered['context']))
+            request = validate(json.loads(target))
         except (ValueError, TypeError, KeyError):
             return None, {'display':'none'}, 'This market could not be identified.'
         label = request['game']['away']['name']+' at '+request['game']['home']['name']+' · '+request['label']

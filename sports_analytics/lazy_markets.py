@@ -32,19 +32,22 @@ class LazyMarkets:
             self.views[view][section]=(render,*old[1:])
             return old[4]
 
-    def panel(self,view,section,render,total,*,initial=True,size=6,step=50,loading=True):
+    def panel(self,view,section,render,total,*,initial=True,size=6,step=50,loading=True,text_more=False):
         identity=dict(view=view,section=section)
         with self.lock:self.views[view][section]=(render,total,size,step,min(size,total) if initial else 0)
         body=html.Div(render(size) if initial else html.P(
             'Open this market to load its selections.' if loading else 'Loading selections…',role='status'),
             id=dict(type='lazy-market-body',**identity),**{'data-ready':'true' if initial else 'false'})
         if loading:body=dcc.Loading(body,delay_show=150,color='#57dbc4')
+        more=(html.A('Show more selections',role='button',tabIndex=0) if text_more else html.Button('Show more selections'))
+        more.id=dict(type='lazy-market-more',**identity);more.n_clicks=0
+        more.className='market-load-more'+(' market-load-more-text' if text_more else '')
+        more.style={} if initial and total>size else {'display':'none'}
         return html.Div([
             html.Button('',id=dict(type='lazy-market-trigger',**identity),n_clicks=0,
                         style={'display':'none'},tabIndex=-1,**{'aria-hidden':'true'}),
             body,
-            html.Button('Show more selections',id=dict(type='lazy-market-more',**identity),n_clicks=0,
-                className='market-load-more',style={} if initial and total>size else {'display':'none'}),
+            more,
         ],className='lazy-market-body')
 
     def read(self,identity,pages):

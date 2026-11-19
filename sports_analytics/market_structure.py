@@ -19,7 +19,7 @@ from .polymarket import CLOB, PolymarketService
 DATA = 'https://data-api.polymarket.com/v2'
 PROVIDERS = ('FanDuel', 'Kalshi', 'Polymarket')
 MAX_PAGES = 4
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 
 def validate(value):
@@ -155,9 +155,40 @@ def trade_summary(rows, provider, market, lower, upper):
             total['buys' if action == 'BUY' else 'sells'] += 1
             total['buy_dollars' if action == 'BUY' else 'sell_dollars'] += outcome_price*size
             total['buy_contracts' if action == 'BUY' else 'sell_contracts'] += size
-    return dict(sides={side:{key:float(value) if isinstance(value, Decimal) else value for key,value in total.items()}
+    return dict(accounting_version=2,sides={side:{key:float(value) if isinstance(value, Decimal) else value for key,value in total.items()}
                        for side,total in totals.items()}, unclassified=unknown, invalid=invalid, outside=outside,
                 price_history=sorted(history, key=lambda row:row['time']))
+
+
+def flow_summary(trades, provider):
+    """Repair legacy directional totals without inventing bets or positions.
+
+    Kalshi's stored ``dollars`` aggregate uses the YES-price basis on both sides.
+    Each classified execution has one taker direction, so its count is ``prints``
+    and NO-direction value is contracts minus that YES-priced aggregate. Older
+    snapshots left buy_* at zero even when these execution aggregates were known.
+    """
+    if not trades:return None
+    result=deepcopy(trades)
+    for side in ('yes','no'):
+        values=result.setdefault('sides',{}).setdefault(side,{})
+        if provider=='Kalshi':
+            values['buys']=values.get('prints')
+            values['buy_contracts']=values.get('contracts')
+            contracts,dollars=decimal(values.get('contracts')),decimal(values.get('dollars'))
+            current=numeric(values.get('buy_dollars')) if result.get('accounting_version')==2 else None
+            values['buy_dollars']=(current if current is not None else float(dollars if side=='yes' else contracts-dollars)
+                if contracts is not None and dollars is not None and 0<=dollars<=contracts else None)
+        for field in ('buys','buy_dollars','buy_contracts','sells','sell_dollars'):
+            value=numeric(values.get(field))
+            values[field]=value if value is not None and value>=0 else None
+    classified=sum((numeric(side.get('prints')) or 0) for side in result['sides'].values())
+    # An empty failed/invalid sample cannot establish zero on either outcome.
+    if not classified and not (result.get('complete') and not result.get('invalid') and not result.get('unclassified')):
+        for side in result['sides'].values():
+            for field in ('buys','buy_dollars','buy_contracts','sells','sell_dollars'):side[field]=None
+    result['classified']=classified
+    return result
 
 
 class MarketStructure:
@@ -291,6 +322,12 @@ class MarketStructure:
         if not complete and scanned_pages == MAX_PAGES:
             errors.append('The four-page trade limit was reached before all requested history was checked.')
         result = trade_summary(rows, provider, market, lower, upper)
+        # An empty feed conflicts with a positive volume snapshot for the same
+        # full-history scope. It cannot establish a zero trading distribution.
+        headline=numeric(market.get('volume_24h' if lower>datetime(1970,1,1,tzinfo=timezone.utc) else 'volume'))
+        if not rows and headline is not None and headline>0:
+            complete=False
+            errors.append('No trades were returned despite positive reported volume; the side distribution is unavailable.')
         result.update(complete=complete, error='; '.join(errors) or None, fetched_at=self.now().isoformat(),
                       start=lower.isoformat(), end=upper.isoformat(), scanned=len(rows))
         return result

@@ -62,14 +62,19 @@ def panel(rows,forecast,method,section,stat):
     except (ValueError,TypeError,OverflowError) as exc:
         return html.P(f'{method} distribution unavailable: {exc}',className='chart-note')
     payload.update(method=method,player=rows[0]['subject'],stat=stat)
+    return payload_panel(payload,section,f"{rows[0]['subject']} {stat} {method} predictive distribution")
+
+
+def payload_panel(payload,section,label):
+    """Mount charts only when the enclosing market/distribution is expanded."""
     identity=sha256((section+json.dumps(payload,sort_keys=True,allow_nan=False)).encode()).hexdigest()
     return html.Section([
         dcc.Store(id=dict(type='player-distribution-data',key=identity),data=payload),
         html.Button('',id=dict(type='player-distribution-trigger',key=identity),n_clicks=0,
                     className='player-distribution-trigger',style={'display':'none'},tabIndex=-1,**{'aria-hidden':'true'}),
         html.Div(id=dict(type='player-distribution-body',key=identity),className='player-distribution-body',
-                 children=html.P(f'Open this market to see the {method} predictive distribution.',className='chart-note')),
-    ],className='player-distribution',**{'aria-label':f"{rows[0]['subject']} {stat} {method} predictive distribution"})
+                 children=html.P(f"Open this section to see the {payload['method']} predictive distribution.",className='chart-note')),
+    ],className='player-distribution',**{'aria-label':label})
 
 
 def register(app):

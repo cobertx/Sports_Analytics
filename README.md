@@ -145,6 +145,9 @@ the lowest implied probability among matching source quotes. Missing quotes show
 Equivalent integer thresholds share a row; different push rules and unverified contracts stay
 separate. Original wording remains in the quote tooltip; each source's **Details**
 disclosure contains its Historical Data and Market Structure controls.
+Spreads are grouped by team, with each team's signed lines ascending from negative
+to positive. Totals list all Over lines first, then all Under lines, ascending within
+each side. This ordering also applies as more selections are loaded.
 Large summaries mount six selections in each of the first two groups; other groups
 load when expanded. Each visible window reserves up to two priced comparisons per
 available source, preferring shared lines, then fills the remaining places from the
@@ -153,6 +156,10 @@ Polymarket price in the initial window. **Show more selections** adds 25 rows at
 retain the full selection count, and every quote remains available. Forecasts still
 cover the complete bundle; completed results update each displayed selection together
 without rebuilding the quote tables. Pending forecasts do not rewrite existing cells.
+Quote tables use escaped native HTML with one Dash boundary per group. Model results
+arrive once per table, and Market Structure uses a shared delegated control; expanding
+a ladder no longer adds a Dash callback output for every calculated cell. The browser
+retains table scroll position and open quote disclosures when more rows arrive.
 Background model polls carry only the game-scoped job reference. Complete forecast
 rows stay in the bounded server cache, and source revisions preserve exact file
 timestamps across browser requests so unchanged results can be reused.
@@ -444,6 +451,14 @@ market groups and table are cents per contract; they are not forecasting-model p
 guaranteed executable prices. Full settlement rules and contract notional are
 available below the table and in quote tooltips; ties, protected props and other
 settlement rules can differ from sportsbook bets.
+
+In each Kalshi game's **Game Lines** tab, expand **Forecast distributions** below
+the market sections for the selected PPP/EPA/ELO method's home-margin and total-points
+probability mass and cumulative graphs. They reuse the same fitted settlement
+functions as the calculated contract probabilities, including NBA's no-tie rule.
+Graphs mount only on expansion; quote polling does not refit them. Truncated display
+tails are reported without rescaling. **Show more selections** is a plain text
+footer action beneath each market ladder, with mouse, Enter and Space support.
 
 **Pull Live Markets / Save snapshot** checks the selected category and saves
 JSON and CSV under ignored `data/kalshi_market/<sport>/<game>/<category>/`.
@@ -885,7 +900,15 @@ can produce multiple fills, and unfilled orders are labeled separately.
 
 The selected source occupies the main panel, with separate YES/NO flow cards,
 volume and open-interest measures, best bid/ask prices and spreads, and expandable
-depth tables. Kalshi asks are derived from opposite-side bids. The price chart
+depth tables. Two horizontal bar charts compare execution counts and dollar value
+by outcome on separate absolute scales, with exact values beside every bar.
+Partial samples are labeled and do not imply market-wide betting shares. Legacy
+Kalshi snapshots recover direction counts from trade prints and NO value from
+the complementary price basis, rather than displaying obsolete zero purchase
+fields. Empty failed feeds show **Unavailable**; positive headline volume with
+an empty trade feed is flagged as a coverage conflict. Sub-cent amounts show
+**< $0.01**, and verified empty windows explicitly say no executions were returned.
+Kalshi asks are derived from opposite-side bids. The price chart
 plots actual returned YES trade prices, with a table of the latest 20 returned
 executions; it does not reconstruct continuous quotes or model probabilities.
 

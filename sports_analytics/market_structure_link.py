@@ -74,6 +74,10 @@ def button(snapshot, row, provider='FanDuel', side='yes', *, surface='quotes'):
     if not target:
         return html.Button('Market Structure', disabled=True, className='market-structure-button',
             title='The teams or scheduled start for this game have not been identified.')
+    if surface=='summary':
+        return html.Button('Market Structure',className='market-structure-button',
+            **{'data-structure-context':json.dumps(target,sort_keys=True,separators=(',',':'))},
+            title='Compare trading activity and liquidity across all market sources')
     return html.Button('Market Structure', id=dict(type='market-structure-open',
         context=json.dumps(target, sort_keys=True, separators=(',', ':')), surface=surface), n_clicks=0,
         className='market-structure-button', title='Compare trading activity and liquidity across all market sources')

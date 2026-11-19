@@ -181,18 +181,23 @@ class ProbabilityPolicyChecks(TestCase):
         self.assertTrue(current_models(models,bundle,'EPA','OAM'))
         old=deepcopy(models);old.pop('weighting_policy')
         self.assertFalse(current_models(old,bundle,'EPA','OAM'))
-        identity=dict(type='summary-model-cell',bundle=bundle['id'],provider='FanDuel',index=0,side='')
-        current=fixture.cb['summary_model_cells'](models,'EPA','OAM',[identity],'market-summary','NFL',bundle,'123')
-        values=fixture.cb['summary_model_cells'](old,'EPA','OAM',[identity],'market-summary','NFL',bundle,'123')
-        from check_kalshi import components
+        identity=dict(type='summary-model-table',bundle=bundle['id'],category='Game Lines',group='Game Total')
+        visible=[json.dumps([['FanDuel',0,'']])]
+        current=fixture.cb['summary_model_cells'](models,'EPA','OAM',visible,'market-summary','NFL',bundle,'123',[identity])
+        values=fixture.cb['summary_model_cells'](old,'EPA','OAM',visible,'market-summary','NFL',bundle,'123',[identity])
+        from check_market_summary import NativeParser
         def displayed(value):
-            fields=[part.children.children for part in components(value) if part.__class__.__name__=='Dd']
-            return [(field[0],field[1].children) if isinstance(field,list) else field for field in fields]
+            fields=json.loads(value[0])[json.dumps(['FanDuel',0,''],separators=(',',':'))]
+            parsed=[]
+            for field in fields:
+                parser=NativeParser();parser.feed(field);parsed.append(parser.root)
+            probability=parsed[0].find('span')[0]
+            return [(probability.children[0],str(probability.find('small')[0])),str(parsed[1]),str(parsed[2].find('span','summary-edge')[0])]
         self.assertEqual(displayed(current),[('66.67%','EPA'),'-200','+16.67 pp'])
         self.assertEqual(displayed(values),[('—',''),'—','—'])
         expired={**models,'availability_revision':['outdated']}
         self.assertEqual(displayed(fixture.cb['summary_model_cells'](
-            expired,'EPA','OAM',[identity],'market-summary','NFL',bundle,'123')),[('—',''),'—','—'])
+            expired,'EPA','OAM',visible,'market-summary','NFL',bundle,'123',[identity])),[('—',''),'—','—'])
         fixture.engines['EPA'].forecast.reset_mock()
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
             fresh,_=fixture.cb['summary_models'](bundle,'EPA','OAM',0,'market-summary','NFL','123',old)

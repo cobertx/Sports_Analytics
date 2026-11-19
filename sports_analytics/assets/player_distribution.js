@@ -19,13 +19,14 @@
             component('dash_html_components','H4',{children:title}),
             component('dash_core_components','Graph',{figure:{data:[trace],layout:{...style,
               yaxis:{title:{text:yTitle},tickformat:'.0%',gridcolor:'#223047',range:[0,trace.type==='bar'?Math.min(1,Math.max(...data.mass)*1.12||1):1]} }},
-              config:{displaylogo:false,responsive:true},style:{width:'100%'},responsive:true})]});
+              config:{displaylogo:false,responsive:true},style:{width:'100%',height:'345px',minHeight:'345px'},responsive:true})]});
         const tail=data.below+data.above;
         return [
           component('dash_html_components','P',{className:'chart-note',children:
-            `${data.player} · ${data.method} · Mean ${data.mean.toFixed(2)} · SD ${data.sd.toFixed(2)}. `+
+            `${data.player} · ${data.method} · ${data.kind==='game'?'Model center':'Mean'} ${data.mean.toFixed(2)} · SD ${data.sd.toFixed(2)}. `+
+            (data.description||'')+
             'Each bar is the probability of exactly that integer outcome; cumulative means at or below that value. Integer-line push mass is included.'+
-            (tail>1e-10?` The visible range omits ${(100*tail).toFixed(6)}% tail probability; probabilities are not rescaled.`:'')}),
+            (tail>1e-10?` The visible range omits ${100*tail<.000001?'<0.000001':(100*tail).toFixed(6)}% tail probability; probabilities are not rescaled.`:'')}),
           component('dash_html_components','Div',{className:'player-distribution-grid',children:[
             graph(`${data.method} · Probability distribution`,{type:'bar',x:data.x,y:data.mass,
               marker:{color:probability},name:'Exact outcome',hovertemplate:'Exactly %{x}: %{y:.2%}<extra></extra>'},'Probability of exact outcome'),
@@ -38,13 +39,18 @@
   const requested=new WeakMap();
   const lazyRequested=new WeakSet(), lazySections=new WeakMap();
   document.addEventListener('click',event=>{
-    const button=event.target.closest?.('button.market-load-more');
+    const button=event.target.closest?.('.market-load-more');
     const section=button?.closest('details.sportsbook-market');
     if(section){
       const state=lazySections.get(section)||{pages:0};
       state.pages++;state.more=button;lazySections.set(section,state);
     }
   },true);
+  document.addEventListener('keydown',event=>{
+    if((event.key==='Enter'||event.key===' ')&&event.target.matches?.('a.market-load-more-text')){
+      event.preventDefault();event.target.click();
+    }
+  });
   let scheduled=false, active=null, all=true;
   const sections=new Set();
   const relevant='.sportsbook-market,.lazy-market-body,.player-distribution-trigger,.market-load-more';
@@ -81,7 +87,7 @@
         if(!panel.getClientRects().length)continue;
         const body=panel.querySelector('[data-ready]');
         const button=panel.querySelector('button[id*="lazy-market-trigger"]');
-        const more=panel.querySelector('button.market-load-more');
+        const more=panel.querySelector('.market-load-more');
         const section=panel.closest('details.sportsbook-market');
         const state=lazySections.get(section)||{pages:0};
         if(more&&state.more!==more){

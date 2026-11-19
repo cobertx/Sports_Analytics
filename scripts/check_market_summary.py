@@ -1,5 +1,6 @@
 """Cross-provider scope, probability semantics, navigation and Dash integration."""
 from copy import deepcopy
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import sys
@@ -23,6 +24,41 @@ from sports_analytics.market_summary_view import sections,comparison_rows,select
 from sports_analytics.lazy_markets import markets as lazy_markets
 from sports_analytics.mispricing import GAME_METHODS,PLAYER_METHODS
 from check_kalshi import components
+
+
+class NativeNode:
+    def __init__(self,tag='',attrs=()):self.tag=tag;self.attrs=dict(attrs);self.children=[]
+    def find(self,tag=None,css=None):
+        found=[]
+        for child in self.children:
+            if isinstance(child,NativeNode):
+                if (tag is None or child.tag==tag) and (css is None or css in child.attrs.get('class','').split()):found.append(child)
+                found.extend(child.find(tag,css))
+        return found
+    def __str__(self):return ''.join(map(str,self.children))
+
+
+class NativeParser(HTMLParser):
+    def __init__(self):super().__init__(convert_charrefs=True);self.root=NativeNode();self.stack=[self.root]
+    def handle_starttag(self,tag,attrs):
+        node=NativeNode(tag,attrs);self.stack[-1].children.append(node)
+        if tag not in {'img','br','hr','input','wbr'}:self.stack.append(node)
+    def handle_startendtag(self,tag,attrs):self.handle_starttag(tag,attrs)
+    def handle_endtag(self,tag):
+        if self.stack[-1].tag==tag:self.stack.pop()
+    def handle_data(self,data):self.stack[-1].children.append(data)
+
+
+def native_dom(value):
+    parser=NativeParser()
+    for component in components(value):
+        if getattr(component,'data-markup',None):parser.feed(getattr(component,'data-markup'))
+    return parser.root
+
+
+def table_states(value):
+    tables=[c for c in components(value) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-table']
+    return [table.id for table in tables],[getattr(table,'data-rows') for table in tables]
 
 START='2026-10-25T13:30:00Z'
 STAMP='2026-10-24T12:00:00Z'
@@ -77,10 +113,44 @@ class PlayerForecast:
 
 
 class SummaryAnalysisChecks(TestCase):
+    def test_spreads_group_each_team_and_sort_signed_lines_including_show_more(self):
+        source=bundle();source['sport']='NBA';source['providers']={'FanDuel':source['providers']['FanDuel']}
+        source['game'].update(away=dict(name='Boston Celtics'),home=dict(name='Denver Nuggets'))
+        snapshot=source['providers']['FanDuel']['snapshot']
+        snapshot.update(sport='NBA',away_team='Boston Celtics',home_team='Denver Nuggets')
+        snapshot['rows']=[dict(group='Game',market='Spread',market_key='alternate_spreads',subject=team,selection=team,line=line,odds=-110)
+            for line in reversed([i+.5 for i in range(-33,33)]) for team in ('Denver Nuggets','Boston Celtics')]
+        rows=entries(source);original=deepcopy(rows)
+        expected=[f'{team} {line:+g}' for team in ('Boston Celtics','Denver Nuggets') for line in [i+.5 for i in range(-33,33)]]
+        items=comparison_rows(rows,'Game Lines')['Game Lines','Spread / Winner']
+        self.assertEqual([item['outcome']['label'] for item in items],expected)
+        shown=sections(source,rows,'Game Lines')
+        body=next(c for c in components(shown) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='lazy-market-body')
+        for pages,count in [(0,SUMMARY_BATCH),(1,SUMMARY_BATCH+SUMMARY_STEP),(10_000,len(expected))]:
+            rendered,*_=lazy_markets.read(body.id,pages)
+            self.assertEqual([str(node) for node in native_dom(rendered).find('th','summary-selection')],expected[:count])
+        self.assertEqual(rows,original)
+
+    def test_totals_group_all_overs_before_unders_for_every_provider(self):
+        for provider in ('FanDuel','Kalshi','Polymarket'):
+            source=bundle();source['providers']={provider:source['providers'][provider]}
+            snapshot=source['providers'][provider]['snapshot']
+            if provider=='FanDuel':
+                snapshot['rows']=[dict(group='Game',market='Total',market_key='alternate_totals',subject=side,selection=side,line=line+.5,odds=-110)
+                    for line in (49,47,48) for side in ('Under','Over')]
+            else:
+                snapshot['rows']=[{**binary(provider=provider),'ticker':f'TOTAL-{line}','line':line+(.5 if provider=='Polymarket' else 0)} for line in (49,47,48)]
+            rows=entries(source);original=deepcopy(rows)
+            items=comparison_rows(rows,'Game Lines')['Game Lines','Game Total']
+            expected=[f'{side} {line+.5:g}' for side in ('Over','Under') for line in (47,48,49)]
+            self.assertEqual([item['outcome']['label'] for item in items],expected,provider)
+            self.assertEqual([str(node) for node in native_dom(sections(source,rows,'Game Lines')).find('th','summary-selection')],expected,provider)
+            self.assertEqual(rows,original)
+
     def test_fanduel_alternate_lines_cannot_push_all_kalshi_quotes_out_of_view(self):
         source=bundle();source['providers'].pop('Polymarket')
         source['providers']['FanDuel']['snapshot']['rows']=[dict(group='Game',market='Total',market_key='alternate_totals',
-            subject=side,selection=side,line=line+.5,odds=-110) for line in range(16,71) for side in ('Over','Under')]
+            subject=side,selection=side,line=line+.5,odds=-110) for line in range(0,71) for side in ('Over','Under')]
         source['providers']['Kalshi']['snapshot']['rows']=[{**binary(),'ticker':f'TOTAL-{line}','line':line} for line in range(20,63,3)]
         items=comparison_rows(entries(source),'Game Lines')['Game Lines','Game Total']
         self.assertTrue(all(set(item['quotes'])=={'FanDuel'} for item in items[:SUMMARY_BATCH]))
@@ -90,8 +160,8 @@ class SummaryAnalysisChecks(TestCase):
         self.assertEqual([item['outcome']['line'] for item in shown],sorted(item['outcome']['line'] for item in shown))
         models=calculate(source,'PPP','WHP',lambda *a:(GameForecast(),None),lambda *a:(PlayerForecast(),None,{}))
         view=sections(source,models['rows'],'Game Lines')
-        prices=[c for c in components(view) if getattr(c,'className',None)=='summary-source-cell summary-implied-cell' and getattr(c,'data-provider',None)=='Kalshi']
-        self.assertGreaterEqual(len(prices),2);self.assertTrue(all('%' in str(c.children) for c in prices))
+        prices=[c for c in native_dom(view).find('td','summary-implied-cell') if c.attrs.get('data-provider')=='Kalshi']
+        self.assertGreaterEqual(len(prices),2);self.assertTrue(all('%' in str(c) for c in prices))
         self.assertEqual(visible_comparisons(items,len(items)),items)
         self.assertEqual(visible_comparisons(items,0),[])
 
@@ -117,7 +187,7 @@ class SummaryAnalysisChecks(TestCase):
             row.update(probability=.625,model_odds=-167,edge=.125,method='WHP',detail='Recorded model result')
         expected=comparison_rows(rows,'All Markets')
         shown=sections(source,rows,'All Markets')
-        tables=[c for c in components(shown) if c.__class__.__name__=='Tbody']
+        tables=native_dom(shown).find('tbody')
         self.assertEqual(sum(len(t.children) for t in tables),2*SUMMARY_BATCH)
         self.assertLess(len(to_json(shown)),500_000)
         bodies=[c for c in components(shown) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='lazy-market-body']
@@ -142,9 +212,33 @@ class SummaryAnalysisChecks(TestCase):
         body=next(c for c in components(shown) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='lazy-market-body')
         first,_,_,_=lazy_markets.read(body.id,0)
         second,_,_,_=lazy_markets.read(body.id,1)
-        def count(value):return sum(len(c.children) for c in components(value) if c.__class__.__name__=='Tbody')
+        def count(value):return len(native_dom(value).find('tr'))-2*len(native_dom(value).find('thead'))
         self.assertEqual(count(first),SUMMARY_BATCH);self.assertEqual(count(second),SUMMARY_BATCH+SUMMARY_STEP)
         self.assertEqual(rows,original)
+
+    def test_large_native_table_has_constant_dash_subscriptions_and_escapes_feed_text(self):
+        source=bundle();source['providers']={'Kalshi':source['providers']['Kalshi']}
+        snapshot=source['providers']['Kalshi']['snapshot']
+        snapshot['rows']=[{**binary(),'ticker':f'TOTAL-{i}','line':i} for i in range(150)]
+        rows=entries(source);items=comparison_rows(rows,'Game Lines')['Game Lines','Game Total']
+        snapshots={'Kalshi':{**snapshot,'game':source['providers']['Kalshi']['game']}}
+        small=selection_table(source,items,'Game Total',snapshots,6)
+        large=selection_table(source,items,'Game Total',snapshots,len(items))
+        self.assertEqual(len(list(components(small))),len(list(components(large))))
+        self.assertLess(len(list(components(large))),4)
+        self.assertEqual(len(native_dom(large).find('tr'))-2,len(items))
+        self.assertNotIn('market-structure-open',to_json(large))
+        control=native_dom(large).find('button','market-structure-button')[0]
+        self.assertEqual(json.loads(control.attrs['data-structure-context'])['provider'],'Kalshi')
+        from sports_analytics.static_markup import markup
+        from dash import html,dcc
+        text='\"><script>alert("feed")</script>&{unsafe}'
+        parser=NativeParser();parser.feed(markup(html.Span(text,title=text)))
+        self.assertEqual(str(parser.root),text);self.assertEqual(parser.root.children[0].attrs['title'],text)
+        self.assertEqual(parser.root.find('script'),[])
+        with self.assertRaises(TypeError):markup(dcc.Input())
+        with self.assertRaises(ValueError):markup(html.Script('alert(1)'))
+        with self.assertRaises(ValueError):markup(html.A('Unsafe',href='javascript:alert(1)'))
 
     def test_equivalent_totals_align_in_source_columns_for_each_sport(self):
         for sport,away,home in [('NFL','Pittsburgh Steelers','New Orleans Saints'),
@@ -164,18 +258,18 @@ class SummaryAnalysisChecks(TestCase):
             self.assertEqual([m['outcome']['label'] for m in markets],['Over 47.5','Under 47.5'])
             self.assertTrue(all(set(m['quotes'])=={'FanDuel','Kalshi','Polymarket'} for m in markets))
             rendered=sections(source,entries(source),'Game Lines')
-            table=next(c for c in components(rendered) if c.__class__.__name__=='Table')
-            header=next(c for c in components(table) if c.__class__.__name__=='Thead')
+            table=native_dom(rendered).find('table')[0]
+            header=table.find('thead')[0]
             self.assertEqual(len(header.children[0].children),5)
             self.assertEqual(len(header.children[1].children),9)
-            self.assertEqual([c.colSpan for c in header.children[0].children[1:]],[2,2,2,3])
-            self.assertIn('FanDuel',str(header));self.assertIn('Kalshi',str(header));self.assertIn('Polymarket',str(header))
-            body=next(c for c in components(table) if c.__class__.__name__=='Tbody')
+            self.assertEqual([int(c.attrs['colspan']) for c in header.children[0].children[1:]],[2,2,2,3])
+            self.assertEqual([c.attrs['alt'] for c in header.find('img')],['FanDuel','Kalshi','Polymarket'])
+            body=table.find('tbody')[0]
             self.assertEqual(len(body.children),2)
-            self.assertTrue(all(sum(getattr(cell,'colSpan',1) for cell in row.children)==10 for row in body.children))
+            self.assertTrue(all(sum(int(cell.attrs.get('colspan',1)) for cell in row.children)==10 for row in body.children))
             for row in body.children:
-                self.assertEqual(sum('summary-model-values' in getattr(cell,'className','') for cell in row.children),3)
-                self.assertTrue(all('summary-model-values' not in getattr(cell,'className','') for cell in row.children[1:7]))
+                self.assertEqual(sum('summary-model-values' in cell.attrs.get('class','') for cell in row.children),3)
+                self.assertTrue(all('summary-model-values' not in cell.attrs.get('class','') for cell in row.children[1:7]))
             self.assertIn('summary-best',str(rendered));self.assertIn('Historical Data',str(rendered))
 
     def test_push_lines_and_unsupported_contracts_are_never_merged(self):
@@ -216,8 +310,9 @@ class SummaryAnalysisChecks(TestCase):
         self.assertEqual(sum(len(item['quotes']) for item in player),6)
         self.assertIn(('Player Props','Another Quarterback - Alt Passing Yds'),groups)
         rendered=sections(source,entries(source),'Player Props')
-        identities=[c.id for c in components(rendered) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-cell']
-        count=sum(len(items) for items in groups.values())*3
+        tables,visible=table_states(rendered)
+        identities=[(str(table),str(anchor[:3])) for table,rows in zip(tables,visible) for anchor in json.loads(rows)]
+        count=sum(len(items) for items in groups.values())
         self.assertEqual(len(identities),count)
         self.assertEqual(len({str(identity) for identity in identities}),count)
 
@@ -572,16 +667,16 @@ class SummaryCallbackChecks(TestCase):
             with self.assertRaises(PreventUpdate):
                 self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',browser,3)
         shown,_=self.cb['summary_sections'](quoted,browser,'All Markets','PPP','WHP','123','market-summary','NFL')
-        identities=[c.id for c in components(shown) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-cell']
-        cells=self.cb['summary_model_cells'](browser,'PPP','WHP',identities,'market-summary','NFL',quoted,'123')
+        identities,visible=table_states(shown)
+        cells=self.cb['summary_model_cells'](browser,'PPP','WHP',visible,'market-summary','NFL',quoted,'123',identities)
         self.assertIn('70.00%',str(cells));self.engines['PPP'].forecast.assert_called_once()
         wrong={**browser,'bundle_id':'another-game'}
-        with self.assertRaises(PreventUpdate):self.cb['summary_model_cells'](wrong,'PPP','WHP',identities,'market-summary','NFL',quoted,'123')
+        with self.assertRaises(PreventUpdate):self.cb['summary_model_cells'](wrong,'PPP','WHP',visible,'market-summary','NFL',quoted,'123',identities)
         with tasks.lock:tasks.values.pop(browser['job'])
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-model-poll')):
             retry,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',browser,4)
         self.assertTrue(retry['pending']);self.assertTrue(retry['clear'])
-        cleared=self.cb['summary_model_cells'](retry,'PPP','WHP',identities,'market-summary','NFL',quoted,'123')
+        cleared=self.cb['summary_model_cells'](retry,'PPP','WHP',visible,'market-summary','NFL',quoted,'123',identities)
         self.assertNotIn('70.00%',str(cleared))
         tasks.queue.tasks.join();self.assertIsNotNone(tasks.peek(browser['job']))
         self.engines['PPP'].forecast.assert_called_once()
@@ -589,9 +684,9 @@ class SummaryCallbackChecks(TestCase):
                 patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-recalculate')):
             failed,_=self.cb['summary_models'](quoted,'PPP','WHP',1,'market-summary','NFL','123',browser,5)
         self.assertEqual(failed['status'],'error')
-        self.assertNotIn('70.00%',str(self.cb['summary_model_cells'](failed,'PPP','WHP',identities,'market-summary','NFL',quoted,'123')))
+        self.assertNotIn('70.00%',str(self.cb['summary_model_cells'](failed,'PPP','WHP',visible,'market-summary','NFL',quoted,'123',identities)))
         with self.assertRaises(PreventUpdate):
-            self.cb['summary_model_cells']({**failed,'bundle_id':'old-game'},'PPP','WHP',identities,'market-summary','NFL',quoted,'123')
+            self.cb['summary_model_cells']({**failed,'bundle_id':'old-game'},'PPP','WHP',visible,'market-summary','NFL',quoted,'123',identities)
 
     def test_catalogs_load_in_parallel_and_game_cards_select_and_return_to_list(self):
         barrier=Barrier(3,timeout=5)
@@ -654,39 +749,39 @@ class SummaryCallbackChecks(TestCase):
         self.assertNotIn('summary-models',{item['id'] for item in raw_meta['inputs']})
         quoted,_=self.quotes()
         raw,_=self.cb['summary_sections'](quoted,None,'All Markets','PPP','WHP','123','market-summary','NFL')
-        identities=[c.id for c in components(raw) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-cell']
-        row_count=sum(len(c.children) for c in components(raw) if c.__class__.__name__=='Tbody')
-        self.assertEqual(len(identities),3*row_count);self.assertIn('Market odds',str(raw))
+        identities,visible=table_states(raw)
+        row_count=sum(len(json.loads(rows)) for rows in visible)
+        self.assertLess(len(identities),3*row_count);self.assertIn('Market odds',str(raw))
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             models,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None)
         key,meta=next((key,meta) for key,meta in self.app.callback_map.items() if meta.get('callback') and
                       meta['callback'].__wrapped__.__name__=='summary_model_cells')
         pattern=next(item['id'] for item in meta['inputs'] if item['id'].startswith('{'))
-        values={'summary-models':models,'summary-game-method':'PPP','summary-player-method':'WHP',pattern:identities,
+        values={'summary-models':models,'summary-game-method':'PPP','summary-player-method':'WHP',pattern:visible,
                 'workspace-page':'market-summary','sport':'NFL','summary-quotes':quoted,'summary-game':'123'}
         with self.app.server.test_client() as client:
             response=client.post('/_dash-update-component',json=dict(output=key,
                 outputs=[dict(id=identity,property=meta['output'].component_property) for identity in identities],
                 inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
-                state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['summary-models.data']))
+                state=[dict(**item,value=identities if item['id']==pattern else wire_value(item,values)) for item in meta['state']],changedPropIds=['summary-models.data']))
         self.assertEqual(response.status_code,200,response.get_data(as_text=True))
         data=response.get_json()['response']
-        self.assertEqual(len(data),3*row_count);self.assertIn('70.00%',str(data));self.assertNotIn('summary-market-sections',data)
+        self.assertEqual(len(data),len(identities));self.assertIn('70.00%',str(data));self.assertNotIn('summary-market-sections',data)
+        self.assertEqual(sum(len(json.loads(v['data-models'])) for v in data.values()),row_count)
         with self.assertRaises(PreventUpdate):
-            self.cb['summary_model_cells'](models,'EPA','OAM',identities,'market-summary','NFL',quoted,'123')
+            self.cb['summary_model_cells'](models,'EPA','OAM',visible,'market-summary','NFL',quoted,'123',identities)
         self.fd.pull.assert_not_called()
 
     def test_shared_cells_update_to_best_edge_source_without_changing_row_identity(self):
         self.poly.all_quotes.return_value['rows'][0]['yes_ask']=.4
         quoted,_=self.quotes()
         raw,_=self.cb['summary_sections'](quoted,None,'Game Lines','PPP','WHP','123','market-summary','NFL')
-        identities=[c.id for c in components(raw) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-cell'
-                    and c.id['provider']=='Kalshi' and c.id['index']==0 and c.id['side']=='yes']
-        self.assertEqual(len(identities),3)
+        identities,visible=table_states(raw)
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             models,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None)
-        values=self.cb['summary_model_cells'](models,'PPP','WHP',identities,'market-summary','NFL',quoted,'123')
-        by_metric={identity['metric']:str(value) for identity,value in zip(identities,values)}
+        values=self.cb['summary_model_cells'](models,'PPP','WHP',visible,'market-summary','NFL',quoted,'123',identities)
+        by_row={key:metrics for table in values for key,metrics in json.loads(table).items()}
+        by_metric=dict(zip(('probability','odds','edge'),by_row[json.dumps(['Kalshi',0,'yes'],separators=(',',':'))]))
         self.assertIn('70.00%',by_metric['probability']);self.assertIn('-233',by_metric['odds'])
         self.assertIn('+30.00 pp',by_metric['edge']);self.assertIn('Polymarket',by_metric['edge'])
 

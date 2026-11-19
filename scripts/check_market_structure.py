@@ -15,7 +15,7 @@ from scripts.check_market_summary import bundle, binary, exchange, game
 from scripts.callback_fixtures import callback_functions
 from sports_analytics.data import DataSourceError
 from sports_analytics.dashboard import create_app
-from sports_analytics.market_structure import MarketStructure, trade_summary, validate, BASE, DATA, CLOB
+from sports_analytics.market_structure import MarketStructure, trade_summary, flow_summary, validate, BASE, DATA, CLOB
 from sports_analytics.market_structure_link import button, context
 from sports_analytics.market_structure_view import render
 from plotly.utils import PlotlyJSONEncoder
@@ -93,6 +93,58 @@ class StructureChecks(TestCase):
         self.assertEqual((result['invalid'],result['outside']),(1,1))
         with self.assertRaises(DataSourceError):
             trade_summary([{**kalshi_trade(),'ticker':'ANOTHER-MARKET'}],'Kalshi',market,NOW,NOW)
+
+    def test_legacy_kalshi_zero_purchase_fields_recover_actual_direction_counts_and_values(self):
+        market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
+        trades=trade_summary([kalshi_trade(),kalshi_trade('no','2',quantity='2.25',price='.4')],'Kalshi',market,NOW,NOW)
+        trades.pop('accounting_version')
+        for side in trades['sides'].values():
+            side.update(buys=0,buy_dollars=0);side.pop('buy_contracts')
+        original=deepcopy(trades);actual=flow_summary(trades,'Kalshi')
+        self.assertEqual(actual['sides']['yes']['buys'],1);self.assertEqual(actual['sides']['no']['buys'],1)
+        self.assertEqual(actual['sides']['yes']['buy_dollars'],6.3);self.assertEqual(actual['sides']['no']['buy_dollars'],1.35)
+        self.assertEqual(actual['sides']['no']['buy_contracts'],2.25)
+        self.assertEqual(trades,original)
+
+    def test_flow_charts_keep_absolute_counts_money_and_sample_scope_separate(self):
+        from sports_analytics.market_structure_view import activity,amount
+        from check_kalshi import components
+        market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
+        trades=dict(trade_summary([kalshi_trade(),kalshi_trade('no','2',quantity='2.25',price='.4')],'Kalshi',market,NOW,NOW),
+                    complete=False,start=NOW.isoformat(),end=NOW.isoformat(),error='Page limit')
+        record=dict(ticker='TEST',title='Test',labels=dict(yes='Over 47.5',no='Under 47.5'),trades=trades)
+        rendered=activity(record,'Kalshi')
+        charts=[c for c in components(rendered) if getattr(c,'className',None)=='structure-flow-chart']
+        self.assertEqual(len(charts),2)
+        counts=[c for c in components(charts[0]) if getattr(c,'className',None)=='structure-bar-row']
+        money=[c for c in components(charts[1]) if getattr(c,'className',None)=='structure-bar-row']
+        self.assertEqual([getattr(c,'data-value') for c in counts],['1.0','1.0'])
+        self.assertEqual([getattr(c,'data-value') for c in money],['6.3','1.35'])
+        fills=[c for c in components(charts[1]) if getattr(c,'className','').startswith('structure-bar-fill ')]
+        self.assertAlmostEqual(float(fills[1].style['width'].rstrip('%')),100*1.35/6.3,places=5)
+        self.assertIn('Returned sample only',str(charts));self.assertNotIn('Share of taker executions',str(rendered))
+        self.assertIn('lower bounds',str(rendered));self.assertEqual(amount(.0001,True),'<$0.01')
+
+    def test_empty_failed_or_unclassified_trade_samples_are_unavailable_not_zero(self):
+        from sports_analytics.market_structure_view import activity
+        market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
+        empty=dict(trade_summary([],'Kalshi',market,NOW,NOW),complete=False,start=NOW.isoformat(),end=NOW.isoformat(),error='Archive offline')
+        for provider in ('Kalshi','Polymarket'):
+            normalized=flow_summary(empty,provider)
+            self.assertIsNone(normalized['sides']['yes']['buys']);self.assertIsNone(normalized['sides']['no']['buy_dollars'])
+            shown=str(activity(dict(ticker='TEST',title='Test',labels=dict(yes='Yes',no='No'),trades=empty),provider))
+            self.assertIn('Unavailable',shown);self.assertNotIn('$0.00',shown)
+        empty.update(complete=True,unclassified=1)
+        self.assertIsNone(flow_summary(empty,'Kalshi')['sides']['yes']['buys'])
+        empty.update(unclassified=0)
+        self.assertEqual(flow_summary(empty,'Kalshi')['sides']['yes']['buys'],0)
+
+    def test_empty_trade_feed_with_positive_volume_does_not_claim_a_zero_distribution(self):
+        market={**self.source['providers']['Kalshi']['snapshot']['rows'][0],'volume':100}
+        self.service.client.json.side_effect=[dict(trades=[],cursor='')]*2
+        result=self.service.pages('Kalshi',market,datetime(1970,1,1,tzinfo=timezone.utc),NOW)
+        self.assertFalse(result['complete']);self.assertIn('positive reported volume',result['error'])
+        self.assertIsNone(flow_summary(result,'Kalshi')['sides']['no']['buy_dollars'])
 
     def test_polymarket_fills_keep_buys_sells_and_same_transaction_separate(self):
         market = self.source['providers']['Polymarket']['snapshot']['rows'][0]
@@ -369,7 +421,8 @@ class StructureChecks(TestCase):
     def test_buttons_and_dialog_callbacks_preserve_origin_and_render_all_sources(self):
         snapshot = self.source['providers']['FanDuel']['snapshot'];row = snapshot['rows'][0]
         regular = button(snapshot,row);summary = button(snapshot,row,surface='summary')
-        self.assertNotEqual(regular.id,summary.id)
+        self.assertFalse(hasattr(summary,'id'))
+        self.assertEqual(regular.id['context'],getattr(summary,'data-structure-context'))
         self.assertEqual(regular.children,'Market Structure')
         app = create_app(structure_service=self.service)
         callbacks = callback_functions(app)
@@ -377,6 +430,12 @@ class StructureChecks(TestCase):
             request,style,label = callbacks['structure_open']([1],0,0,'#nfl-game-123','NFL','market',[regular.id])
         self.assertEqual(style,{})
         self.assertIn('New Orleans',label)
+        with patch('sports_analytics.market_structure_view.ctx',SimpleNamespace(triggered_id='structure-click')):
+            opened=callbacks['structure_open']([],0,0,'#nfl-market-summary','NFL','market-summary',[],
+                dict(context=getattr(summary,'data-structure-context'),nonce=1))
+            self.assertEqual(opened,(request,style,label))
+            invalid=callbacks['structure_open']([],0,0,'#nfl-market-summary','NFL','market-summary',[],dict(context='invalid',nonce=2))
+            self.assertIsNone(invalid[0]);self.assertEqual(invalid[1],{'display':'none'})
         with patch('sports_analytics.market_structure_view.ctx',SimpleNamespace(triggered_id='structure-close')):
             self.assertEqual(callbacks['structure_open']([1],1,0,'#nfl-game-123','NFL','market',[regular.id])[:2],(None,{'display':'none'}))
         with patch('sports_analytics.market_structure_view.ctx',SimpleNamespace(triggered_id=None)):
@@ -393,7 +452,7 @@ class StructureChecks(TestCase):
         output, metadata = next((key,m) for key,m in app.callback_map.items()
             if m.get('callback') and m['callback'].__wrapped__.__name__ == 'structure_open')
         inputs = [dict(item,value=value) for item,value in zip(metadata['inputs'],
-            [[1],0,0,'#nfl-game-123','NFL','market'])]
+            [[1],0,0,'#nfl-game-123','NFL','market',None])]
         response = app.server.test_client().post('/_dash-update-component', json=dict(output=output,
             outputs=[dict(id=o.component_id,property=o.component_property) for o in metadata['output']],
             inputs=inputs,state=[dict(metadata['state'][0],value=[clicked])],

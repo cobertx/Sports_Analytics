@@ -244,8 +244,9 @@ class KalshiChecks(TestCase):
         prices=[outcome.children[1].children for outcome in outcomes[-16:]]
         self.assertEqual(prices,['+∞']*8+['-104']*8)
         self.assertIn('Market odds',str(sections));self.assertIn('Market implied probability',str(sections))
-        more=[c for c in components(sections) if getattr(c,'className',None)=='market-load-more']
+        more=[c for c in components(sections) if 'market-load-more' in getattr(c,'className','').split()]
         self.assertEqual(len(more),1);self.assertEqual(more[0].style,{'display':'none'})
+        self.assertEqual(more[0].__class__.__name__,'A');self.assertEqual(more[0].role,'button')
         snapshot['rows'][-1]['yes_ask']=None
         self.assertIn('—',str(view.market_sections(snapshot)))
         self.assertIn('No contracts',str(view.market_sections(dict(rows=[]))))

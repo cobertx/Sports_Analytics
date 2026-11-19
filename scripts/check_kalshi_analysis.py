@@ -51,6 +51,35 @@ class KalshiAnalysisChecks(TestCase):
     def calculate(self,snapshot=None,previous=None,method='PPP',player_method='WHP'):
         return calculate(self.game,snapshot or self.snapshot,'live',method,player_method,self.game_engine,self.player_engine,previous)
 
+    def test_game_distributions_match_actual_integer_settlement_and_nba_no_tie_rule(self):
+        from sports_analytics.game_distribution import distributions,panel
+        from models.Game_Outcome.PPP.NBA_PPP import NBAPPPForecast
+        from models.Game_Outcome.ELO.ELO import NBAELOForecast,ELOForecast
+        from dash import dcc
+        source=dict(home_team='Home',away_team='Away')
+        for method,kind in [('PPP',PPPForecast),('PPP',NBAPPPForecast),('EPA',NBAPPPForecast),('ELO',ELOForecast),('ELO',NBAELOForecast)]:
+            forecast=kind('HOME','AWAY',30,20,12,10)
+            data,errors=distributions(forecast,source,method);self.assertFalse(errors)
+            for key,payload in data.items():
+                for x,mass,cumulative in zip(payload['x'],payload['mass'],payload['cumulative']):
+                    price=forecast.spread('HOME',-x) if key=='margin' else forecast.total(x,'Over')
+                    self.assertAlmostEqual(mass,price.push,places=12)
+                    self.assertAlmostEqual(cumulative,price.loss+price.push,places=12)
+                self.assertAlmostEqual(sum(payload['mass'])+payload['below']+payload['above'],1,places=12)
+                self.assertEqual(payload['method'],method)
+            if issubclass(kind,NBAPPPForecast):self.assertAlmostEqual(data['margin']['mass'][data['margin']['x'].index(0)],0)
+            view=panel(dict(game_distributions=data,cutoff=NOW.isoformat()),method,'fixture')
+            self.assertFalse(view.open)
+            self.assertEqual(len([c for c in components(view) if isinstance(c,dcc.Store)]),2)
+            self.assertFalse(any(isinstance(c,dcc.Graph) for c in components(view)))
+
+    def test_distribution_payload_reuses_fitted_forecast_on_quote_polls(self):
+        models=self.calculate()
+        self.assertEqual(set(models['game_distributions']),{'margin','total'})
+        changed=deepcopy(self.snapshot);changed['rows'][0]['yes_ask']=.8
+        self.assertEqual(self.calculate(changed,models),models)
+        self.game_engine.assert_called_once()
+
     def test_implied_uses_each_ask_payout_and_never_substitutes_bids_or_last_trade(self):
         r=dict(self.snapshot['rows'][0],yes_ask=.6,no_ask=.45,yes_bid=.5,last_price=.55,notional=2)
         self.assertEqual(implied(r,'yes'),.3);self.assertEqual(implied(r,'no'),.225)
@@ -186,6 +215,20 @@ class KalshiFilterCallbacks(TestCase):
     def scan(self,selected='live'):
         with patch('sports_analytics.kalshi_analysis_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-apply-criteria')):
             return self.cb['kalshi_scan'](1,0,0,-100,self.game,FILTER,selected,'kalshi')
+
+    def test_distribution_callback_is_scoped_and_never_refits_or_pulls_quotes(self):
+        snapshot=self.snapshot
+        models=self.cb['kalshi_models'](snapshot,None,self.game,'PPP','WHP','live','kalshi','Game Lines',None)
+        for engine in self.engines.values():engine.forecast.reset_mock()
+        self.exchange.quotes.reset_mock()
+        args=[models,self.game,'PPP','WHP','live','Game Lines','kalshi',view.href(self.game['sport'],self.game['id'])]
+        output=self.cb['kalshi_game_distributions'](*args)
+        self.assertIn('Forecast distributions',str(output));self.assertFalse(output.open)
+        for index,value in [(2,'EPA'),(4,'saved-other'),(5,'Passing Props'),(6,'historical'),(7,'#nfl-kalshi-game-OTHER')]:
+            changed=list(args);changed[index]=value;self.assertEqual(self.cb['kalshi_game_distributions'](*changed),[])
+        self.assertEqual(self.cb['kalshi_game_distributions']({**models,'pending':True,'keep_visible':False},*args[1:]),[])
+        for engine in self.engines.values():engine.forecast.assert_not_called()
+        self.exchange.quotes.assert_not_called()
 
     def test_controls_and_parallel_filter_tab_all_sports_and_paused_polling(self):
         ids=[getattr(c,'id',None) for c in components(self.app.layout)]

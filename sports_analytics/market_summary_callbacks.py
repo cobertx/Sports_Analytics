@@ -332,12 +332,13 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                        'with the highest calculated edge; its provider is named below the edge. Unsupported targets remain visible without estimates.',
                        className='ppp-comparison-note'),*view.sections(bundle,rows,category)],signature
 
-    cells=dict(type='summary-model-cell',bundle=ALL,provider=ALL,index=ALL,side=ALL,metric=ALL)
-    @scoped_callback(app,'market-summary',Output(cells,'children'),Input('summary-models','data'),
-                  Input('summary-game-method','value'),Input('summary-player-method','value'),Input(cells,'id'),
+    cells=dict(type='summary-model-table',bundle=ALL,category=ALL,group=ALL)
+    @scoped_callback(app,'market-summary',Output(cells,'data-models'),Input('summary-models','data'),
+                  Input('summary-game-method','value'),Input('summary-player-method','value'),Input(cells,'data-rows'),
                   Input('workspace-page','value'),Input('sport','value'),State('summary-quotes','data'),State('summary-game','value'),
+                  State(cells,'id'),
                   prevent_initial_call=False)
-    def summary_model_cells(models,method,player_method,identities,page,sport,bundle,selected):
+    def summary_model_cells(models,method,player_method,visible,page,sport,bundle,selected,identities):
         bundle=quote_jobs.resolve(bundle)
         # Forecast completion updates cells independently of the immediate quote view.
         if page!='market-summary' or not identities or not bundle or bundle.get('sport')!=sport or str(bundle['game']['id'])!=selected:
@@ -360,7 +361,15 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                 shared=view.shared_estimate(item['quotes'])
                 for row in item['quotes'].values():lookup[row['provider'],row['index'],row['side'] or '']=shared
         values=[]
-        for identity in identities:
-            row=lookup.get((identity['provider'],identity['index'],identity['side'])) if identity['bundle']==bundle['id'] else None
-            values.append(view.metric_values(row,identity['metric']) if row and identity.get('metric') else view.model_values(row) if row else no_update)
+        # One small update per native table. No per-cell Dash outputs/subscribers.
+        for identity,anchors in zip(identities,visible):
+            if identity['bundle']!=bundle['id']:
+                values.append(no_update);continue
+            values_by_row={}
+            for provider,source_index,side in json.loads(anchors):
+                row=lookup.get((provider,source_index,side))
+                if row:
+                    values_by_row[json.dumps([provider,source_index,side],separators=(',',':'))]=[
+                        view.markup(view.metric_values(row,metric)) for metric in view.METRICS]
+            values.append(json.dumps(values_by_row,separators=(',',':')))
         return values

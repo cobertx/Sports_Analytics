@@ -189,6 +189,14 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
         history['player']=record.get('latest_date')
     message=availability_note(gf,pf)
     if message:errors.append(message)
+    distributions=old.get('game_distributions',{});distribution_errors=old.get('distribution_errors',[])
+    if game_rows:
+        distributions={};distribution_errors=[]
+        if gf:
+            from .game_distribution import distributions as game_distributions
+            try:distributions,distribution_errors=game_distributions(gf,source,method)
+            except AttributeError:distribution_errors=['This forecast does not provide a compatible game distribution.']
+            except (ValueError,TypeError,OverflowError) as exc:distribution_errors=[str(exc)]
     for row in pending:
         item=mapped[row['ticker']];probability=None
         detail='This contract is not supported by the selected full-game models.'
@@ -213,7 +221,7 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
             except (ValueError,TypeError,OverflowError) as exc:detail=str(exc)
         records[row['ticker']]=dict(definition=definition(row),probability=probability,method=model,detail=detail)
     return dict(context=context,predictions=records,errors=list(dict.fromkeys([*old.get('errors',[]),*errors])),
-                history=history,cutoff=source['pulled_at'])
+                history=history,cutoff=source['pulled_at'],game_distributions=distributions,distribution_errors=distribution_errors)
 
 
 def decorate(snapshot, game, selected, method, player_method, models=None, criteria=None, *, context=None):

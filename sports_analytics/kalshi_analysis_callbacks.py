@@ -51,7 +51,7 @@ def results(snapshot, ranked, criteria, models):
         html.Section([html.H3('Top 3 by edge'),table(matches[:3],1)],className='mispricing-top'),
         html.Section([html.H3('Remaining qualifying markets'),
             lazy_markets.panel(lazy_markets.view(),0,lambda count:table(matches[3:3+count],4),
-                               max(0,len(matches)-3),size=50)],className='mispricing-remaining'),
+                               max(0,len(matches)-3),size=50,text_more=True)],className='mispricing-remaining'),
         html.P('Edge uses each side’s ask / payout, before trading fees. Calculated probability retains binary settlement equality outcomes. '
                'Unsupported rules, missing history and unavailable prices are excluded. '+
                ('Every method assigned to a prompt must pass both thresholds. Ranking uses the lowest edge across those methods; '
@@ -177,6 +177,17 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
                 *[html.P(error,className='ppp-comparison-note' if error.startswith('Game injuries:') else 'mispricing-error') for error in models.get('errors',[])]]
 
     rows=dict(type='kalshi-comparison-row',sport=ALL,game=ALL,ticker=ALL,side=ALL)
+    @scoped_callback(app,'kalshi',Output('kalshi-game-distributions','children'),
+                  Input('kalshi-models','data'),Input('kalshi-context','data'),Input('kalshi-game-method','value'),
+                  Input('kalshi-player-method','value'),Input('kalshi-snapshot','value'),Input('kalshi-category','value'),
+                  Input('workspace-page','value'),Input('market-url','hash'))
+    def kalshi_game_distributions(models,game,method,player_method,selected,category,page,location):
+        if page!='kalshi' or not game or category!='Game Lines' or route(location)!=(game['sport'],game['id']):return []
+        if not model_matches(models,game,selected,method,player_method):return []
+        if models.get('pending') and not models.get('keep_visible'):return []
+        from .game_distribution import panel
+        return panel(models,method,'|'.join([game['sport'],game['id'],selected]))
+
     @app.callback(Output(rows,'children'),Output(rows,'className'),
                   Input('kalshi-models','data'),Input('kalshi-applied-criteria','data'),
                   Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),Input('kalshi-snapshot','value'),

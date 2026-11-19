@@ -1,5 +1,6 @@
 """Upcoming game cards and FanDuel-style quote ladders for all providers."""
 from collections import OrderedDict
+import json
 import math
 from dash import dcc,html
 
@@ -13,6 +14,7 @@ from .lazy_markets import markets as lazy_markets
 from .nba_markets import NBA_MARKETS
 from .nfl_markets import NFL_MARKETS
 from .ncaaf_markets import NCAAF_MARKETS
+from .static_markup import markup
 
 SUMMARY_BATCH = 6
 SUMMARY_STEP = 25
@@ -154,6 +156,15 @@ def metric_values(row,metric):
     return html.Span(value,title=title)
 
 
+def comparison_order(item):
+    """Keep each team's spread ladder and each Over/Under ladder together."""
+    outcome=item['outcome'];identity=outcome['key'];subject='';direction=0
+    if len(identity)==6 and identity[0]==outcome['category']:
+        subject=identity[2]
+        direction=0 if identity[4] in {'gt','ge'} else 1
+    return subject,direction,outcome['line'] if outcome['line'] is not None else 0,outcome['label']
+
+
 def comparison_rows(rows,category):
     groups=OrderedDict()
     for row in rows:
@@ -168,14 +179,14 @@ def comparison_rows(rows,category):
             match=dict(outcome=outcome,quotes={});matches.append(match)
         match['quotes'][row['provider']]=row
     return {key:sorted([item for matches in markets.values() for item in matches],
-                       key=lambda item:(item['outcome']['line'] if item['outcome']['line'] is not None else 0,item['outcome']['label']))
+                       key=comparison_order)
             for key,markets in groups.items()}
 
 
 def visible_comparisons(items,count):
     """Keep every priced source represented when alternate ladders differ.
 
-    Preserve numeric line order within the visible window. Reserve up to two
+    Preserve team/side ladder order within the visible window. Reserve up to two
     rows per source, preferring shared comparisons, then fill from the full
     ladder. Expanding the window eventually returns every original row.
     """
@@ -208,11 +219,9 @@ def shared_estimate(quotes):
 
 
 def shared_cells(bundle,quotes):
-    anchor=next(quotes[p] for p in PROVIDERS if p in quotes)
     row=shared_estimate(quotes)
-    return [html.Td(metric_values(row,metric),id=dict(type='summary-model-cell',bundle=bundle['id'],provider=anchor['provider'],
-        index=anchor['index'],side=anchor['side'] or '',metric=metric),className='summary-model-values summary-shared-cell'+
-        (' summary-model-start' if metric=='probability' else '')) for metric in METRICS]
+    return [html.Td(metric_values(row,metric),className='summary-model-values summary-shared-cell'+
+        (' summary-model-start' if metric=='probability' else ''),**{'data-metric':metric}) for metric in METRICS]
 
 
 def quote_cell(bundle,row,snapshot,best):
@@ -233,9 +242,11 @@ def quote_cell(bundle,row,snapshot,best):
 
 
 def selection_table(bundle,items,title,snapshots,count):
-    content=[]
+    content=[];anchors=[]
     for item in visible_comparisons(items,count):
         outcome=item['outcome'];quotes=item['quotes']
+        anchor=next(quotes[p] for p in PROVIDERS if p in quotes)
+        anchors.append([anchor['provider'],anchor['index'],anchor['side'] or ''])
         priced=[row['implied'] for row in quotes.values() if row['implied'] is not None]
         best=min(priced) if len(priced)>1 else None
         content.append(html.Tr([
@@ -243,8 +254,8 @@ def selection_table(bundle,items,title,snapshots,count):
             *[cell for provider in PROVIDERS for cell in quote_cell(bundle,quotes.get(provider),snapshots.get(provider),best is not None and
                          quotes.get(provider,{}).get('implied')==best)],
             *shared_cells(bundle,quotes),
-        ]))
-    return [html.P('Scroll across the table to compare all sources and model columns.',className='summary-scroll-hint'),html.Div(html.Table([
+        ],**{'data-summary-row':json.dumps(anchors[-1],separators=(',',':'))}))
+    content=[html.P('Scroll across the table to compare all sources and model columns.',className='summary-scroll-hint'),html.Div(html.Table([
         html.Caption(title+' — Market odds by source',className='summary-table-caption'),
         html.Thead([
             html.Tr([html.Th('Market / Selection',scope='col',rowSpan=2),*[html.Th(provider_logo(provider),
@@ -258,6 +269,11 @@ def selection_table(bundle,items,title,snapshots,count):
     ],className='summary-table'),className='summary-table-scroll',tabIndex=0,role='region',**{'aria-label':title+' source comparison'}),
         html.P(f'Showing {min(count,len(items))} of {len(items)} selections'+
             (' · Includes prices from each available source. Show more to see additional lines.' if count<len(items) else ''),className='summary-row-count')]
+    # Native markup has no per-cell Redux subscriptions. Dash owns this one
+    # table boundary; read-only quote rows and delegated controls remain HTML.
+    return html.Div(
+        id=dict(type='summary-model-table',bundle=bundle['id'],category=items[0]['outcome']['category'],group=title),
+        **{'data-rows':json.dumps(anchors,separators=(',',':')),'data-models':'','data-markup':markup(content)},className='summary-native-table')
 
 
 def sections(bundle,rows,category):
@@ -296,10 +312,11 @@ def quick_results(bundle,ranked,criteria):
                 html.Td(provider_logo(row['provider'])),html.Td(row['method'],title=details),
                 html.Td(odds_text(row['odds'],row['implied'])),html.Td(probability_text(row['implied'])),
                 html.Td(probability_text(row['probability'])),html.Td(metric_values(row,'odds')),html.Td(metric_values(row,'edge'))]))
-        return html.Div(html.Table([html.Thead(html.Tr([html.Th(label,scope='col') for label in
+        table=html.Div(html.Table([html.Thead(html.Tr([html.Th(label,scope='col') for label in
             ['Rank','Selection','Source','Methods','Market odds','Implied probability','Lowest calculated probability','Calculated odds','Lowest edge (pp)']])),
             html.Tbody(content or html.Tr(html.Td('No qualifying markets.',colSpan=9)))],className='summary-quick-table'),
             className='summary-table-scroll',tabIndex=0,role='region',**{'aria-label':'Quick Filtering rankings'})
+        return html.Div(className='summary-native-table',**{'data-markup':markup(table)})
     matches=ranked['matches']
     return html.Div([
         html.P(f"{len(matches)} qualifying quotes · {ranked['evaluated']} evaluated · {ranked['unavailable']} unavailable. "
