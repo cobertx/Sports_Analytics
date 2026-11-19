@@ -32,7 +32,8 @@ def quick_controls():
         dcc.Store(id='summary-quick-request'),dcc.Store(id='summary-quick-completed'),
         dcc.Interval(id='summary-quick-poll',interval=1000,n_intervals=0,disabled=True),
         html.H3(QUICK),html.P('Choose methods and thresholds, then run Quick Filtering. Each quote must pass both thresholds '
-            'under every selected method for its market type. Changing these controls does not start a calculation.',className='ppp-comparison-note'),
+            'under every selected method for its market type. Qualifying game lines also appear in the probability charts.',
+            className='ppp-comparison-note'),
         html.Div([
             field('Game Outcome methods',dcc.Dropdown(id='summary-quick-game-methods',options=list(GAME_METHODS),value=['PPP'],multi=True)),
             field('Player Forecast methods',dcc.Dropdown(id='summary-quick-player-methods',options=list(PLAYER_METHODS),value=['WHP'],multi=True)),
@@ -45,6 +46,19 @@ def quick_controls():
         html.Div(id='summary-quick-status',role='status',className='criteria-status'),
         html.Div(id='summary-quick-results'),
     ],id='summary-quick-panel',className='quick-filter-section',style={'display':'none'})
+
+
+def chart_criteria_controls():
+    return html.Section([
+        dcc.Store(id='summary-chart-criteria'),
+        html.H3('Apply Criteria'),
+        html.Div([
+            field('Calculated probability above (%)',dcc.Input(id='summary-chart-probability',type='number',value=75,min=0,max=100,step='any')),
+            field('Edge above (percentage points)',dcc.Input(id='summary-chart-edge',type='number',value=5,min=-100,max=100,step='any')),
+            html.Button('Apply Criteria',id='summary-chart-apply',n_clicks=0,className='apply-criteria-button'),
+        ],className='criteria-controls'),
+        html.Div(id='summary-chart-criteria-status',role='status',className='criteria-status'),
+    ],className='market-criteria summary-chart-criteria')
 
 
 def pull_estimate(sport,provider):
@@ -112,6 +126,13 @@ def layout():
                      ['Game Lines','Player Props',QUICK,'Other Markets']],className='market-category-tabs'),
             quick_controls(),
             dcc.Loading(html.Div(id='summary-market-sections'),delay_show=500,color='#57dbc4',overlay_style={'visibility':'visible'}),
+            html.Details([
+                html.Summary('Forecast vs. market probabilities'),
+                chart_criteria_controls(),
+                dcc.Loading(html.Div(id='summary-game-probability-charts',**{'data-scope':None}),
+                            color='#57dbc4'),
+            ],id='summary-game-probabilities',open=False,style={'display':'none'},
+                className='sportsbook-market summary-game-probabilities'),
         ],id='summary-detail',style={'display':'none'}),
     ],id='market-summary-page',className='market-summary-page',style={'display':'none'})
 

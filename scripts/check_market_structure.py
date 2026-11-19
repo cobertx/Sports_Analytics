@@ -15,7 +15,7 @@ from scripts.check_market_summary import bundle, binary, exchange, game
 from scripts.callback_fixtures import callback_functions
 from sports_analytics.data import DataSourceError
 from sports_analytics.dashboard import create_app
-from sports_analytics.market_structure import MarketStructure, trade_summary, flow_summary, validate, BASE, DATA, CLOB
+from sports_analytics.market_structure import MarketStructure, trade_summary, flow_summary, validate, BASE, DATA, CLOB, MAX_PAGES, TRADE_PAGE_SIZE, TRADE_CHART_POINTS
 from sports_analytics.market_structure_link import button, context
 from sports_analytics.market_structure_view import render
 from plotly.utils import PlotlyJSONEncoder
@@ -183,7 +183,9 @@ class StructureChecks(TestCase):
         request = validate(target(self.source))
         self.assertEqual(request['window'],'all')
         recent = validate({**request,'window':'24h'})
+        weekly = validate({**request,'window':'7d'})
         self.assertNotEqual(self.service.key(request,'Kalshi'),self.service.key(recent,'Kalshi'))
+        self.assertNotEqual(self.service.key(weekly,'Kalshi'),self.service.key(recent,'Kalshi'))
         with self.assertRaises(ValueError):validate({**request,'window':'forever-and-future'})
         market = self.source['providers']['Kalshi']['snapshot']['rows'][0]
         self.service.client.json.return_value = dict(trades=[
@@ -229,12 +231,17 @@ class StructureChecks(TestCase):
         self.assertFalse(result['complete']);self.assertIn('Archive offline',result['error'])
         self.assertEqual(result['sides']['yes']['prints'],1)
         self.service.client.json.side_effect=[dict(trades=[],cursor='')]*2
-        # Only two routes with empty cursors are required, not four arbitrary pages.
+        # An empty cursor ends each route immediately.
         result=self.service.pages('Kalshi',market,NOW-timedelta(days=120),NOW)
         self.assertTrue(result['complete']);self.assertEqual(result['scanned'],0)
-        self.service.client.json.side_effect=[dict(trades=[kalshi_trade(identity=str(i))],cursor=str(i)) for i in range(4)]
+        self.service.client.json.reset_mock()
+        self.service.client.json.side_effect=[dict(trades=[kalshi_trade(identity=str(i))],cursor=str(i))
+            for i in range(MAX_PAGES)]+[dict(trades=[old],cursor='')]
         result=self.service.pages('Kalshi',market,NOW-timedelta(days=120),NOW)
-        self.assertFalse(result['complete']);self.assertIn('four-page',result['error'])
+        self.assertFalse(result['complete']);self.assertIn(f'{MAX_PAGES}-page',result['error'])
+        self.assertEqual(result['sides']['no']['prints'],1)
+        self.assertEqual(result['scanned'],MAX_PAGES+1)
+        self.assertEqual(self.service.client.json.call_args.args[0],BASE+'/historical/trades')
 
     def test_unknown_archive_cutoff_never_claims_complete_history(self):
         market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
@@ -303,6 +310,39 @@ class StructureChecks(TestCase):
         self.assertEqual(list(figure.layout.yaxis.range),[0,100])
         self.assertTrue(graph.responsive)
 
+    def test_dense_trade_history_keeps_all_counts_and_exact_latest_table_rows(self):
+        market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
+        count=TRADE_CHART_POINTS+100
+        rows=[{**kalshi_trade(identity=str(i)), 'created_time':(NOW-timedelta(seconds=count-i)).isoformat()}
+              for i in range(count)]
+        trades=trade_summary(rows,'Kalshi',market,NOW-timedelta(days=1),NOW)
+        self.assertEqual(trades['sides']['yes']['prints'],count)
+        self.assertEqual(trades['chart_executions'],count)
+        history=trades['price_history']
+        self.assertEqual(len(history),TRADE_CHART_POINTS)
+        self.assertEqual(history[0]['time'],trades['first_trade'])
+        self.assertEqual([row['time'] for row in history[-20:]],[row['created_time'] for row in rows[-20:]])
+
+    def test_depth_chart_accumulates_from_best_price_out_and_uses_actual_asks(self):
+        import plotly.graph_objects as go
+        from sports_analytics.market_structure_view import depth_chart
+        book=dict(sides=dict(yes=dict(depth=[dict(price=.6,size=2),dict(price=.5,size=4)],
+                                      ask_depth=[dict(price=.65,size=11)]),
+                             no=dict(depth=[dict(price=.3,size=3),dict(price=.2,size=5)])))
+        result=depth_chart(book,'Kalshi','yes','Over')
+        figure=go.Figure(result.children[1].figure)
+        self.assertEqual(list(figure.data[0].x),[50,60])
+        self.assertEqual(list(figure.data[0].y),[6,2])
+        self.assertEqual(list(figure.data[1].x),[70,80])
+        self.assertEqual(list(figure.data[1].y),[3,8])
+        self.assertEqual(figure.layout.yaxis.title.text,'Cumulative contracts')
+        self.assertEqual((figure.layout.shapes[0].x0,figure.layout.shapes[0].x1),(60,70))
+        poly=go.Figure(depth_chart(book,'Polymarket','yes','Over').children[1].figure)
+        self.assertEqual(list(poly.data[1].x),[65])
+        self.assertEqual(list(poly.data[1].y),[11])
+        self.assertEqual(poly.layout.yaxis.title.text,'Cumulative shares')
+        self.assertIn('No resting orders',str(depth_chart({},'Kalshi','no','Under')))
+
     def test_window_control_callback_loads_new_scope_and_paused_polling_stops(self):
         app = create_app(structure_service=self.service)
         callback = next(m['callback'].__wrapped__ for m in app.callback_map.values()
@@ -323,10 +363,11 @@ class StructureChecks(TestCase):
 
     def test_paginated_trades_report_caps_and_partial_failure_honestly(self):
         market = self.source['providers']['Kalshi']['snapshot']['rows'][0]
-        self.service.client.json.side_effect = [dict(trades=[kalshi_trade(identity=str(i))],cursor=str(i)) for i in range(4)]
+        self.service.client.json.side_effect = [dict(trades=[kalshi_trade(identity=str(i))],cursor=str(i)) for i in range(MAX_PAGES)]
         result = self.service.pages('Kalshi',market,NOW-timedelta(days=1),NOW)
-        self.assertFalse(result['complete']);self.assertEqual(result['scanned'],4)
-        self.assertEqual(self.service.client.json.call_args.kwargs['params']['cursor'],'2')
+        self.assertFalse(result['complete']);self.assertEqual(result['scanned'],MAX_PAGES)
+        self.assertEqual(self.service.client.json.call_args.kwargs['params']['cursor'],str(MAX_PAGES-2))
+        self.assertEqual(self.service.client.json.call_args.kwargs['params']['limit'],TRADE_PAGE_SIZE)
         self.service.client.json.side_effect = [dict(trades=[kalshi_trade()],cursor='next'), DataSourceError('Offline')]
         partial = self.service.pages('Kalshi',market,NOW-timedelta(days=1),NOW)
         self.assertEqual(partial['sides']['yes']['prints'],1)
@@ -378,6 +419,21 @@ class StructureChecks(TestCase):
         self.service.kalshi.games.return_value['games'].append(deepcopy(exchange()))
         self.assertEqual(self.service.load(validate(target()),'Kalshi')['markets'],[])
 
+    def test_book_refresh_reuses_recent_trades_and_manual_refresh_reads_the_week(self):
+        request=validate({**target(self.source),'window':'7d'})
+        market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
+        old=dict(fetched_at=(NOW-timedelta(seconds=60)).isoformat(),page_size=TRADE_PAGE_SIZE)
+        previous={market['ticker']:dict(trades=old)}
+        with patch.object(self.service,'pages',return_value={'scanned':20}) as pages, \
+                patch.object(self.service,'orderbook',return_value={}) as book:
+            automatic=self.service.load(request,'Kalshi',previous=previous)
+            self.assertEqual(automatic['markets'][0]['trades'],old)
+            pages.assert_not_called()
+            book.assert_called_once()
+            manual=self.service.load(request,'Kalshi',previous=previous,refresh_trades=True)
+            self.assertEqual(manual['markets'][0]['trades']['scanned'],20)
+            pages.assert_called_once_with('Kalshi',market,NOW-timedelta(days=7),NOW)
+
     def test_related_winner_contract_retains_its_distinct_refund_rules(self):
         fd = self.source['providers']['FanDuel']['snapshot']
         fd['rows'] = [dict(group='Game',market='Winner',market_key='alternate_spreads',
@@ -394,7 +450,7 @@ class StructureChecks(TestCase):
 
     def test_background_reads_overlap_and_failure_keeps_timestamped_disk_cache(self):
         entered = Barrier(3);release = Event();request = target()
-        def load(request,provider):
+        def load(request,provider,**kwargs):
             entered.wait(5)
             if not release.wait(5):raise RuntimeError('Timed out')
             return dict(markets=[],notice=provider,fetched_at=NOW.isoformat())

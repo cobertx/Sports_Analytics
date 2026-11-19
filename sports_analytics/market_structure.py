@@ -18,7 +18,12 @@ from .polymarket import CLOB, PolymarketService
 
 DATA = 'https://data-api.polymarket.com/v2'
 PROVIDERS = ('FanDuel', 'Kalshi', 'Polymarket')
-MAX_PAGES = 4
+TRADE_PAGE_SIZE = 1000
+MAX_PAGES = 8  # Per API tier, so a busy live feed cannot starve the archive.
+TRADE_REFRESH_SECONDS = 180
+TRADE_CHART_POINTS = 500
+BOOK_DEPTH = 30
+TRADE_WINDOWS = {'all':None, '7d':timedelta(days=7), '24h':timedelta(days=1)}
 CACHE_VERSION = 4
 
 
@@ -40,8 +45,8 @@ def validate(value):
             raise ValueError('This market definition is unavailable.')
     category = value.get('category')
     window = value.get('window', 'all')
-    if window not in {'all', '24h'}:
-        raise ValueError('Choose available history or the last 24 hours.')
+    if not isinstance(window,str) or window not in TRADE_WINDOWS:
+        raise ValueError('Choose available history, the last 7 days or the last 24 hours.')
     return dict(sport=value['sport'], game=dict(start=game['start'],
         home=dict(name=game['home']['name']), away=dict(name=game['away']['name'])),
         focus=focus, reference=reference, provider=value['provider'], ticker=str(value.get('ticker', ''))[:200],
@@ -91,9 +96,10 @@ def book_levels(levels, *, cents=False):
 
 
 def book_summary(levels):
+    depth = sorted(levels, key=lambda row:row['price'], reverse=True)[:BOOK_DEPTH]
     return dict(contracts=float(sum((Decimal(str(row['size'])) for row in levels), Decimal(0))),
         dollars=float(sum((Decimal(str(row['price']))*Decimal(str(row['size'])) for row in levels), Decimal(0))),
-        levels=sorted(levels, key=lambda row:row['price'], reverse=True)[:10])
+        levels=depth[:10], depth=depth)
 
 
 def trade_summary(rows, provider, market, lower, upper):
@@ -101,7 +107,7 @@ def trade_summary(rows, provider, market, lower, upper):
                        buy_dollars=Decimal(0), sell_dollars=Decimal(0),
                        buy_contracts=Decimal(0), sell_contracts=Decimal(0)) for side in ('yes','no')}
     unknown = outside = invalid = 0
-    seen = set(); history = []
+    seen = set(); history = []; first = last = None
     for row in rows:
         if provider == 'Kalshi':
             if row.get('ticker') != market['ticker']:
@@ -145,6 +151,8 @@ def trade_summary(rows, provider, market, lower, upper):
         if side not in totals:
             unknown += 1; continue
         total = totals[side];total['prints'] += 1;total['contracts'] += size;total['dollars'] += price*size
+        first = stamp if first is None else min(first, stamp)
+        last = stamp if last is None else max(last, stamp)
         if provider == 'Kalshi':
             history.append(dict(time=stamp.isoformat(), yes_price=float(price), contracts=float(size), side=side))
         if action:
@@ -155,9 +163,16 @@ def trade_summary(rows, provider, market, lower, upper):
             total['buys' if action == 'BUY' else 'sells'] += 1
             total['buy_dollars' if action == 'BUY' else 'sell_dollars'] += outcome_price*size
             total['buy_contracts' if action == 'BUY' else 'sell_contracts'] += size
+    history.sort(key=lambda row:row['time'])
+    chart_count = len(history)
+    if chart_count > TRADE_CHART_POINTS:
+        older = history[:-20]
+        points = TRADE_CHART_POINTS-20
+        history = [older[i*(len(older)-1)//(points-1)] for i in range(points)] + history[-20:]
     return dict(accounting_version=2,sides={side:{key:float(value) if isinstance(value, Decimal) else value for key,value in total.items()}
                        for side,total in totals.items()}, unclassified=unknown, invalid=invalid, outside=outside,
-                price_history=sorted(history, key=lambda row:row['time']))
+                first_trade=first.isoformat() if first else None, last_trade=last.isoformat() if last else None,
+                chart_executions=chart_count, price_history=history)
 
 
 def flow_summary(trades, provider):
@@ -242,9 +257,9 @@ class MarketStructure:
             stamp = parse_time(saved.get('fetched_at')) if saved else None
             if refresh or not stamp or not 0 <= (self.now()-stamp).total_seconds() < 30:
                 def update(provider=provider, key=key):
-                    result = self.load(request, provider)
                     prior = self.saved(key) or {}
                     older = {row['ticker']:row for row in prior.get('markets', [])}
+                    result = self.load(request, provider, previous=older, refresh_trades=refresh)
                     for market in result.get('markets', []):
                         for kind in ('trades','book','holders','interest'):
                             previous = older.get(market['ticker'], {}).get(kind)
@@ -275,7 +290,7 @@ class MarketStructure:
         return cutoff
 
     def pages(self, provider, market, lower, upper):
-        rows = []; errors = []; completed = 0; scanned_pages = 0; successful_pages = 0
+        rows = []; errors = []; completed = 0; successful_pages = 0
         routes = [BASE+'/markets/trades'] if provider == 'Kalshi' else [DATA+'/trades']
         if provider == 'Kalshi':
             try:
@@ -288,18 +303,18 @@ class MarketStructure:
         # trade_id, avoiding a gap at fractional-second archive boundaries.
         for route in routes:
             cursor = ''; seen = set()
-            while scanned_pages < MAX_PAGES:
-                params = (dict(ticker=market['ticker'], min_ts=max(0,int(lower.timestamp())-1), max_ts=int(upper.timestamp())+1, limit=500)
-                    if provider == 'Kalshi' else dict(condition=market['condition_id'], taker_only='true', limit=500))
+            for _ in range(MAX_PAGES):
+                params = (dict(ticker=market['ticker'], min_ts=max(0,int(lower.timestamp())-1),
+                               max_ts=int(upper.timestamp())+1, limit=TRADE_PAGE_SIZE)
+                    if provider == 'Kalshi' else dict(condition=market['condition_id'], taker_only='true', limit=TRADE_PAGE_SIZE))
                 if cursor:
                     params['cursor'] = cursor
-                scanned_pages += 1
                 try:
                     data = self.json(route, params)
                     page = data.get('trades') if provider == 'Kalshi' else data.get('data')
                     if not isinstance(page, list) or not all(isinstance(row, dict) for row in page):
                         raise DataSourceError('The exchange returned an invalid trade page.')
-                    if len(page) > 500:
+                    if len(page) > TRADE_PAGE_SIZE:
                         raise DataSourceError('The exchange exceeded the requested trade-page size.')
                     rows.extend(page); successful_pages += 1
                     if provider == 'Kalshi' and 'cursor' not in data:
@@ -316,20 +331,24 @@ class MarketStructure:
                     seen.add(cursor)
                 except (DataSourceError, OSError, ValueError, TypeError) as exc:
                     errors.append(str(exc)); break
+            else:
+                tier = 'Kalshi archive' if route.endswith('/historical/trades') else provider+' trade feed'
+                errors.append(f'{tier} reached its {MAX_PAGES:,}-page read limit.')
         if not successful_pages:
             raise DataSourceError('; '.join(errors) or 'Trade data unavailable.')
         complete = completed == len(routes) and not errors
-        if not complete and scanned_pages == MAX_PAGES:
-            errors.append('The four-page trade limit was reached before all requested history was checked.')
         result = trade_summary(rows, provider, market, lower, upper)
         # An empty feed conflicts with a positive volume snapshot for the same
         # full-history scope. It cannot establish a zero trading distribution.
-        headline=numeric(market.get('volume_24h' if lower>datetime(1970,1,1,tzinfo=timezone.utc) else 'volume'))
+        all_history = lower == datetime(1970,1,1,tzinfo=timezone.utc)
+        is_daily = upper-lower == TRADE_WINDOWS['24h']
+        headline = numeric(market.get('volume' if all_history else 'volume_24h')) if all_history or is_daily else None
         if not rows and headline is not None and headline>0:
             complete=False
             errors.append('No trades were returned despite positive reported volume; the side distribution is unavailable.')
         result.update(complete=complete, error='; '.join(errors) or None, fetched_at=self.now().isoformat(),
-                      start=lower.isoformat(), end=upper.isoformat(), scanned=len(rows))
+                      start=lower.isoformat(), end=upper.isoformat(), scanned=len(rows), pages=successful_pages,
+                      page_size=TRADE_PAGE_SIZE)
         return result
 
     def orderbook(self, provider, market):
@@ -351,7 +370,8 @@ class MarketStructure:
                 if str(book.get('asset_id')) != token:
                     raise DataSourceError('Polymarket returned the wrong outcome book.')
                 sides[side] = book_summary(book_levels(book.get('bids')))
-                sides[side]['asks'] = sorted(book_levels(book.get('asks')), key=lambda row:row['price'])[:10]
+                asks = sorted(book_levels(book.get('asks')), key=lambda row:row['price'])[:BOOK_DEPTH]
+                sides[side].update(asks=asks[:10], ask_depth=asks)
         return dict(sides=sides, fetched_at=self.now().isoformat())
 
     def holders(self, market):
@@ -386,7 +406,7 @@ class MarketStructure:
         row = next((row for row in data['data'] if row.get('condition_id') == market['condition_id']), None)
         return dict(dollars=numeric(row.get('value')) if row else None, fetched_at=self.now().isoformat())
 
-    def load(self, request, provider):
+    def load(self, request, provider, *, previous=None, refresh_trades=False):
         from .market_summary import entries, matching_game
         from .market_structure_link import reference
         service = self.kalshi if provider == 'Kalshi' else self.polymarket
@@ -421,7 +441,8 @@ class MarketStructure:
         if len(selected) > 4:
             result['notice'] = f'Showing 4 of {len(selected)} equivalent contracts.'
         upper = self.now()
-        lower = upper-timedelta(hours=24) if request['window'] == '24h' else datetime(1970,1,1,tzinfo=timezone.utc)
+        interval = TRADE_WINDOWS[request['window']]
+        lower = upper-interval if interval else datetime(1970,1,1,tzinfo=timezone.utc)
         for market in selected[:4]:
             identity = market.get('ticker')
             if provider == 'Kalshi' and not ticker(identity):
@@ -435,8 +456,14 @@ class MarketStructure:
                 volume=market.get('volume'), volume_24h=market.get('volume_24h'), open_interest=market.get('open_interest'),
                 quote_time=snapshot.get('fetched_at'), errors=[], match='equivalent' if index in exact else 'related', window=request['window'],
                 rules=' '.join(market.get(key) or '' for key in ('rules_primary','rules_secondary')))
-            tasks = dict(trades=lambda:self.pages(provider, market, lower, upper),
-                         book=lambda:self.orderbook(provider, market))
+            tasks = dict(book=lambda:self.orderbook(provider, market))
+            saved_trades = (previous or {}).get(identity, {}).get('trades') or {}
+            trade_time = parse_time(saved_trades.get('fetched_at'))
+            if (not refresh_trades and saved_trades.get('page_size') == TRADE_PAGE_SIZE and trade_time
+                    and 0 <= (upper-trade_time).total_seconds() < TRADE_REFRESH_SECONDS):
+                record['trades'] = saved_trades
+            else:
+                tasks['trades'] = lambda:self.pages(provider, market, lower, upper)
             if provider == 'Polymarket':
                 tasks['holders'] = lambda:self.holders(market)
                 tasks['interest'] = lambda:self.interest(market)

@@ -16,13 +16,14 @@ from .market_view import game_header
 from .nba_markets import NBA_MARKETS
 from .nfl_markets import NFL_MARKETS
 from .ncaaf_markets import NCAAF_MARKETS
-from .mispricing import GAME_METHODS,PLAYER_METHODS
+from .mispricing import GAME_METHODS,PLAYER_METHODS,criteria_values
 from .filter_jobs import request_key
 from .availability import revision as availability_revision
 from .summary_quote_jobs import SummaryQuoteJobs
 from .page_cache import PageTasks
 from . import market_summary as analysis
 from . import market_summary_view as view
+from . import summary_probability
 
 
 def attempt(function):
@@ -42,7 +43,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
     quote_jobs=SummaryQuoteJobs()
     quick_jobs=PageTasks(capacity=8)
     from .summary_filter_callbacks import register as register_quick
-    register_quick(app,quote_jobs,quick_jobs,game_forecast,player_forecast,source_revision)
+    quick_chart_result=register_quick(app,quote_jobs,quick_jobs,game_forecast,player_forecast,source_revision)
     costs={sport:view.pull_estimate(sport,'FanDuel') for sport in SOURCES}
     app.clientside_callback('''function(page,sport,selected,catalog,bundle){
         const costs='''+json.dumps(costs)+''';
@@ -331,6 +332,76 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                        'Different settlement rules can produce different estimates for similar-looking lines. The right-hand estimates use the quote '
                        'with the highest calculated edge; its provider is named below the edge. Unsupported targets remain visible without estimates.',
                        className='ppp-comparison-note'),*view.sections(bundle,rows,category)],signature
+
+    app.clientside_callback('''function(bundle, category, selected, sport, method, player, models, rendered){
+        const ready=category==='Game Lines'&&bundle?.sport===sport&&String(bundle.game?.id)===selected;
+        const current=ready&&rendered?.[0]===bundle.id&&rendered[1]===method&&rendered[2]===player&&
+            (rendered[3]===null||!models?.pending&&rendered[3]===models?.render_id);
+        return [ready?{}:{display:'none'},current?'':'summary-probability-pending'];
+    }''',Output('summary-game-probabilities','style'),Output('summary-game-probability-charts','className'),
+        Input('summary-quotes','data'),Input('summary-category','value'),Input('summary-game','value'),
+        Input('sport','value'),Input('summary-game-method','value'),Input('summary-player-method','value'),
+        Input('summary-models','data'),Input('summary-game-probability-charts','data-scope'))
+
+    @app.callback(Output('summary-chart-criteria','data'),Output('summary-chart-criteria-status','children'),
+                  Input('summary-chart-apply','n_clicks'),State('summary-chart-probability','value'),
+                  State('summary-chart-edge','value'),State('summary-game','value'),State('sport','value'),
+                  State('workspace-page','value'),State('summary-category','value'),prevent_initial_call=True)
+    def summary_chart_criteria(clicks,probability,edge,selected,sport,page,category):
+        if not clicks or not selected or page!='market-summary' or category!='Game Lines':
+            raise PreventUpdate
+        try:
+            criteria=criteria_values(probability,edge)
+        except ValueError as exc:
+            return no_update,str(exc)
+        return dict(criteria=criteria,game_id=selected,sport=sport,applied_at=time()),''
+
+    @app.callback(Output('summary-game-probability-charts','children'),Output('summary-game-probability-charts','data-scope'),
+                  Input('summary-game-probabilities','open'),Input('summary-quotes','data'),Input('summary-models','data'),
+                  Input('summary-category','value'),Input('summary-game','value'),Input('summary-game-method','value'),
+                  Input('summary-player-method','value'),Input('summary-chart-criteria','data'),
+                  Input('summary-quick-request','data'),Input('summary-quick-completed','data'),
+                  State('sport','value'),State('workspace-page','value'),
+                  State('summary-game-probability-charts','data-scope'),prevent_initial_call=True)
+    def summary_game_probabilities(opened,reference,model_state,category,selected,method,player_method,
+                                   applied,quick,completed,sport,page,previous):
+        if not opened or page!='market-summary' or category!='Game Lines' or not reference or (
+            reference['sport']!=sport or str(reference['game']['id'])!=selected
+        ):
+            raise PreventUpdate
+        bundle=quote_jobs.resolve(reference)
+        if not bundle:
+            return html.P('This saved market view expired. Select the game again to reload it.',className='chart-note'),[
+                reference['id'],method,player_method,None,'expired']
+        models=stored_models(model_state)
+        ready=analysis.current_models(models,bundle,method,player_method)
+        waiting=(not model_state or model_state.get('pending') or model_state.get('bundle_id')!=bundle['id']
+                 or model_state.get('method')!=method or model_state.get('player_method')!=player_method)
+        if not applied or (applied.get('sport'),applied.get('game_id'))!=(sport,selected):
+            applied={}
+        criteria=applied.get('criteria')
+        quick_rows=quick_status=None
+        highlight_scope=applied.get('applied_at')
+        if (quick and quick.get('job') and (quick.get('sport'),quick.get('game_id'))==(sport,selected)
+                and quick.get('applied_at',0)>=(highlight_scope or 0)):
+            criteria=quick['criteria']
+            quick_rows=[]
+            if quick['bundle_id']!=bundle['id'] or quick.get('policy')!=analysis.POLICY_VERSION:
+                quick_status='Quotes or historical inputs changed. Run Quick Filtering again to update the highlights.'
+            elif not completed or completed.get('job')!=quick['job']:
+                quick_status='Quick Filtering is running. Highlights appear when the scan finishes.'
+            else:
+                ranked=quick_chart_result(quick,completed,sport)
+                if ranked is None:
+                    quick_status='Quick Filtering highlights are unavailable. Run Quick Filtering again.'
+                else:
+                    quick_rows=ranked['matches']
+            highlight_scope=[quick['job'],quick_status]
+        scope=[bundle['id'],method,player_method,models.get('render_id') if ready else None,ready,waiting,highlight_scope]
+        if scope==previous:raise PreventUpdate
+        rows=models['rows'] if ready else analysis.entries(bundle)
+        return summary_probability.panel(bundle,rows,method,waiting,criteria=criteria,quick_rows=quick_rows,
+                                         quick_status=quick_status),scope
 
     cells=dict(type='summary-model-table',bundle=ALL,category=ALL,group=ALL)
     @scoped_callback(app,'market-summary',Output(cells,'data-models'),Input('summary-models','data'),

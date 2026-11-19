@@ -15,7 +15,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash._utils import to_json
 from dash.exceptions import PreventUpdate
-from models.Game_Outcome.PPP.PPP import MarketProbability
+from models.Game_Outcome.PPP.PPP import MarketProbability,PPPForecast
 from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.dashboard import create_app
 from sports_analytics.data import DataSourceError
@@ -113,6 +113,55 @@ class PlayerForecast:
 
 
 class SummaryAnalysisChecks(TestCase):
+    def test_game_line_charts_use_source_quotes_and_settlement_matched_forecasts(self):
+        from sports_analytics.summary_probability import panel
+        source=bundle()
+        fanduel=source['providers']['FanDuel']['snapshot']['rows']
+        fanduel.extend(dict(group='Game',market='Total',market_key='alternate_totals',subject='Over',
+                            selection='Over',line=line,odds=odds) for line,odds in [(47.5,-120),(47.5,100),(48,-110)])
+        model=PPPForecast('NO','PIT',27,21,11,10)
+        with patch('sports_analytics.market_summary.availability_revision',return_value='fixture'):
+            result=calculate(source,'PPP','WHP',lambda *args:(model,None),lambda *args:(None,None,{}))
+        rendered=panel(source,result['rows'],'PPP')
+        charts={c.children[0].children.children:c.children[1].figure for c in rendered[-1].children}
+        self.assertEqual(set(charts),{'Spread · New Orleans Saints','Game total · Over','Game total · Under'})
+        traces={trace.name:trace for trace in charts['Game total · Over'].data}
+        self.assertEqual(set(traces),{'PPP forecast','FanDuel implied','Kalshi implied','Polymarket implied'})
+        self.assertEqual(list(traces['PPP forecast'].x),[47.5,48])
+        self.assertAlmostEqual(traces['PPP forecast'].y[0],model.total(47.5,'Over').win)
+        self.assertAlmostEqual(traces['PPP forecast'].y[1],model.total(48,'Over').probability)
+        self.assertEqual(list(traces['FanDuel implied'].x),[47.5,48])
+        self.assertEqual(traces['FanDuel implied'].y[0],.5)
+        for provider in ['Kalshi','Polymarket']:
+            quote=traces[provider+' implied']
+            self.assertEqual(list(quote.x),[47.5]);self.assertEqual(list(quote.y),[.5])
+        market_only=panel(source,entries(source),'PPP',waiting=True)
+        self.assertIn('Calculating the selected forecast',market_only[1].children)
+        self.assertTrue(all(trace.name.endswith('implied') for c in market_only[-1].children for trace in c.children[1].figure.data))
+
+    def test_probability_highlights_skip_exact_thresholds_and_keep_unqualified_gaps(self):
+        from sports_analytics.summary_probability import panel
+        source=bundle()
+        source['providers']={'FanDuel':source['providers']['FanDuel']}
+        source['providers']['FanDuel']['snapshot']['rows']=[
+            dict(group='Game',market='Total',market_key='alternate_totals',subject='Over',selection='Over',
+                 line=line,odds=100) for line in (45.5,46.5,47.5)]
+        rows=entries(source)
+        for row,probability in zip(rows,(.8,.7,.83)):
+            row.update(probability=probability,edge=probability-row['implied'],method='PPP')
+        criteria=dict(probability=.7,edge=.1)
+        charts=panel(source,rows,'PPP',criteria=criteria)[-1].children
+        matched=charts[0].children[1].figure.data[-1]
+        self.assertEqual(matched.name,'Meets criteria')
+        self.assertEqual(list(matched.y),[.8,None,.83])
+        self.assertFalse(matched.connectgaps)
+        self.assertEqual(matched.customdata[0][1:3],['FanDuel','PPP'])
+        ranked=[{**rows[2],'probability':.76,'edge':.26,'method':'PPP / ELO'}]
+        quick=panel(source,rows,'PPP',criteria=criteria,quick_rows=ranked)[-1].children[0].children[1].figure.data[-1]
+        self.assertEqual(quick.name,'Quick Filtering matches')
+        self.assertEqual(list(quick.y),[None,None,.76])
+        self.assertEqual(quick.customdata[2][2],'PPP / ELO')
+
     def test_spreads_group_each_team_and_sort_signed_lines_including_show_more(self):
         source=bundle();source['sport']='NBA';source['providers']={'FanDuel':source['providers']['FanDuel']}
         source['game'].update(away=dict(name='Boston Celtics'),home=dict(name='Denver Nuggets'))
@@ -432,6 +481,25 @@ class SummaryCallbackChecks(TestCase):
     def quotes(self,pull=False,previous=None):
         with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull' if pull else 'summary-game')):
             return self.cb['summary_quotes']('123',self.catalog,1 if pull else 0,'market-summary','NFL',previous)
+
+    def test_probability_charts_render_only_open_game_lines_and_reuse_the_existing_forecast(self):
+        quoted=self.quotes()[0]
+        callback=self.cb['summary_game_probabilities']
+        args=(quoted,None,'Game Lines','123','PPP','WHP',None,None,None,'NFL','market-summary',None)
+        with self.assertRaises(PreventUpdate):callback(False,*args)
+        for index,value in [(2,'Player Props'),(3,'456'),(9,'NBA'),(10,'market')]:
+            changed=list(args);changed[index]=value
+            with self.assertRaises(PreventUpdate):callback(True,*changed)
+        market,scope=callback(True,*args)
+        self.assertIn('Calculating the selected forecast',str(market))
+        with self.assertRaises(PreventUpdate):callback(True,*args[:-1],scope)
+        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
+            models,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None)
+        calls=self.engines['PPP'].forecast.call_count
+        completed,new_scope=callback(True,quoted,models,*args[2:])
+        self.assertIn('PPP forecast',str(completed));self.assertNotEqual(scope,new_scope)
+        self.assertEqual(self.engines['PPP'].forecast.call_count,calls)
+        self.fd.pull.assert_not_called()
 
     def test_market_data_contains_all_four_subpages_and_summary_routes_for_all_sports(self):
         nav=next(c for c in components(self.app.layout) if getattr(c,'id',None)=='market-data-navigation')

@@ -92,6 +92,37 @@ class SummaryFilteringChecks(TestCase):
             self.assertIn('error',request)
         f.engines['PPP'].forecast.assert_not_called()
 
+    def test_latest_criteria_action_controls_chart_highlights_without_refitting(self):
+        f=self.fixture()
+        apply=f.cb['summary_chart_criteria']
+        applied,_=apply(1,50,0,'123','NFL','market-summary','Game Lines')
+        invalid,error=apply(2,101,0,'123','NFL','market-summary','Game Lines')
+        self.assertIs(invalid,no_update);self.assertIn('Previous criteria remain applied',error)
+        f.engines['PPP'].forecast.assert_not_called()
+        with patch('sports_analytics.market_summary_callbacks.ctx',Mock(triggered_id='summary-quotes')):
+            models,_=f.cb['summary_models'](f.data,'PPP','WHP',0,'market-summary','NFL','123',None)
+        quick=f.cb['summary_quick_submit'](1,['PPP','ELO'],['WHP'],50,0,f.data,'123',QUICK,'market-summary','NFL')
+        f.app._summary_quick_jobs.queue.tasks.join()
+        done=f.cb['summary_quick_results'](quick,f.data,'Game Lines','123','market-summary','NFL',1,None)[2]
+        self.assertEqual(done['status'],'complete')
+        callback=f.cb['summary_game_probabilities']
+        args=(True,f.data,models,'Game Lines','123','PPP','WHP')
+        scope=('NFL','market-summary',None)
+        engine_counts={key:engine.forecast.call_count for key,engine in f.engines.items()}
+        waiting,_=callback(*args,applied,quick,None,*scope)
+        self.assertIn('Quick Filtering is running',str(waiting))
+        completed,_=callback(*args,applied,quick,done,*scope)
+        self.assertIn('Quick Filtering matches',str(completed))
+        self.assertIn('PPP / ELO',str(completed))
+        newer,_=apply(3,55,5,'123','NFL','market-summary','Game Lines')
+        overridden,_=callback(*args,newer,quick,done,*scope)
+        self.assertIn('Meets criteria',str(overridden))
+        self.assertNotIn('Quick Filtering matches',str(overridden))
+        changed,_=callback(True,{**f.data,'id':'new'},*args[2:],applied,quick,done,*scope)
+        self.assertIn('Run Quick Filtering again',str(changed))
+        self.assertEqual({key:engine.forecast.call_count for key,engine in f.engines.items()},engine_counts)
+        f.fd.pull.assert_not_called()
+
     def test_slow_filter_does_not_hold_the_page_and_polling_never_restarts_it(self):
         from time import perf_counter
         f=self.fixture();release=Event();entered=Event();self.addCleanup(release.set)

@@ -908,19 +908,21 @@ the complementary price basis, rather than displaying obsolete zero purchase
 fields. Empty failed feeds show **Unavailable**; positive headline volume with
 an empty trade feed is flagged as a coverage conflict. Sub-cent amounts show
 **< $0.01**, and verified empty windows explicitly say no executions were returned.
-Kalshi asks are derived from opposite-side bids. The price chart
-plots actual returned YES trade prices, with a table of the latest 20 returned
-executions; it does not reconstruct continuous quotes or model probabilities.
+The current bid/ask charts show cumulative resting size across up to 30 price
+levels on each side of the spread. Kalshi asks are derived from opposite-side
+bids. Polymarket depth uses the bids and asks from each token's own book.
+The YES trade-price chart samples dense histories for display while flow totals
+use every returned execution. The table keeps the latest 20 executions.
 
-The panel refreshes in the background every 30 seconds while open, can be paused,
-and offers manual refresh. Timestamped snapshots are cached locally under
-`data/market_structure/`, independently of model/backtest inputs. Each read scans
-up to 2,000 trade records across four pages. Kalshi's historical trade cutoff is
-checked (cached for five minutes), and both live and archived trades are read
-when the requested window spans the archive. Duplicate trade IDs are counted
-once. An unavailable archive cutoff leaves coverage unverified, even if the live
-endpoint finishes. Select **All available API history** (default) or
-**Last 24 hours**; Polymarket's market feed is filtered locally for the latter.
+The order book refreshes every 30 seconds while the panel is open. Trade history
+refreshes every three minutes, and **Refresh activity** requests both immediately.
+Timestamped snapshots are cached locally under `data/market_structure/`. Each
+feed reads up to eight 1,000-record pages per contract. Kalshi uses separate
+budgets for live and archived trades when a window crosses the archive cutoff.
+Duplicate Kalshi trade IDs count once. Coverage shows the earliest and latest
+executions returned and flags incomplete API reads. Select **All available API
+history**, **Last 7 days**, or **Last 24 hours**. Polymarket windows are filtered
+locally from the condition feed.
 The windows use separate caches. Capped/failed pagination is marked partial with
 counts and amounts labeled as lower bounds; percentages are omitted for partial
 or invalid/unclassified coverage. Exact same-line Polymarket spreads include the

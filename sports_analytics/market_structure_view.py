@@ -1,10 +1,11 @@
 """Shared market activity dialog; opening it never changes the current game."""
 import json
+from decimal import Decimal
 from dash import ALL, Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 
 from .display_time import format_eastern
-from .market_structure import PROVIDERS, validate, flow_summary
+from .market_structure import BOOK_DEPTH, PROVIDERS, validate, flow_summary
 from .presentation import PALETTE, chart_style
 
 
@@ -22,9 +23,10 @@ def layout():
                 html.Div([html.Button('Refresh activity', id='structure-refresh', n_clicks=0),
                     dcc.Dropdown(id='structure-window', options=[
                         dict(label='All available API history', value='all'),
+                        dict(label='Last 7 days', value='7d'),
                         dict(label='Last 24 hours', value='24h')], value='all', clearable=False,
                         className='structure-window', searchable=False),
-                    dcc.Checklist(id='structure-live', options=[dict(label='Refresh every 30 seconds', value='live')], value=['live'])],
+                    dcc.Checklist(id='structure-live', options=[dict(label='Auto-refresh', value='live')], value=['live'])],
                     className='structure-controls'),
                 html.P('Read executed flow, traded prices and resting liquidity separately. '
                        'Exchange executions count fills, not unique bettors or sportsbook tickets. '
@@ -61,14 +63,62 @@ def price(value):
 
 
 def quotes(book, provider):
+    ladders = {s:order_levels(book, provider, s) for s in ('yes','no')}
+    return ({s:max((r['price'] for r in levels[0]), default=None) for s,levels in ladders.items()},
+            {s:min((r['price'] for r in levels[1]), default=None) for s,levels in ladders.items()})
+
+
+def order_levels(book, provider, side):
     sides = (book or {}).get('sides', {})
-    bid = {s:max((r['price'] for r in sides.get(s, {}).get('levels', [])), default=None) for s in ('yes','no')}
+    outcome = sides.get(side, {})
+    bids = outcome.get('depth', outcome.get('levels', []))
     if provider == 'Kalshi':
-        ask = {s:round(1-bid['no' if s == 'yes' else 'yes'], 10)
-               if bid['no' if s == 'yes' else 'yes'] is not None else None for s in ('yes','no')}
+        other = sides.get('no' if side == 'yes' else 'yes', {})
+        asks = [dict(price=round(1-row['price'], 10), size=row.get('size'))
+                for row in other.get('depth', other.get('levels', []))]
     else:
-        ask = {s:min((r['price'] for r in sides.get(s, {}).get('asks', [])), default=None) for s in ('yes','no')}
-    return bid, ask
+        asks = outcome.get('ask_depth', outcome.get('asks', []))
+    return bids, asks
+
+
+def depth_chart(book, provider, side, label):
+    bids, asks = order_levels(book, provider, side)
+    heading = html.H6(side.upper()+' · '+label)
+    if not bids and not asks:
+        return html.Section([heading,html.P('No resting orders were returned.',className='structure-note')])
+    traces = []
+    for name, levels, is_bid in [('Bids',bids,True),('Asks',asks,False)]:
+        if not levels:
+            continue
+        points = []
+        total = Decimal(0)
+        for row in sorted(levels,key=lambda level:level['price'],reverse=is_bid):
+            total += Decimal(str(row['size']))
+            points.append((round(row['price']*100, 8),float(total),row['size']))
+        if is_bid:
+            points.reverse()
+        color, fill = ('#63dba4','rgba(99,219,164,.2)') if is_bid else ('#ff899d','rgba(255,137,157,.2)')
+        traces.append(dict(type='scatter',name=name,mode='lines+markers',x=[p[0] for p in points],
+            y=[p[1] for p in points],customdata=[p[2] for p in points],
+            line=dict(color=color,width=2,shape='vh' if is_bid else 'hv'),
+            marker=dict(size=5,symbol='circle' if is_bid else 'diamond'),fill='tozeroy',fillcolor=fill,
+            hovertemplate='%{x:.2f}¢<br>At price: %{customdata:,.2f}<br>Cumulative: %{y:,.2f}<extra>'+name+'</extra>'))
+    best_bid = max((r['price'] for r in bids),default=None)
+    best_ask = min((r['price'] for r in asks),default=None)
+    shapes = []
+    if best_bid is not None and best_ask is not None and best_bid < best_ask:
+        shapes.append(dict(type='rect',xref='x',yref='paper',x0=best_bid*100,x1=best_ask*100,y0=0,y1=1,
+                           line=dict(width=0),fillcolor='rgba(170,185,205,.12)',layer='below'))
+    unit = 'contracts' if provider == 'Kalshi' else 'shares'
+    figure = dict(data=traces,layout=chart_style(margin=dict(l=64,r=16,t=30,b=50),
+        legend=dict(orientation='h',y=1.1),shapes=shapes,hovermode='closest',
+        xaxis=dict(title=dict(text='Price (¢)'),ticksuffix='¢',gridcolor=PALETTE['line']),
+        yaxis=dict(title=dict(text='Cumulative '+unit),rangemode='tozero',gridcolor=PALETTE['line'])))
+    return html.Section([heading,dcc.Graph(figure=figure,responsive=True,style={'height':'290px'},
+        config=dict(displayModeBar=False,scrollZoom=False),className='structure-depth-chart'),
+        html.P('Bid depth unavailable.' if not bids else 'Ask depth unavailable.',className='structure-note')
+        if not bids or not asks else None],className='structure-depth-panel',role='group',
+        **{'aria-label':'Bid and ask depth for '+label})
 
 
 def price_history(trades, labels):
@@ -83,10 +133,12 @@ def price_history(trades, labels):
             xaxis=dict(title=dict(text='Trade time (UTC)'),type='date',gridcolor=PALETTE['line']),
             yaxis=dict(title=dict(text='YES price (¢)'),range=[0,100],gridcolor=PALETTE['line']),
             uirevision='structure-trade-prices'))
+    total = trades.get('chart_executions', len(rows))
+    sample = f'Chart shows {len(rows):,} of {total:,} executions. ' if len(rows) < total else ''
     return html.Div([
         html.H5('Executed YES prices · '+labels['yes']),
-        html.P('Returned trade sample · first '+price(rows[0]['yes_price'])+' → latest '+price(rows[-1]['yes_price'])+
-               '. Dots are individual executions, not continuous quotes or model probabilities.',className='structure-note'),
+        html.P(sample+'First '+price(rows[0]['yes_price'])+' → latest '+price(rows[-1]['yes_price'])+
+               '. Each dot is an execution.',className='structure-note'),
         dcc.Graph(figure=figure,responsive=True,style={'height':'260px'},
             config=dict(displayModeBar=False,scrollZoom=False),className='structure-price-chart'),
         html.Details([html.Summary('Trade-price table · latest 20 returned executions'),
@@ -142,7 +194,7 @@ def activity(market, provider):
     count_label = 'Taker executions by direction' if is_kalshi else 'Purchase count (taker executions)'
     value_label = 'Direction-priced traded value' if is_kalshi else 'Amount paid for this outcome'
     contract_label = 'Executed contracts' if is_kalshi else 'Purchased shares'
-    window = 'last 24 hours' if market.get('window') == '24h' else 'available API history'
+    window = {'24h':'last 24 hours','7d':'last 7 days'}.get(market.get('window'),'available API history')
     content.append(html.H5(('Executed directional flow' if is_kalshi else 'Purchases by outcome')+' · '+window))
     if trades:
         sides = trades['sides']
@@ -162,7 +214,7 @@ def activity(market, provider):
         clean = trades['complete'] and not (trades['invalid'] or trades['unclassified'])
         content += [html.Div([html.Span('Complete API window' if clean else 'Partial sample',
                 className='structure-badge '+('structure-badge--complete' if clean else 'structure-badge--partial')),
-            html.Span(('Requested '+stamp(trades['start'])+' · ' if market.get('window') == '24h' else '')+
+            html.Span(('Requested '+stamp(trades['start'])+' · ' if market.get('window') in {'24h','7d'} else '')+
                       'Through '+stamp(trades['end']),className='structure-time')],className='structure-coverage'),
             html.P('Fetched '+stamp(trades.get('fetched_at')),className='structure-time'),
             html.Div([html.Div([html.Small(side.upper()+' DIRECTION' if is_kalshi else side.upper()+' PURCHASES'),
@@ -172,12 +224,16 @@ def activity(market, provider):
                        (' contracts' if is_kalshi else ' shares'))],className='structure-outcome structure-outcome--'+side)
                 for side in ('yes','no')],className='structure-outcomes'),
             flow_bars(labels,sides,kalshi=is_kalshi,complete=clean)]
+        if trades.get('first_trade'):
+            content.append(html.P(f"{int(trades['classified']):,} returned executions · "
+                f"First {stamp(trades['first_trade'])} · Latest {stamp(trades['last_trade'])}",
+                className='structure-time'))
         if not trades['classified']:
             content.append(html.P('No executions were returned for this contract in the requested window.' if clean else
                 'No usable executions were returned. Side counts and traded values are unavailable.',className='structure-note'))
         if not clean:
-            content.append(html.P('Counts and values are lower bounds from the returned sample; market-wide shares are unavailable. '
-                'Reads are limited to 2,000 records across live and archived trades.',className='structure-note'))
+            content.append(html.P('Counts and values are lower bounds from the returned sample; market-wide shares are unavailable.',
+                                  className='structure-note'))
         content.append(html.Details([html.Summary('Executed flow · full measures'),table(labels,metrics)]))
         if is_kalshi:
             content.append(html.P('Each trade is counted once by taker direction. YES exposure includes buying YES or selling NO; '
@@ -203,6 +259,10 @@ def activity(market, provider):
                 html.Span('Bid '+price(bid[side])),html.Span('Ask '+price(ask[side])),
                 html.Span('Spread '+price(round(ask[side]-bid[side],10)) if bid[side] is not None and ask[side] is not None else 'Spread unavailable')])],
                 className='structure-quote') for side in ('yes','no')],className='structure-outcomes')]
+        content += [html.P(f'Cumulative resting size across up to {BOOK_DEPTH} price levels per side. '
+                           'The shaded area marks the bid–ask spread.',className='structure-note'),
+                    html.Div([depth_chart(book,provider,side,labels[side]) for side in ('yes','no')],
+                             className='structure-depth-charts')]
         if is_kalshi:
             content.append(html.P('Asks are derived from opposite-side bids: YES ask = $1 − best NO bid. '
                 'Displayed prices are unfilled orders; the trade chart shows past executions.',className='structure-note'))
