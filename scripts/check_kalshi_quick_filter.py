@@ -11,6 +11,7 @@ from unittest.mock import Mock,patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from models.Game_Outcome.PPP.PPP import MarketProbability
+from sports_analytics import kalshi_analysis
 from sports_analytics.data import DataSourceError
 from sports_analytics.kalshi_analysis import FILTER,quick_calculate
 import check_kalshi_analysis as fixtures
@@ -244,6 +245,20 @@ class QuickProbabilityChecks(TestCase):
             ranked,errors=self.run_scan()
         self.assertEqual(ranked['evaluated'],2);self.assertEqual(len(ranked['matches']),2)
         self.assertEqual(revision.call_count,1);self.assertEqual(errors,[])
+
+    def test_quick_scan_prepares_quotes_once_and_skips_unused_presentation(self):
+        self.snapshot['rows'].append(dict(self.snapshot['rows'][0],ticker='PLAYER',event_ticker='KXNFLPASSYDS-PLAYER',
+            event_title='Player One: Passing yards',category='Passing Props',line=20,strike_type='greater_or_equal'))
+        self.player.return_value[0].detail=Mock(side_effect=AssertionError('Quick Filtering does not display model details'))
+        with patch.object(kalshi_analysis,'definition',wraps=kalshi_analysis.definition) as definitions, patch.object(
+                kalshi_analysis,'implied',wraps=kalshi_analysis.implied) as prices, patch(
+                'app.sections.markets.game_distribution.distributions',side_effect=AssertionError('Quick Filtering has no game charts')):
+            ranked,errors=self.run_scan()
+        self.assertEqual(definitions.call_count,2)
+        self.assertEqual(prices.call_count,4)
+        selected={(item['row']['ticker'],item['side']):item for item in ranked['matches']}
+        self.assertEqual((selected['PLAYER','yes']['probability'],selected['PLAYER','yes']['edge']),(.875,.375))
+        self.assertEqual((ranked['evaluated'],ranked['unavailable'],errors),(4,0,[]))
 
     def test_unavailable_asks_and_missing_selected_methods_are_excluded(self):
         self.snapshot['rows'][0]['yes_ask']=None

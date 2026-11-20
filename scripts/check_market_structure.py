@@ -460,17 +460,92 @@ class StructureChecks(TestCase):
     def test_book_refresh_reuses_recent_trades_and_manual_refresh_reads_the_week(self):
         request=validate({**target(self.source),'window':'7d'})
         market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
-        old=dict(fetched_at=(NOW-timedelta(seconds=60)).isoformat(),page_size=TRADE_PAGE_SIZE)
+        refreshed=dict(trade_summary([kalshi_trade()],'Kalshi',market,NOW-timedelta(days=7),NOW),scanned=1)
+        old=dict(refreshed,fetched_at=(NOW-timedelta(seconds=60)).isoformat(),page_size=TRADE_PAGE_SIZE)
         previous={market['ticker']:dict(trades=old)}
-        with patch.object(self.service,'pages',return_value={'scanned':20}) as pages, \
+        with patch.object(self.service,'pages',return_value=refreshed) as pages, \
                 patch.object(self.service,'orderbook',return_value={}) as book:
             automatic=self.service.load(request,'Kalshi',previous=previous)
             self.assertEqual(automatic['markets'][0]['trades'],old)
             pages.assert_not_called()
             book.assert_called_once()
             manual=self.service.load(request,'Kalshi',previous=previous,refresh_trades=True)
-            self.assertEqual(manual['markets'][0]['trades']['scanned'],20)
+            self.assertEqual(manual['markets'][0]['trades']['scanned'],1)
             pages.assert_called_once_with('Kalshi',market,NOW-timedelta(days=7),NOW)
+
+    def test_empty_exact_prop_shows_verified_trades_from_the_same_player_and_stat(self):
+        from scripts.check_dashboard_efficiency import post
+        exchange_record=self.source['providers']['Kalshi']
+        exact={**binary(player=True),'ticker':'KXNFLPASSYDS-TEST-200','volume':0}
+        nearby={**exact,'ticker':'KXNFLPASSYDS-TEST-210','line':210,'volume':20,
+                'title':'Test Quarterback: Passing Yards Over 210.5'}
+        wrong_player={**exact,'ticker':'KXNFLPASSYDS-TEST-OTHER','line':205,'volume':90,
+                      'event_title':'Another Quarterback: Passing Yards','title':'Another Quarterback: Passing Yards Over 205.5'}
+        exchange_record['snapshot']['rows']=[exact,wrong_player,nearby]
+        request=validate(target(self.source,'Kalshi'))
+        self.assertEqual(request['focus'][1:4],['player_pass_yds','test quarterback',200.5])
+        archived={**kalshi_trade(), 'ticker':nearby['ticker'],
+                  'created_time':(NOW-timedelta(days=100)).isoformat()}
+        def feed(url,params):
+            rows=[archived] if url.endswith('/historical/trades') and params['ticker']==nearby['ticker'] else []
+            return dict(trades=rows,cursor='')
+        self.service._trade_cutoff=None
+        self.service.client.json.side_effect=feed
+        app=create_app(structure_service=self.service)
+        inputs={'structure-request':request,'structure-window':'all','structure-live':['live'],
+                'structure-refresh':0,'structure-poll':0,'structure-data':None}
+        with patch.object(self.service,'orderbook',return_value={}):
+            post(app,'structure_load',inputs,'structure-request.data')
+            self.service.queue.tasks.join()
+            inputs['structure-poll']=1
+            response=post(app,'structure_load',inputs,'structure-poll.n_intervals')['response']
+        selected,related=response['structure-data']['data']['providers']['Kalshi']['data']['markets']
+        self.assertEqual((selected['match'],selected['trades']['scanned']),('equivalent',0))
+        self.assertEqual((related['ticker'],related['match']), (nearby['ticker'],'nearby'))
+        self.assertEqual(related['trades']['sides']['yes']['prints'],1)
+        self.assertTrue(related['trades']['complete'])
+        self.assertIn('Nearby traded line',str(response['structure-content']['children']))
+        calls=self.service.client.json.call_args_list
+        self.assertEqual([call.kwargs['params']['ticker'] for call in calls],
+                         [exact['ticker']]*2+[nearby['ticker']]*2)
+
+    def test_missing_polymarket_match_can_show_a_traded_nearby_line(self):
+        row=self.source['providers']['Polymarket']['snapshot']['rows'][0]
+        row.update(line=48.5,title='Over 48.5 points',volume=10)
+        self.service.client.json.return_value=dict(data=[poly_trade()],pagination=dict(next_cursor=None))
+        with patch.object(self.service,'orderbook',return_value={}),patch.object(self.service,'holders',return_value={}), \
+                patch.object(self.service,'interest',return_value={}):
+            result=self.service.load(validate(target(self.source)),'Polymarket')
+        self.assertIn('No equivalent contract',result['notice'])
+        record,=result['markets']
+        self.assertEqual(record['match'],'nearby')
+        self.assertEqual(record['labels']['yes'],'Over 48.5')
+        self.assertEqual(record['trades']['sides']['yes']['prints'],1)
+
+    def test_empty_daily_window_shows_older_executions_with_their_own_scope(self):
+        from app.sections.market_structure.market_structure_view import activity
+        old={**kalshi_trade(),'created_time':(NOW-timedelta(days=3)).isoformat()}
+        self.service.client.json.side_effect=[dict(trades=[],cursor=''),dict(trades=[old],cursor=''),dict(trades=[],cursor='')]
+        request=validate({**target(self.source),'window':'24h'})
+        with patch.object(self.service,'orderbook',return_value={}):
+            result=self.service.load(request,'Kalshi')
+        record,=result['markets']
+        self.assertEqual(record['window'],'24h')
+        self.assertEqual(record['trades']['scanned'],0)
+        self.assertEqual(record['history_trades']['first_trade'],old['created_time'])
+        self.assertIn('No usable executions in the last 24 hours. Showing all available API history',str(activity(record,'Kalshi')))
+        self.assertIn('1 returned executions',str(activity(record,'Kalshi')))
+
+    def test_empty_full_history_refresh_preserves_known_executions_as_partial(self):
+        start=datetime(1970,1,1,tzinfo=timezone.utc)
+        market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
+        saved=dict(trade_summary([kalshi_trade()],'Kalshi',market,start,NOW),fetched_at=NOW.isoformat(),complete=True)
+        self.service.client.json.return_value=dict(trades=[],cursor='')
+        trades=self.service.contract_trades('Kalshi',market,start,NOW,saved,True)
+        self.assertEqual(trades['sides']['yes']['prints'],1)
+        self.assertFalse(trades['complete'])
+        self.assertIn('Showing previously fetched executions',trades['error'])
+        self.assertTrue(saved['complete'])
 
     def test_related_winner_contract_retains_its_distinct_refund_rules(self):
         fd = self.source['providers']['FanDuel']['snapshot']

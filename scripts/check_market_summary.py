@@ -196,7 +196,7 @@ class SummaryAnalysisChecks(TestCase):
         body=next(c for c in components(shown) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='lazy-market-body')
         for pages,count in [(0,SUMMARY_BATCH),(1,SUMMARY_BATCH+SUMMARY_STEP),(10_000,len(expected))]:
             rendered,*_=lazy_markets.read(body.id,pages)
-            self.assertEqual([str(node) for node in native_dom(rendered).find('th','summary-selection')],expected[:count])
+            self.assertEqual([node.children[0] for node in native_dom(rendered).find('th','summary-selection')],expected[:count])
         self.assertEqual(rows,original)
 
     def test_totals_group_all_overs_before_unders_for_every_provider(self):
@@ -212,7 +212,8 @@ class SummaryAnalysisChecks(TestCase):
             items=comparison_rows(rows,'Game Lines')['Game Lines','Game Total']
             expected=[f'{side} {line+.5:g}' for side in ('Over','Under') for line in (47,48,49)]
             self.assertEqual([item['outcome']['label'] for item in items],expected,provider)
-            self.assertEqual([str(node) for node in native_dom(sections(source,rows,'Game Lines')).find('th','summary-selection')],expected,provider)
+            selections=native_dom(sections(source,rows,'Game Lines')).find('th','summary-selection')
+            self.assertEqual([node.children[0] for node in selections],expected,provider)
             self.assertEqual(rows,original)
 
     def test_fanduel_alternate_lines_cannot_push_all_kalshi_quotes_out_of_view(self):
@@ -296,7 +297,12 @@ class SummaryAnalysisChecks(TestCase):
         self.assertLess(len(list(components(large))),4)
         self.assertEqual(len(native_dom(large).find('tr'))-2,len(items))
         self.assertNotIn('market-structure-open',to_json(large))
-        control=native_dom(large).find('button','market-structure-button')[0]
+        selection=native_dom(large).find('th','summary-selection')[0]
+        tools=selection.children[-1]
+        self.assertEqual(tools.attrs.get('class'),'market-line-actions')
+        self.assertTrue(selection.children[0])
+        self.assertEqual(list(map(str,tools.children)),['Historical Data','Market Structure'])
+        control=tools.find('button','market-structure-button')[0]
         self.assertEqual(json.loads(control.attrs['data-structure-context'])['provider'],'Kalshi')
         from app.components.static_markup import markup
         from dash import html,dcc

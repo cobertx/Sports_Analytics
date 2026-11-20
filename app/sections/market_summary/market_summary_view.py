@@ -8,8 +8,7 @@ from sports_analytics.display_time import format_eastern
 from app.sections.markets.market_view import logo_badge,market_provider_heading,probability_text
 from app.sections.markets.mispricing import GAME_METHODS,PLAYER_METHODS,QUICK_DEFAULT_PROBABILITY,QUICK_DEFAULT_EDGE
 from app.sections.markets import quick_visibility
-from app.sections.markets.prompt_history import button as history_button
-from app.sections.market_structure.market_structure_link import button as structure_button
+from app.sections.market_structure.market_structure_link import line_actions
 from sports_analytics.market_summary import PROVIDERS
 from app.sections.markets.lazy_markets import markets as lazy_markets
 from app.sections.markets.prop_probability import outlet, player_line, row_action
@@ -266,7 +265,7 @@ def shared_cells(bundle,quotes):
         (' summary-model-start' if metric=='probability' else ''),**{'data-metric':metric}) for metric in METRICS]
 
 
-def quote_cell(bundle,row,snapshot,best):
+def quote_cell(bundle,row,snapshot,best,*,show_tools=True):
     if row is None:
         return [html.Td(html.Span('—',title='No matching quote from this source'),colSpan=2,className='summary-missing')]
     original=snapshot['rows'][row['index']]
@@ -275,9 +274,9 @@ def quote_cell(bundle,row,snapshot,best):
                   html.Span('Best price',className='summary-best-label') if best else None],className='summary-price-line'),
         html.Small(f"{100*row['ask']:.2f}¢ ask" if row['ask'] is not None else row['status'],className='summary-quote-detail'),
         html.Details([html.Summary('Details',**{'aria-label':row['provider']+' history and market structure'}),
-            history_button(snapshot,original,row['provider'],row['side'] or 'yes'),
-            structure_button(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary'),
-        ],className='summary-quote-tools'),
+            *line_actions(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary',
+                          grouped=row['category']=='Game Lines'),
+        ],className='summary-quote-tools') if show_tools else None,
     ],title=row['selection'],className='summary-quote'+(' summary-best' if best else '')),className='summary-source-cell summary-provider-start',
         **{'data-provider':row['provider']})
     return [price,html.Td(probability_text(row['implied']),className='summary-source-cell summary-implied-cell',**{'data-provider':row['provider']})]
@@ -293,10 +292,17 @@ def selection_table(bundle,items,title,snapshots,count):
         priced=[row['implied'] for row in quotes.values() if row['implied'] is not None]
         best=min(priced) if len(priced)>1 else None
         label, action=row_action(outcome['label'],player_line(outcome),'summary',bundle=bundle['id'])
+        game_line=outcome['category']=='Game Lines'
+        selection_actions=[]
+        if game_line:
+            snapshot=snapshots[anchor['provider']]
+            selection_actions=line_actions(snapshot,snapshot['rows'][anchor['index']],anchor['provider'],anchor['side'] or 'yes',
+                                           surface='summary',grouped=True)
         content.append(html.Tr([
-            html.Th([label,html.Small(outcome['note']) if outcome['note'] else None],scope='row',className='summary-selection'),
+            html.Th([label,html.Small(outcome['note']) if outcome['note'] else None,*selection_actions],
+                    scope='row',className='summary-selection'),
             *[cell for provider in providers for cell in quote_cell(bundle,quotes.get(provider),snapshots.get(provider),best is not None and
-                         quotes.get(provider,{}).get('implied')==best)],
+                         quotes.get(provider,{}).get('implied')==best,show_tools=not game_line or provider!=anchor['provider'])],
             *shared_cells(bundle,quotes),
         ],**{'data-summary-row':json.dumps(anchors[-1],separators=(',',':')),**action}))
     content=[html.P('Scroll across the table to see market odds and model estimates.',className='summary-scroll-hint'),html.Div(html.Table([
@@ -353,9 +359,10 @@ def quick_results(bundle,ranked,criteria,job=None):
             snapshot=snapshots[row['provider']];original=snapshot['rows'][row['index']]
             details='; '.join(f"{v['method']}: {probability_text(v['probability'])}, {v['edge']*100:+.2f} pp" for v in row['estimates'])
             label,action=row_action(row['selection'],player_line(row.get('comparison')),'summary',bundle=bundle['id'],job=job)
-            content.append(html.Tr([html.Td(rank),html.Th([label,html.Div([
-                history_button(snapshot,original,row['provider'],row['side'] or 'yes'),
-                structure_button(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary')])],scope='row'),
+            game_line=row['category']=='Game Lines'
+            controls=line_actions(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary',grouped=game_line)
+            if not game_line:controls=[html.Div(controls)]
+            content.append(html.Tr([html.Td(rank),html.Th([label,*controls],scope='row'),
                 html.Td(provider_logo(row['provider'])),html.Td(row['method'],title=details),
                 html.Td(odds_text(row['odds'],row['implied'])),html.Td(probability_text(row['implied'])),
                 html.Td(probability_text(row['probability'])),html.Td(metric_values(row,'odds')),html.Td(metric_values(row,'edge'))],**action))

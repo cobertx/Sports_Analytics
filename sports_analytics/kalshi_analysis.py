@@ -63,6 +63,10 @@ def implied(row, side):
     return ask/notional if notional>0 and 0<=ask<=notional else None
 
 
+def contract_pricing(row):
+    return definition(row), implied(row, 'yes'), implied(row, 'no')
+
+
 def model_snapshot(game, snapshot, cutoff=None):
     # Match only explicit away/home labels; a "vs" title does not establish venue.
     from app.sections.exchanges.kalshi_view import matchup
@@ -171,11 +175,14 @@ def prepare_targets(game,snapshot,cutoff=None):
 
 
 def calculate(game, snapshot, selected, method, player_method, game_forecast, player_forecast, previous=None, *,
-              context=None,prepared=None):
+              context=None,prepared=None,contracts=None,include_presentation=True):
     context=context if context is not None else identity(game,selected,method,player_method)
     old=previous if previous and previous.get('context')==context else {}
     records=dict(old.get('predictions',{}))
-    pending=[row for row in snapshot['rows'] if records.get(row['ticker'],{}).get('definition')!=definition(row)]
+    rows=snapshot['rows']
+    signatures=(definition(row) for row in rows) if contracts is None else (signature for signature,_,_ in contracts)
+    pending=[(row,signature) for row,signature in zip(rows,signatures)
+             if records.get(row['ticker'],{}).get('definition')!=signature]
     if not pending:return old
     errors=[]
     try:
@@ -197,14 +204,14 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
     message=availability_note(gf,pf)
     if message:errors.append(message)
     distributions=old.get('game_distributions',{});distribution_errors=old.get('distribution_errors',[])
-    if game_rows:
+    if game_rows and include_presentation:
         distributions={};distribution_errors=[]
         if gf:
             from app.sections.markets.game_distribution import distributions as game_distributions
             try:distributions,distribution_errors=game_distributions(gf,source,method)
             except AttributeError:distribution_errors=['This forecast does not provide a compatible game distribution.']
             except (ValueError,TypeError,OverflowError) as exc:distribution_errors=[str(exc)]
-    for row in pending:
+    for row,signature in pending:
         item=mapped[row['ticker']];probability=None
         detail='This contract is not supported by the selected full-game models.'
         model=method
@@ -213,7 +220,9 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
             try:
                 if player:
                     estimate=pf.selection(target) if pf else None
-                    detail=pf.detail(target) if pf and hasattr(pf,'detail') else 'Player history or this forecast target is unavailable.'
+                    detail='Player history or this forecast target is unavailable.'
+                    if include_presentation and pf and hasattr(pf,'detail'):detail=pf.detail(target)
+                    elif not include_presentation and estimate is not None:detail='Player forecast'
                 else:
                     estimate=None
                     if gf:
@@ -226,21 +235,24 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
                 if estimate is not None:probability=estimate.loss if invert else estimate.win
                 if probability is not None and not (math.isfinite(probability) and 0<=probability<=1):probability=None
             except (ValueError,TypeError,OverflowError) as exc:detail=str(exc)
-        records[row['ticker']]=dict(definition=definition(row),probability=probability,method=model,detail=detail)
+        records[row['ticker']]=dict(definition=signature,probability=probability,method=model,detail=detail)
     return dict(context=context,predictions=records,errors=list(dict.fromkeys([*old.get('errors',[]),*errors])),
                 history=history,cutoff=source['pulled_at'],game_distributions=distributions,distribution_errors=distribution_errors)
 
 
-def decorate(snapshot, game, selected, method, player_method, models=None, criteria=None, *, context=None):
+def decorate(snapshot, game, selected, method, player_method, models=None, criteria=None, *, context=None,contracts=None):
     matching=(models and models.get('context')==context) if context is not None else model_matches(models,game,selected,method,player_method)
     current=models if matching else {}
+    originals=snapshot['rows']
+    pricing=(contract_pricing(row) for row in originals) if contracts is None else contracts
     rows=[]
-    for original in snapshot['rows']:
+    for original,(signature,yes_implied,no_implied) in zip(originals,pricing):
         row=dict(original);record=current.get('predictions',{}).get(row['ticker'],{})
-        probability=record.get('probability') if record.get('definition')==definition(row) else None
+        probability=record.get('probability') if record.get('definition')==signature else None
         row.update(model_method=record.get('method',method),model_detail=record.get('detail','Calculating or unavailable for this contract.'))
-        for side,p in [('yes',probability),('no',1-probability if probability is not None else None)]:
-            market=implied(row,side);edge=p-market if p is not None and market is not None else None
+        for side,p,market in (('yes',probability,yes_implied),
+                              ('no',1-probability if probability is not None else None,no_implied)):
+            edge=p-market if p is not None and market is not None else None
             row.update({side+'_implied':market,side+'_probability':p,side+'_edge':edge,
                         side+'_match':row.get('status') in {'open','active'} and criteria_match(p,edge,criteria)})
         rows.append(row)
@@ -284,15 +296,17 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
     assignments=quick_methods.plan(targets.values(),methods,player_methods,prompt_methods)
     needed={method for choices in assignments.values() for method in choices}
     revision=availability_revision(game['sport'])
-    inputs={player:({**snapshot,'rows':rows},(source,{row['ticker']:mapped[row['ticker']] for row in rows}))
+    prompts={ticker:quick_methods.prompt_key(target) for ticker,target in targets.items()}
+    inputs={player:({**snapshot,'rows':rows},(source,{row['ticker']:mapped[row['ticker']] for row in rows}),
+                    tuple(contract_pricing(row) for row in rows))
             for player,rows in groups.items()}
     def evaluate(method, player):
-        subset,prepared=inputs[player]
+        subset,prepared,contracts=inputs[player]
         game_method,player_method=(methods[0],method) if player else (method,player_methods[0])
         context=identity(game,selected,game_method,player_method,revision=revision)
         models=calculate(game,subset,selected,game_method,player_method,game_forecast,player_forecast,
-                         context=context,prepared=prepared)
-        displayed=decorate(subset,game,selected,game_method,player_method,models,context=context)
+                         context=context,prepared=prepared,contracts=contracts,include_presentation=False)
+        displayed=decorate(subset,game,selected,game_method,player_method,models,context=context,contracts=contracts)
         return rank(displayed,ALL_PROBABILITIES),models.get('errors',[]),displayed['rows'] if player else []
     tasks={method:lambda method=method:evaluate(method,False) for method in quick_methods.game_methods(game['sport']) if method in needed}
     tasks.update({method:lambda method=method:evaluate(method,True) for method in quick_methods.player_methods(game['sport']) if method in needed})
@@ -300,7 +314,7 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
     if report:report(85,'Applying thresholds and ranking selections')
     ranked=quick_methods.consensus({method:record[0] for method,record in forecasts.items()},assignments,
         snapshot['rows'],criteria,lambda item:(item['row']['ticker'],item['side']),consensus_rankings,
-        prompt=lambda row:quick_methods.prompt_key(targets[row['ticker']]),sides=2)
+        prompt=lambda row:prompts[row['ticker']],sides=2)
     ranked['player_lines']=[row for _,_,rows in forecasts.values() for row in rows]
     errors=list(dict.fromkeys(error for _, messages, _ in forecasts.values() for error in messages))
     return ranked,errors

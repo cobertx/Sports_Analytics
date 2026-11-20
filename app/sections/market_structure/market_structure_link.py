@@ -2,6 +2,7 @@
 import json
 import re
 from dash import html
+from app.sections.markets.prompt_history import button as history_button
 from sports_analytics.nfl_markets import SPORTSBOOKS
 
 
@@ -82,3 +83,8 @@ def button(snapshot, row, provider='FanDuel', side='yes', *, surface='quotes'):
     return html.Button('Market Structure', id=dict(type='market-structure-open',
         context=json.dumps(target, sort_keys=True, separators=(',', ':')), surface=surface), n_clicks=0,
         className='market-structure-button', title='Compare trading activity and liquidity across all market sources')
+
+
+def line_actions(snapshot, row, provider='FanDuel', side='yes', *, surface='quotes', grouped):
+    controls = [history_button(snapshot, row, provider, side), button(snapshot, row, provider, side, surface=surface)]
+    return [html.Div(controls, className='market-line-actions')] if grouped else controls

@@ -15,8 +15,7 @@ from app.sections.markets.market_view import probability_text
 from app.sections.markets.mispricing import criteria_values, selected_methods, method_details, quick_finish_progress, quick_progress
 from app.sections.exchanges.kalshi_view import href,route,odds_text,comparison_rows,prop_lines,prop_outcome,table as quote_table
 from sports_analytics.kalshi_labels import selection,selection_rows
-from app.sections.markets.prompt_history import button as history_button
-from app.sections.market_structure.market_structure_link import button as structure_button
+from app.sections.market_structure.market_structure_link import line_actions
 from sports_analytics.filter_jobs import FilterJobs,request_key
 from app.sections.markets.lazy_markets import markets as lazy_markets
 from app.sections.markets import prop_probability, quick_visibility
@@ -40,8 +39,8 @@ def results(snapshot, ranked, criteria, models):
         methods=[value['method'] for value in item['estimates']] if 'estimates' in item else [item['method']]
         label,action=prop_probability.row_action(label,key,view,methods=methods)
         return html.Tr([
-            html.Td(rank),html.Td([label,history_button(snapshot,row,'Kalshi',side),
-                structure_button(snapshot,row,'Kalshi',side,surface='quick-filter' if consensus else 'apply-criteria')]),
+            html.Td(rank),html.Td([label,*line_actions(snapshot,row,'Kalshi',side,
+                surface='quick-filter' if consensus else 'apply-criteria',grouped=row.get('category')=='Game Lines')]),
             html.Td(row['category']),html.Td(method_details(item)),html.Td(odds_text(item['implied'])),
             html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),
             html.Td(f"{100*item['edge']:+.2f}",className='mispricing-edge',**{'data-sign':signed_state(item['edge'])}),

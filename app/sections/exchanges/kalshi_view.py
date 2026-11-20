@@ -19,9 +19,8 @@ from sports_analytics.kalshi_analysis import FILTER, implied, adapter
 from app.sections.markets import prop_probability, quick_visibility
 from app.sections.markets.market_view import probability_text
 from models.Game_Outcome.PPP.PPP import fair_american_odds
-from app.sections.markets.prompt_history import button as history_button
 from app.sections.markets.lazy_markets import markets as lazy_markets
-from app.sections.market_structure.market_structure_link import button as structure_button
+from app.sections.market_structure.market_structure_link import line_actions
 from sports_analytics.kalshi_labels import selection, selection_rows, player_market
 from sports_analytics.kalshi_analysis import player_subject
 
@@ -349,7 +348,7 @@ def comparison_rows(row,snapshot=None,provider='Kalshi'):
             html.Div([html.Span(display,className='market-selection'),
                       html.Small('Previously loaded quote · '+str(row.get('quote_fetched_at') or 'timestamp unavailable'),
                                  className='kalshi-outcome-labels') if row.get('quote_stale') else None,
-                      history_button(snapshot or {},row,provider,side),structure_button(snapshot or {},row,provider,side)],
+                      *line_actions(snapshot or {},row,provider,side,grouped=row.get('category')=='Game Lines')],
                      title=f"{row['title']} · {side.title()}: {label} · {row['ticker']} · Payout/notional ${row['notional']:g} · {row['status']}"),
             html.Span(odds_text(market),className='market-price kalshi-price',
                       title='American odds equivalent of this outcome’s quoted buying price / payout, before fees.'),

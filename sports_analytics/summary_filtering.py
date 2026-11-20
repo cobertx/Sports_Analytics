@@ -14,7 +14,15 @@ def selection_key(row):return row['provider'],row['index'],row['side'] or ''
 
 def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player_forecast,report=None):
     values={};errors=[]
-    prepared=prepare_forecast(bundle)
+    rows,source=prepare_forecast(bundle)
+    # The joint forecasts still receive the full source. Only row pricing and
+    # copying are restricted to the market family each method evaluates.
+    by_kind={'game':[],'player':[]}
+    for row in rows:
+        target=row['target']
+        if target:
+            kind='player' if target['market_key'].startswith('player_') else 'game'
+            by_kind[kind].append(row)
     total=len(methods)+len(player_methods)
     forecast_progress(report,0,total)
     progress_lock=Lock()
@@ -26,7 +34,7 @@ def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player
         for method in selected:
             result=calculate(bundle,method if kind=='game' else methods[0],
                 method if kind=='player' else player_methods[0],game_forecast,player_forecast,
-                kinds=(kind,),prepared=prepared,inline=True)
+                kinds=(kind,),prepared=(by_kind[kind],source),inline=True)
             results.append((method,result))
             with progress_lock:
                 completed+=1
@@ -42,7 +50,7 @@ def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player
             values[kind,method]={selection_key(row):row for row in result['rows']}
     if report:report(85,'Applying thresholds and ranking selections')
     matches=[];evaluated=unavailable=0
-    for row in prepared[0]:
+    for row in rows:
         kind='player' if row['category']=='Player Props' else 'game'
         selected=player_methods if kind=='player' else methods
         estimates=[values[kind,method].get(selection_key(row)) for method in selected]

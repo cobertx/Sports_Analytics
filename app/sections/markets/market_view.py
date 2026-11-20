@@ -19,7 +19,7 @@ from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.parlay import quote_key
 from sports_analytics.historical_links import history_href
 from app.sections.markets.prompt_history import button as history_button
-from app.sections.market_structure.market_structure_link import button as structure_button
+from app.sections.market_structure.market_structure_link import line_actions
 from app.sections.markets.player_distribution import panel as distribution_panel
 from app.sections.markets import prop_probability
 from app.sections.information.availability_view import panel as availability_panel
@@ -403,6 +403,8 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 **{'aria-label':f"Add {selection_text(row)} at {price} to parlay",'aria-pressed':'false'})
             selection = selection_text(row)
             label, action = prop_probability.row_action(selection, prop_probability.sportsbook_line(row), prop_view)
+            actions = line_actions(snapshot, row, grouped=not row['market_key'].startswith('player_'))
+            description = html.Div([label, *actions], className='market-selection market-prompt')
             if comparison:
                 implied, estimate, edge = values[id(row)]
                 detail = (f"Win {probability_text(estimate.win)} · Loss {probability_text(estimate.loss)} · "
@@ -412,7 +414,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                     detail += " " + forecast.detail(row)
                 fair = f"{estimate.odds:+.0f}" if estimate and estimate.odds is not None else "—"
                 return html.Div([
-                    html.Div([label,history_button(snapshot,row),structure_button(snapshot,row)],className="market-selection market-prompt"),
+                    description,
                     price_button,
                     html.Span(probability_text(implied), className="market-probability", title="Raw break-even probability; includes bookmaker margin"),
                     html.Span(probability_text(estimate.probability) if estimate else "—", className="ppp-probability", title=detail),
@@ -423,7 +425,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 ], className="market-outcome market-line-comparison" + (" market-criteria-match" if matches[id(row)] else ""), **action)
             return html.Div([
                 html.Span(initials, className="player-marker", **{"aria-hidden": "true"}),
-                html.Div([label,history_button(snapshot,row),structure_button(snapshot,row)],className="market-selection market-prompt"),
+                description,
                 price_button,
             ], className="market-outcome", **action)
         def body(count,rows=rows,outcome=outcome,key=key,player=player):

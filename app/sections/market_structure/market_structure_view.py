@@ -31,7 +31,7 @@ def layout():
                     className='structure-controls'),
                 html.P('Read executed flow, traded prices and resting liquidity separately. '
                        'Exchange executions count fills, not unique bettors or sportsbook tickets. '
-                       'Related contracts with different settlement rules are labeled separately.', className='structure-note'),
+                       'Nearby lines and related contracts are shown separately.', className='structure-note'),
                 html.Div(id='structure-content'),
             ], className='structure-dialog', role='dialog', tabIndex=-1,
                **{'aria-modal':'true', 'aria-labelledby':'structure-title'}),
@@ -231,10 +231,14 @@ def flow_pies(labels, sides, *, kalshi, complete):
 
 def activity(market, provider):
     labels = market['labels'];trades = flow_summary(market.get('trades'),provider);book = market.get('book');holders = market.get('holders')
-    content = [html.Div([html.H4(market['title']),html.Span('Related contract' if market.get('match') == 'related' else
-        'Equivalent contract' if market.get('match') == 'equivalent' else 'Selected contract',className='structure-badge')],className='structure-contract-heading'),
+    match = market.get('match')
+    badge = {'nearby':'Nearby traded line','related':'Related contract','equivalent':'Equivalent contract'}.get(match,'Selected contract')
+    content = [html.Div([html.H4(market['title']),html.Span(badge,className='structure-badge')],className='structure-contract-heading'),
         html.Small(market['ticker'], className='structure-contract')]
-    if market.get('match') == 'related':
+    if match == 'nearby':
+        content.append(html.P('These executions are for the line shown here. Each line has its own prices and settlement threshold.',
+                              className='structure-note'))
+    elif match == 'related':
         content.append(html.P('Related contract · settlement or refund rules differ, or exact equivalence is unverified. '
             'Its activity is shown separately and is not combined with the selected contract.', className='structure-note'))
     if market.get('rules'):
@@ -252,8 +256,17 @@ def activity(market, provider):
     count_label = 'Taker executions by direction' if is_kalshi else 'Purchase count (taker executions)'
     value_label = 'Direction-priced traded value' if is_kalshi else 'Amount paid for this outcome'
     contract_label = 'Executed contracts' if is_kalshi else 'Purchased shares'
-    window = {'24h':'last 24 hours','7d':'last 7 days'}.get(market.get('window'),'available API history')
-    content.append(html.H5(('Executed directional flow' if is_kalshi else 'Purchases by outcome')+' · '+window))
+    window = market.get('window')
+    window_labels = {'24h':'last 24 hours','7d':'last 7 days'}
+    if window in window_labels and market.get('history_trades') and not (trades and trades['classified']):
+        content.append(html.P('No usable executions in the '+window_labels[window]+
+                              '. Showing all available API history for this contract.',className='structure-note'))
+        if trades and trades.get('error'):
+            content.append(html.P('Recent trade coverage: '+trades['error'],className='structure-error'))
+        trades = flow_summary(market['history_trades'],provider)
+        window = 'all'
+    content.append(html.H5(('Executed directional flow' if is_kalshi else 'Purchases by outcome')+' · '+
+                           window_labels.get(window,'available API history')))
     if trades:
         sides = trades['sides']
         def values(field):
@@ -272,7 +285,7 @@ def activity(market, provider):
         clean = trades['complete'] and not (trades['invalid'] or trades['unclassified'])
         content += [html.Div([html.Span('Complete API window' if clean else 'Partial sample',
                 className='structure-badge '+('structure-badge--complete' if clean else 'structure-badge--partial')),
-            html.Span(('Requested '+stamp(trades['start'])+' · ' if market.get('window') in {'24h','7d'} else '')+
+            html.Span(('Requested '+stamp(trades['start'])+' · ' if window in window_labels else '')+
                       'Through '+stamp(trades['end']),className='structure-time')],className='structure-coverage'),
             html.P('Fetched '+stamp(trades.get('fetched_at')),className='structure-time'),
             html.Div([html.Div([html.Small(side.upper()+' DIRECTION' if is_kalshi else side.upper()+' PURCHASES'),

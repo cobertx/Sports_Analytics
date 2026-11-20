@@ -20,10 +20,12 @@ DATA = 'https://data-api.polymarket.com/v2'
 PROVIDERS = ('FanDuel', 'Kalshi', 'Polymarket')
 TRADE_PAGE_SIZE = 1000
 MAX_PAGES = 8  # Per API tier, so a busy live feed cannot starve the archive.
+NEARBY_TRADE_CHECKS = 4
 TRADE_REFRESH_SECONDS = 180
 TRADE_CHART_POINTS = 500
 BOOK_DEPTH = 30
 TRADE_WINDOWS = {'all':None, '7d':timedelta(days=7), '24h':timedelta(days=1)}
+ALL_HISTORY_START = datetime(1970,1,1,tzinfo=timezone.utc)
 CACHE_VERSION = 4
 
 
@@ -206,6 +208,10 @@ def flow_summary(trades, provider):
     return result
 
 
+def has_executions(trades):
+    return any((side.get('prints') or 0)>0 for side in (trades or {}).get('sides',{}).values())
+
+
 class MarketStructure:
     def __init__(self, directory=None, kalshi=None, polymarket=None, client=None, now=None):
         self.directory = Path(directory or Path(__file__).resolve().parents[1]/'data/market_structure')
@@ -261,10 +267,14 @@ class MarketStructure:
                     prior = self.saved(key) or {}
                     older = {row['ticker']:row for row in prior.get('markets', [])}
                     result = self.load(request, provider, previous=older, refresh_trades=refresh)
+                    if not result['markets'] and any(has_executions(old.get('trades')) or
+                            has_executions(old.get('history_trades')) for old in older.values()):
+                        result['markets'] = prior['markets']
+                        result['notices'] = [*result.get('notices', []), 'Showing previously fetched contracts and executions.']
                     for market in result.get('markets', []):
                         for kind in ('trades','book','holders','interest'):
                             previous = older.get(market['ticker'], {}).get(kind)
-                            if not market.get(kind) and previous:
+                            if previous and not market.get(kind):
                                 market[kind] = previous
                                 market['errors'].append('Showing saved '+kind+' from '+previous['fetched_at']+'.')
                     with self.lock:
@@ -294,12 +304,14 @@ class MarketStructure:
         rows = []; errors = []; completed = 0; successful_pages = 0
         routes = [BASE+'/markets/trades'] if provider == 'Kalshi' else [DATA+'/trades']
         if provider == 'Kalshi':
-            try:
-                cutoff = self.trade_cutoff()
-                if lower <= cutoff:
-                    routes.append(BASE+'/historical/trades')
-            except (DataSourceError, OSError, ValueError, TypeError) as exc:
-                errors.append('Archive coverage unverified: '+str(exc))
+            if lower == ALL_HISTORY_START:
+                routes.append(BASE+'/historical/trades')
+            else:
+                try:
+                    if lower <= self.trade_cutoff():
+                        routes.append(BASE+'/historical/trades')
+                except (DataSourceError, OSError, ValueError, TypeError) as exc:
+                    errors.append('Archive coverage unverified: '+str(exc))
         # The same requested range goes to both tiers. Overlap is deduplicated by
         # trade_id, avoiding a gap at fractional-second archive boundaries.
         for route in routes:
@@ -341,7 +353,7 @@ class MarketStructure:
         result = trade_summary(rows, provider, market, lower, upper)
         # An empty feed conflicts with a positive volume snapshot for the same
         # full-history scope. It cannot establish a zero trading distribution.
-        all_history = lower == datetime(1970,1,1,tzinfo=timezone.utc)
+        all_history = lower == ALL_HISTORY_START
         is_daily = upper-lower == TRADE_WINDOWS['24h']
         headline = numeric(market.get('volume' if all_history else 'volume_24h')) if all_history or is_daily else None
         if not rows and headline is not None and headline>0:
@@ -351,6 +363,23 @@ class MarketStructure:
                       start=lower.isoformat(), end=upper.isoformat(), scanned=len(rows), pages=successful_pages,
                       page_size=TRADE_PAGE_SIZE)
         return result
+
+    def contract_trades(self, provider, market, lower, upper, saved, refresh):
+        stamp = parse_time(saved.get('fetched_at')) if saved else None
+        if (not refresh and stamp and saved.get('page_size') == TRADE_PAGE_SIZE
+                and 0 <= (upper-stamp).total_seconds() < TRADE_REFRESH_SECONDS):
+            return saved
+        try:
+            trades = self.pages(provider, market, lower, upper)
+        except DataSourceError as exc:
+            if lower != ALL_HISTORY_START or not has_executions(saved):
+                raise
+            reason = str(exc)
+        else:
+            if lower != ALL_HISTORY_START or has_executions(trades) or not has_executions(saved):
+                return trades
+            reason = trades.get('error') or 'The refreshed feed returned no usable executions.'
+        return {**saved, 'complete':False, 'error':reason+' Showing previously fetched executions.'}
 
     def orderbook(self, provider, market):
         if provider == 'Kalshi':
@@ -411,19 +440,23 @@ class MarketStructure:
         from .market_summary import entries, matching_game
         from app.sections.market_structure.market_structure_link import reference
         service = self.kalshi if provider == 'Kalshi' else self.polymarket
-        catalog = service.games(request['sport'], 14)
+        catalog = service.games(request['sport'], 14, refresh=refresh_trades)
         game = matching_game(request['game'], request['sport'], catalog)
         if not game:
             return dict(markets=[], notice='No unambiguous matching game is currently available on '+provider+'.',
                         notices=catalog.get('notices', []), fetched_at=self.now().isoformat())
-        snapshot = service.quotes(game, market_category(request))
+        snapshot = service.quotes(game, market_category(request), refresh=refresh_trades)
         if snapshot.get('sport') != request['sport'] or str(snapshot.get('game_id')) != str(game['id']):
             raise DataSourceError('The exchange returned quotes for a different game.')
         bundle = dict(sport=request['sport'], game=request['game'],
             providers={provider:dict(snapshot=snapshot, game=game)})
         candidates = entries(bundle)
-        indices = {item['index'] for item in candidates if request['focus'] is not None
-                   and item['comparison'] and item['comparison']['key'] == request['focus']}
+        indexed = {}
+        for item in candidates:
+            if item['comparison']:
+                indexed.setdefault(item['index'], {})[item['side']] = item['comparison']
+        focus = request['focus']
+        indices = {index for index, sides in indexed.items() if any(value['key']==focus for value in sides.values())}
         exact = set(indices)
         if request.get('reference'):
             source = {**snapshot,'game':game}
@@ -431,40 +464,38 @@ class MarketStructure:
                 reference(source,row,provider,side) == request['reference'] for side in ('yes','no')))
         if request['focus'] is None and provider == request['provider']:
             indices = {i for i,row in enumerate(snapshot['rows']) if str(row.get('ticker')) == request['ticker']}
-        selected = [snapshot['rows'][index] for index in sorted(indices)]
         result = dict(markets=[], fetched_at=self.now().isoformat(), notice='',
                       notices=[*catalog.get('notices', []), *snapshot.get('notices', [])])
         if catalog.get('updating') or snapshot.get('updating'):
             result['notices'].append('Provider discovery or quotes are being refreshed; the quote timestamps identify the saved data used for matching.')
-        if not selected:
-            result['notice'] = 'No equivalent contract with the same outcome and settlement boundary was found. Different lines and push rules are not combined.'
-            return result
-        if len(selected) > 4:
-            result['notice'] = f'Showing 4 of {len(selected)} equivalent contracts.'
+        if not indices:
+            result['notice'] = 'No equivalent contract with the same outcome and settlement boundary was found in the available quotes.'
+        if len(indices) > 4:
+            result['notice'] = f'Showing 4 of {len(indices)} matching contracts.'
         upper = self.now()
         interval = TRADE_WINDOWS[request['window']]
-        lower = upper-interval if interval else datetime(1970,1,1,tzinfo=timezone.utc)
-        for market in selected[:4]:
+        lower = upper-interval if interval else ALL_HISTORY_START
+        rows = snapshot['rows']
+        previous = previous or {}
+
+        def build_record(index, match, trades=None):
+            market = rows[index]
             identity = market.get('ticker')
             if provider == 'Kalshi' and not ticker(identity):
                 raise DataSourceError('Kalshi returned an invalid contract identifier.')
             if provider == 'Polymarket' and not re.fullmatch(r'0x[0-9a-fA-F]{64}', market.get('condition_id') or ''):
                 raise DataSourceError('Polymarket returned an invalid condition identifier.')
-            index = snapshot['rows'].index(market)
-            labels = {item['side']:item['comparison']['label'] for item in candidates
-                      if item['index'] == index and item['comparison']}
+            labels = {side:comparison['label'] for side,comparison in indexed.get(index, {}).items()}
             record = dict(ticker=identity, title=market['title'], labels={side:labels.get(side) or market.get(side+'_label', side.title()) for side in ('yes','no')},
                 volume=market.get('volume'), volume_24h=market.get('volume_24h'), open_interest=market.get('open_interest'),
-                quote_time=snapshot.get('fetched_at'), errors=[], match='equivalent' if index in exact else 'related', window=request['window'],
+                quote_time=snapshot.get('fetched_at'), errors=[], match=match, window=request['window'],
                 rules=' '.join(market.get(key) or '' for key in ('rules_primary','rules_secondary')))
             tasks = dict(book=lambda:self.orderbook(provider, market))
-            saved_trades = (previous or {}).get(identity, {}).get('trades') or {}
-            trade_time = parse_time(saved_trades.get('fetched_at'))
-            if (not refresh_trades and saved_trades.get('page_size') == TRADE_PAGE_SIZE and trade_time
-                    and 0 <= (upper-trade_time).total_seconds() < TRADE_REFRESH_SECONDS):
-                record['trades'] = saved_trades
+            prior = previous.get(identity, {})
+            if trades is not None:
+                record['trades'] = trades
             else:
-                tasks['trades'] = lambda:self.pages(provider, market, lower, upper)
+                tasks['trades'] = lambda:self.contract_trades(provider, market, lower, upper, prior.get('trades'), refresh_trades)
             if provider == 'Polymarket':
                 tasks['holders'] = lambda:self.holders(market)
                 tasks['interest'] = lambda:self.interest(market)
@@ -475,6 +506,42 @@ class MarketStructure:
                         record[kind] = future.result()
                     except (DataSourceError, OSError, ValueError, TypeError, KeyError) as exc:
                         record['errors'].append(kind.title()+': '+str(exc))
-            result['markets'].append(record)
+            if interval and trades is None and not has_executions(record.get('trades')):
+                try:
+                    history = self.contract_trades(provider, market, ALL_HISTORY_START, upper,
+                                                   prior.get('history_trades'), refresh_trades)
+                    if has_executions(history):
+                        record['history_trades'] = history
+                except (DataSourceError, OSError, ValueError, TypeError, KeyError) as exc:
+                    record['errors'].append('Full trade history: '+str(exc))
+            return record
+
+        selected = sorted(indices, key=lambda i:(i not in exact, i))[:4]
+        other_match = 'selected' if focus is None else 'related'
+        for index in selected:
+            result['markets'].append(build_record(index, 'equivalent' if index in exact else other_match))
+        if focus and not any(has_executions(market.get('trades')) or has_executions(market.get('history_trades'))
+                             for market in result['markets']):
+            nearby = []
+            for index, sides in indexed.items():
+                if index in indices:
+                    continue
+                volume = numeric(rows[index].get('volume_24h' if request['window']=='24h' else 'volume'))
+                distances = [abs(key[3]-focus[3]) for key in (value['key'] for value in sides.values())
+                             if key[:3]==focus[:3] and key[4]==focus[4] and key[3]!=focus[3]]
+                if distances:
+                    nearby.append((not volume, min(distances), -(volume or 0), index))
+            for _, _, _, index in sorted(nearby)[:NEARBY_TRADE_CHECKS]:
+                market = rows[index]
+                try:
+                    trades = self.contract_trades(provider, market, lower, upper,
+                        previous.get(market['ticker'], {}).get('trades'), refresh_trades)
+                    if has_executions(trades):
+                        result['markets'].append(build_record(index, 'nearby', trades))
+                        if selected and not result['notice']:
+                            result['notice'] = 'The matching lines returned no usable executions. See the nearby traded line below.'
+                        break
+                except (DataSourceError, OSError, ValueError, TypeError, KeyError):
+                    continue
         result['fetched_at'] = self.now().isoformat()
         return result

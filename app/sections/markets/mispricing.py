@@ -10,8 +10,7 @@ from models.season_weights import POLICY_VERSION
 
 from app.sections.markets.market_view import MARKET_NAMES, _line_values, criteria_match, player_probability_chart, probability_text, selection_text
 from app.sections.markets import prop_probability, quick_visibility
-from app.sections.markets.prompt_history import button as history_button
-from app.sections.market_structure.market_structure_link import button as structure_button
+from app.sections.market_structure.market_structure_link import line_actions
 from app.sections.markets.quick_methods import GAME_METHODS,PLAYER_METHODS,game_methods as supported_game_methods,game_options,player_methods as supported_player_methods
 from app.sections.markets.lazy_markets import markets as lazy_markets
 from sports_analytics.filter_jobs import FORECASTS_FINISHED, forecast_progress
@@ -198,7 +197,8 @@ def results(snapshot, ranked, criteria, errors=(), *, player_forecasts=None):
         row = item['row']
         label, action = prop_probability.row_action(selection_text(row), prop_probability.sportsbook_line(row), view, methods=methods)
         return html.Tr([
-            html.Td(rank),html.Td([label,history_button(snapshot,row),structure_button(snapshot,row,surface='quick-filter')]),
+            html.Td(rank),html.Td([label,*line_actions(snapshot,row,surface='quick-filter',
+                grouped=not row['market_key'].startswith('player_'))]),
             html.Td(MARKET_NAMES.get(row['market_key'],(row['market'],))[0]),
             html.Td(method_details(item)),html.Td(f"{row['odds']:+g}"),
             html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),

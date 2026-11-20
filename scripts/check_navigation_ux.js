@@ -127,8 +127,13 @@ function checkQuickFiltering() {
   const providers = ['market','kalshi','summary'];
   const feedback = Object.fromEntries(providers.map(provider => [provider, {dataset: {quickSelection: 'old'}}]));
   const slots = Object.fromEntries(providers.map(provider => [provider, [{children: []}, {children: []}]]));
+  const kalshiStartSlot={children:[]};
+  const starter={id:'kalshi-starting-quick-progress',dataset:{},hidden:true,
+    toggleAttribute(name,show){this.visible=show;}};
+  kalshiStartSlot.children=[starter];
+  slots.kalshi.push(kalshiStartSlot);
   const document = {
-    getElementById: id => feedback[id.split('-')[0]],
+    getElementById: id => id===starter.id?starter:feedback[id.split('-')[0]],
     querySelectorAll: selector => slots[selector.split('"')[1]],
   };
   class MutationObserver {
@@ -178,6 +183,24 @@ function checkQuickFiltering() {
     select(provider,'old');
     check(current.visible,`${provider} can restore valid results when returning`);
   }
+
+  const kalshiGame='#nfl-kalshi-game-KXNFLGAME-CURRENT';
+  const kalshiNext='#nfl-kalshi-game-KXNFLGAME-NEXT';
+  const [responses]=slots.kalshi;
+  move(kalshiGame);
+  select('kalshi',undefined);
+  starter.hidden=false;
+  starter.dataset.quickScope=key(kalshiGame,'archive.json');
+  observers.get(starter)([{type:'attributes',target:starter}]);
+  check(starter.visible,'Kalshi shows the clicked progress bar before the snapshot mirror updates');
+  starter.hidden=true;
+  const acknowledged=publish(responses,kalshiGame,'archive.json');
+  check(acknowledged.visible,'The acknowledged scan stays visible while the snapshot mirror is pending');
+  move(kalshiNext);
+  check(!starter.visible&&!acknowledged.visible,'The captured click scope cannot reveal a prior game');
+  move(kalshiGame);
+  select('kalshi','live');
+  check(!acknowledged.visible,'A resolved snapshot change hides an earlier archived scan');
 
   const [results,chart] = slots.summary;
   const summary = '#nfl-market-summary', draftkings = '#nfl-draftkings-market';

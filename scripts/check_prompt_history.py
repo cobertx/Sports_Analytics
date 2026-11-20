@@ -62,6 +62,34 @@ class PromptHistoryChecks(TestCase):
         self.assertNotIn('line',target);self.assertIn('Scorer-order history',target['note'])
         self.assertTrue(button(s,dict(row(),market_key='unmapped')).disabled)
 
+    def test_game_quote_actions_share_a_row_below_the_selection(self):
+        sportsbook=snapshot()
+        sportsbook['rows']=[dict(row(),market_key='alternate_totals',group='Game',market='Total points',
+                                 subject='Over',line=45.5)]
+        kalshi=kalshi_fixtures.KalshiChecks()
+        kalshi.setUp();self.addCleanup(kalshi.doCleanups)
+        game=kalshi.service.games('NFL')['games'][0]
+        exchange=dict(kalshi.service.quotes(game),game=game)
+        polymarket=poly_fixtures.PolymarketChecks()
+        polymarket.setUp();self.addCleanup(polymarket.doCleanups)
+        poly_game=polymarket.game()
+        poly_quotes=dict(polymarket.service.quotes(poly_game),game=poly_game)
+        for provider,rendered in [
+            ('FanDuel',market_sections(sportsbook,'Game',lazy=False)),
+            ('Kalshi',kalshi_view.market_sections(exchange,'Kalshi',lazy=False)),
+            ('Polymarket',kalshi_view.market_sections(poly_quotes,'Polymarket',lazy=False)),
+        ]:
+            with self.subTest(provider=provider):
+                rows=[node for node in history_fixtures.components(rendered)
+                      if 'market-outcome' in (getattr(node,'className','') or '').split()]
+                self.assertTrue(rows)
+                for outcome in rows:
+                    description=next(child for child in outcome.children if isinstance(getattr(child,'children',None),list))
+                    self.assertTrue(description.children[0])
+                    tools=description.children[-1]
+                    self.assertEqual(tools.className,'market-line-actions')
+                    self.assertEqual([control.children for control in tools.children],['Historical Data','Market Structure'])
+
     def test_exact_binary_complements_and_sportsbook_pushes(self):
         history=pd.DataFrame({'value':[0,1,2,3,None]})
         for compare,expected in [('gt',['Miss','Miss','Miss','Hit',None]),('ge',['Miss','Miss','Hit','Hit',None]),
