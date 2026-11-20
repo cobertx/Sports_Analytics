@@ -138,7 +138,7 @@ class PerformanceChecks(TestCase):
         snapshot = dict(sport='NFL', game_id='1', pulled_at='2026-10-01T12:00:00Z',
             commence_time='2026-10-02T12:00:00Z', home_team='New England Patriots', away_team='Buffalo Bills', rows=rows)
         repository = Mock(root=self.root)
-        repository.load.return_value = pd.DataFrame(dict(entity_name=['One'],
+        repository.load.return_value = pd.DataFrame(dict(entity_id=['001'], entity_name=['One'],
             event_date=pd.to_datetime(['2026-09-01'], utc=True), available_at=pd.to_datetime(['2026-09-02'], utc=True)))
         WHPMarketService(repository).forecast(snapshot)
         audit = json.loads(next((self.root / 'evaluations').glob('*.json')).read_text(encoding='utf-8'))

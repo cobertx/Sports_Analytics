@@ -21,6 +21,7 @@ from sports_analytics.historical_links import history_href
 from app.sections.markets.prompt_history import button as history_button
 from app.sections.market_structure.market_structure_link import button as structure_button
 from app.sections.markets.player_distribution import panel as distribution_panel
+from app.sections.markets import prop_probability
 from app.sections.information.availability_view import panel as availability_panel
 from app.sections.markets.lazy_markets import markets as lazy_markets
 
@@ -202,6 +203,22 @@ def _line_values(row, forecast):
     return implied, estimate, edge
 
 
+def player_probability_chart(snapshot, key, forecasts, *, waiting=False):
+    provider = 'DraftKings' if str(snapshot.get('bookmaker', '')).casefold() == 'draftkings' else 'FanDuel'
+    quotes = []
+    for row in snapshot['rows']:
+        line = prop_probability.sportsbook_line(row)
+        if not prop_probability.matching_side(key, line):
+            continue
+        market = MARKET_NAMES.get(row['market_key'], (row['market'],))[-1]
+        outcome = dict(key=line, group=f"{row['subject']} · {market}")
+        for method, forecast in forecasts.items():
+            implied, estimate, _ = _line_values(row, forecast)
+            quotes.append(dict(comparison=outcome, provider=provider, method=method, implied=implied,
+                               probability=estimate.probability if estimate else None))
+    return prop_probability.chart(key, quotes, waiting=waiting)
+
+
 def _comparison_figure(snapshot, forecast, market_key, group, method="PPP", criteria=None):
     spreads = market_key == "alternate_spreads"
     selected = sorted([row for row in snapshot["rows"] if row["market_key"] == market_key and row["line"] is not None
@@ -334,6 +351,10 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         groups.setdefault((row["market_key"], player), []).append(row)
     sections = []
     view=lazy_markets.view() if lazy else None
+    prop_view = prop_panel = None
+    if any(player and any(prop_probability.sportsbook_line(row) for row in rows) for (_, player), rows in groups.items()):
+        prop_view, prop_panel = prop_probability.mount(
+            lambda selected, _: player_probability_chart(snapshot, selected, {method: forecast}, waiting=loading))
     evaluated = 0
     matched_counts = {"alternate_spreads": 0, "alternate_totals": 0}
     for index, ((key, player), rows) in enumerate(groups.items()):
@@ -381,6 +402,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 title='Add or remove this saved selection in the parlay slip',
                 **{'aria-label':f"Add {selection_text(row)} at {price} to parlay",'aria-pressed':'false'})
             selection = selection_text(row)
+            label, action = prop_probability.row_action(selection, prop_probability.sportsbook_line(row), prop_view)
             if comparison:
                 implied, estimate, edge = values[id(row)]
                 detail = (f"Win {probability_text(estimate.win)} · Loss {probability_text(estimate.loss)} · "
@@ -390,7 +412,7 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                     detail += " " + forecast.detail(row)
                 fair = f"{estimate.odds:+.0f}" if estimate and estimate.odds is not None else "—"
                 return html.Div([
-                    html.Div([html.Span(selection),history_button(snapshot,row),structure_button(snapshot,row)],className="market-selection market-prompt"),
+                    html.Div([label,history_button(snapshot,row),structure_button(snapshot,row)],className="market-selection market-prompt"),
                     price_button,
                     html.Span(probability_text(implied), className="market-probability", title="Raw break-even probability; includes bookmaker margin"),
                     html.Span(probability_text(estimate.probability) if estimate else "—", className="ppp-probability", title=detail),
@@ -398,12 +420,12 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                     html.Span(f"{100 * edge:+.2f} pp" if edge is not None else "—", className="market-edge",
                               **{'data-sign': signed_state(edge)},
                               title=f"{method} probability minus market implied probability, in percentage points"),
-                ], className="market-outcome market-line-comparison" + (" market-criteria-match" if matches[id(row)] else ""))
+                ], className="market-outcome market-line-comparison" + (" market-criteria-match" if matches[id(row)] else ""), **action)
             return html.Div([
                 html.Span(initials, className="player-marker", **{"aria-hidden": "true"}),
-                html.Div([html.Span(selection),history_button(snapshot,row),structure_button(snapshot,row)],className="market-selection market-prompt"),
+                html.Div([label,history_button(snapshot,row),structure_button(snapshot,row)],className="market-selection market-prompt"),
                 price_button,
-            ], className="market-outcome")
+            ], className="market-outcome", **action)
         def body(count,rows=rows,outcome=outcome,key=key,player=player):
             return [html.Div([outcome(row) for row in rows[:count]],className='market-outcomes'),
                     distribution_panel(rows,forecast,method,market_section_id(snapshot,key,player),
@@ -457,4 +479,6 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
         sections.insert(0,indicator('Quotes are ready. Calculating the selected forecast in the background…'))
     if not loading and category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
         sections.append(ppp_comparison(snapshot, forecast, model_error, method, criteria))
+    if prop_panel is not None:
+        sections.append(prop_panel)
     return sections or [html.P("No saved selections in this category.", className="saved-market-empty")]

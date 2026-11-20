@@ -7,16 +7,9 @@ import plotly.graph_objects as go
 
 from app.sections.exchanges.kalshi_view import team_identity
 from app.sections.markets.market_view import criteria_match, probability_text
+from app.sections.markets.prop_probability import SOURCE_STYLES
 from app.sections.market_summary.market_summary_view import odds_text, shared_estimate
 from app.components.presentation import chart_style
-
-
-SOURCE_STYLES = {
-    'FanDuel': ('#75baff', 'diamond', 'solid'),
-    'DraftKings': ('#ffac74', 'triangle-down', 'dashdot'),
-    'Kalshi': ('#8debab', 'square', 'dash'),
-    'Polymarket': ('#b7b6ff', 'triangle-up', 'dot'),
-}
 
 
 def game_line_point(row):

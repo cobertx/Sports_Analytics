@@ -1,5 +1,6 @@
 """Offline consensus, explicit execution and scoped cross-provider results."""
 from pathlib import Path
+import json
 import sys
 from copy import deepcopy
 from threading import Event
@@ -100,6 +101,39 @@ class SummaryFilteringChecks(TestCase):
             request=f.cb['summary_quick_submit'](1,['PPP'],['WHP'],probability,edge,f.data,'123',QUICK,'market-summary','NFL')
             self.assertIn('error',request)
         f.engines['PPP'].forecast.assert_not_called()
+
+    def test_quick_player_row_opens_full_ladder_with_each_cached_method(self):
+        f=self.fixture()
+        quotes=f.data['providers']['FanDuel']['snapshot']['rows']
+        quotes.append({**quotes[1],'line':205.5,'odds':-500})
+        request=f.cb['summary_quick_submit'](1,['PPP'],['WHP','UO'],50,0,f.data,'123',QUICK,'market-summary','NFL')
+        f.app._summary_quick_jobs.queue.tasks.join()
+        results,_,done=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',1,None)
+        self.assertEqual(done['status'],'complete')
+        rows=fixtures.native_dom(results).find('tr')
+        selection=next(json.loads(row.attrs['data-prop-chart']) for row in rows if 'data-prop-chart' in row.attrs)
+        self.assertEqual(selection['job'],request['job'])
+        self.assertTrue(any(row.find('button','prop-chart-button') for row in rows))
+        calls={method:f.players[method].forecast.call_count for method in ('WHP','UO')}
+
+        output='summary-prop-result.children'
+        meta=f.app.callback_map[output]
+        values={'summary-prop-request':{**selection,'click':1},'summary-quotes':f.data,'summary-models':None,
+                'summary-category':QUICK,'summary-game':'123','summary-game-method':'PPP','summary-player-method':'WHP',
+                'summary-quick-request':request,'summary-quick-completed':done,'sport':'NFL','workspace-page':'market-summary'}
+        with f.app.server.test_client() as client:
+            response=client.post('/_dash-update-component',json=dict(output=output,
+                outputs=dict(id='summary-prop-result',property='children'),changedPropIds=['summary-prop-request.data-selection'],
+                inputs=[dict(item,value=values[item['id']]) for item in meta['inputs']],
+                state=[dict(item,value=values[item['id']]) for item in meta['state']]))
+        self.assertEqual(response.status_code,200,response.get_data(as_text=True))
+        panel=response.get_json()['response']['summary-prop-result']['children']
+        graph=next(child for child in panel['props']['children'] if child and child['type']=='Graph')
+        traces={trace['name']:trace for trace in graph['props']['figure']['data']}
+        self.assertTrue({'WHP forecast','UO forecast','FanDuel implied'} <= set(traces))
+        self.assertIn(205.5,traces['FanDuel implied']['x'])
+        self.assertEqual(calls,{method:f.players[method].forecast.call_count for method in calls})
+        f.fd.pull.assert_not_called()
 
     def test_latest_criteria_action_controls_chart_highlights_without_refitting(self):
         f=self.fixture()

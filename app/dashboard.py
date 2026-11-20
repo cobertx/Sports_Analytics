@@ -35,6 +35,7 @@ from sports_analytics.filter_jobs import FilterJobs
 from app.shell.loading import configure as configure_loading, register as register_loading, indicator
 from app.shell.progressive_loading import configure as configure_progressive, register as register_progressive
 from app.sections.markets.player_distribution import register as register_player_distribution
+from app.sections.markets.prop_probability import register as register_prop_probability
 from sports_analytics.service import DataService
 from sports_analytics.schedule import ScheduleService
 from sports_analytics.odds_api import OddsApiService
@@ -265,6 +266,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     register_navigation(app)
     register_loading(app)
     register_player_distribution(app)
+    register_prop_probability(app)
     register_progressive(app)
 
     register_shell(app,Output("historical-page", "style"), Output("market-page", "style"),

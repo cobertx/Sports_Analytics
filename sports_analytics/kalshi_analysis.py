@@ -293,7 +293,7 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
         models=calculate(game,subset,selected,game_method,player_method,game_forecast,player_forecast,
                          context=context,prepared=prepared)
         displayed=decorate(subset,game,selected,game_method,player_method,models,context=context)
-        return rank(displayed,ALL_PROBABILITIES),models.get('errors',[])
+        return rank(displayed,ALL_PROBABILITIES),models.get('errors',[]),displayed['rows'] if player else []
     tasks={method:lambda method=method:evaluate(method,False) for method in quick_methods.game_methods(game['sport']) if method in needed}
     tasks.update({method:lambda method=method:evaluate(method,True) for method in quick_methods.player_methods(game['sport']) if method in needed})
     forecasts=run_forecasts(tasks,game['sport'],report)
@@ -301,5 +301,6 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
     ranked=quick_methods.consensus({method:record[0] for method,record in forecasts.items()},assignments,
         snapshot['rows'],criteria,lambda item:(item['row']['ticker'],item['side']),consensus_rankings,
         prompt=lambda row:quick_methods.prompt_key(targets[row['ticker']]),sides=2)
-    errors=list(dict.fromkeys(error for _, messages in forecasts.values() for error in messages))
+    ranked['player_lines']=[row for _,_,rows in forecasts.values() for row in rows]
+    errors=list(dict.fromkeys(error for _, messages, _ in forecasts.values() for error in messages))
     return ranked,errors

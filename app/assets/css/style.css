@@ -228,6 +228,8 @@ p { color: var(--muted); line-height: 1.65; margin: 8px 0; }
 .analysis { min-width: 0; }
 .load-status { border: 1px solid #294047; background: #102329; color: #aec6cc; border-radius: 8px; padding: 13px 16px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .dataset-summary { color: var(--muted); font-size: 11px; padding: 13px 2px 20px; }
+#historical-page .historical-status > :empty,
+#historical-page .dataset-summary:empty { display: none; }
 .analysis-filters { display: grid; grid-template-columns: 1.6fr 1.2fr 1fr; gap: 16px; }
 .identity-filters { grid-template-columns: 1fr 1.6fr; }
 .identity-filters.single-entity { grid-template-columns: minmax(0, 1fr); }

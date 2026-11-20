@@ -57,4 +57,7 @@ def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player
             'estimates':[dict(method=method,probability=value['probability'],model_odds=value['model_odds'],edge=value['edge'])
                          for method,value in zip(selected,estimates)]})
     matches.sort(key=lambda row:(-row['edge'],-row['probability'],selection_key(row)))
-    return dict(matches=matches,evaluated=evaluated,unavailable=unavailable,errors=list(dict.fromkeys(errors)))
+    player_lines=[row for (kind,_),indexed in values.items() if kind=='player' for row in indexed.values()
+                  if row['category']=='Player Props' and row.get('comparison')]
+    return dict(matches=matches,evaluated=evaluated,unavailable=unavailable,errors=list(dict.fromkeys(errors)),
+                player_lines=player_lines)

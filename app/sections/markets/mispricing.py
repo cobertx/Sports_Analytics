@@ -8,7 +8,8 @@ from dash import dcc, html
 from app.components.presentation import signed_state
 from models.season_weights import POLICY_VERSION
 
-from app.sections.markets.market_view import MARKET_NAMES, _line_values, criteria_match, probability_text, selection_text
+from app.sections.markets.market_view import MARKET_NAMES, _line_values, criteria_match, player_probability_chart, probability_text, selection_text
+from app.sections.markets import prop_probability
 from app.sections.markets.prompt_history import button as history_button
 from app.sections.market_structure.market_structure_link import button as structure_button
 from app.sections.markets.quick_methods import GAME_METHODS,PLAYER_METHODS,game_methods as supported_game_methods,game_options,player_methods as supported_player_methods
@@ -169,24 +170,35 @@ def rank_markets(snapshot, game_forecast, player_forecast, criteria, method='PPP
     return dict(matches=unique,evaluated=evaluated,unavailable=unavailable,total=len(snapshot['rows']))
 
 
-def results(snapshot, ranked, criteria, errors=()):
+def results(snapshot, ranked, criteria, errors=(), *, player_forecasts=None):
     consensus=ranked.get('consensus',False)
+    matches=ranked['matches']
+    view = panel = None
+    if player_forecasts and any(prop_probability.sportsbook_line(item['row']) for item in matches):
+        view, panel = prop_probability.mount(lambda key, selection: player_probability_chart(
+            snapshot, key, {method: player_forecasts[method] for method in selection['methods'] if method in player_forecasts}))
+
+    def table_row(item, rank):
+        methods = [estimate['method'] for estimate in item['estimates']] if 'estimates' in item else [item['method']]
+        row = item['row']
+        label, action = prop_probability.row_action(selection_text(row), prop_probability.sportsbook_line(row), view, methods=methods)
+        return html.Tr([
+            html.Td(rank),html.Td([label,history_button(snapshot,row),structure_button(snapshot,row,surface='quick-filter')]),
+            html.Td(MARKET_NAMES.get(row['market_key'],(row['market'],))[0]),
+            html.Td(method_details(item)),html.Td(f"{row['odds']:+g}"),
+            html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),
+            html.Td(f"{item['edge']*100:+.2f}",className='mispricing-edge',**{'data-sign':signed_state(item['edge'])}),
+        ], **action)
+
     def table(items,start):
         return html.Div(html.Table([
             html.Thead(html.Tr([html.Th(label,scope='col') for label in
                 ['Rank','Selection','Market','Method (probability / edge)' if consensus else 'Method','Market odds','Market implied',
                  'Lowest probability' if consensus else 'Estimated probability','Lowest edge (pp)' if consensus else 'Edge (pp)']])),
-            html.Tbody([html.Tr([
-                html.Td(start+i),html.Td([selection_text(item['row']),history_button(snapshot,item['row']),structure_button(snapshot,item['row'],surface='quick-filter')]),
-                html.Td(MARKET_NAMES.get(item['row']['market_key'],(item['row']['market'],))[0]),
-                html.Td(method_details(item)),html.Td(f"{item['row']['odds']:+g}"),
-                html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),
-                html.Td(f"{item['edge']*100:+.2f}",className='mispricing-edge',**{'data-sign':signed_state(item['edge'])}),
-            ]) for i,item in enumerate(items)] or [html.Tr(html.Td('No qualifying markets.',colSpan=8))]),
+            html.Tbody([table_row(item,i) for i,item in enumerate(items,start)] or [html.Tr(html.Td('No qualifying markets.',colSpan=8))]),
         ],className='mispricing-table'),className='mispricing-table-scroll',tabIndex=0,role='region',
             **{'aria-label':f'Filtered selections starting at rank {start}'})
 
-    matches=ranked['matches']
     return html.Div([
         html.Div([
             html.Strong(f"{len(matches)} qualifying selections across this game's saved markets."),
@@ -199,4 +211,5 @@ def results(snapshot, ranked, criteria, errors=()):
         html.Section([html.H3('Remaining qualifying markets'),
             lazy_markets.panel(lazy_markets.view(),0,lambda count:table(matches[3:3+count],4),
                                max(0,len(matches)-3),size=50)],className='mispricing-remaining'),
+        panel,
     ],className='mispricing-results')

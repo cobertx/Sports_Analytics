@@ -136,11 +136,9 @@
 #historical-page > .action-loading > .action-loading { padding-top: 0; min-height: 0; }
 #historical-page > .action-loading:has(> div > .action-loading-overlay) > .action-loading { padding-top: 28px; }
 #historical-page .historical-status { display: grid; justify-items: start; gap: var(--space-2); }
-#historical-page .historical-status > :empty { display: none; }
 #historical-page .historical-status .load-status { max-inline-size: 100%; padding: 6px 10px; }
 #historical-page .historical-status .chart-note { padding: 0; }
 #historical-page .dataset-summary { padding: var(--space-2) 2px var(--space-3); }
-#historical-page .dataset-summary:empty { display: none; }
 .app-shell :is(.market-pull-error,.mispricing-error,.information-alert) { color: var(--warning); }
 .app-shell :is(.criteria-no-match-count,.structure-error) { color: var(--negative); }
 .app-shell :is(.information-source,.in-game-stat,.nfl-usage-card,.structure-source) { background: var(--raised); border-color: var(--line); }

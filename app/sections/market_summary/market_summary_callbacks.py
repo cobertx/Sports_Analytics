@@ -24,6 +24,7 @@ from sports_analytics.summary_quote_jobs import SummaryQuoteJobs
 from sports_analytics import market_summary as analysis
 from app.sections.market_summary import market_summary_view as view
 from app.sections.market_summary import summary_probability
+from app.sections.markets import prop_probability
 
 
 def attempt(function):
@@ -452,6 +453,37 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         rows=models['rows'] if ready else analysis.entries(bundle)
         return summary_probability.panel(bundle,rows,method,waiting,criteria=criteria,quick_rows=quick_rows,
                                          quick_status=quick_status),scope
+
+    @app.callback(Output('summary-prop-result','children'),Input('summary-prop-request','data-selection'),
+                  Input('summary-quotes','data'),Input('summary-models','data'),Input('summary-category','value'),
+                  Input('summary-game','value'),Input('summary-game-method','value'),Input('summary-player-method','value'),
+                  Input('summary-quick-request','data'),Input('summary-quick-completed','data'),
+                  State('sport','value'),State('workspace-page','value'),prevent_initial_call=True)
+    def summary_prop_probabilities(selection,reference,model_state,category,selected,method,player_method,
+                                   quick,completed,sport,page):
+        if not selection:
+            raise PreventUpdate
+        if page!='market-summary' or not reference or selection['bundle']!=reference['id'] or (
+                reference['sport']!=sport or str(reference['game']['id'])!=selected):
+            return None
+        bundle=quote_jobs.resolve(reference)
+        if bundle is None:
+            return prop_probability.clicked(prop_probability.message('This saved market view expired. Select the game again to reload it.'),selection)
+        if category==view.QUICK and selection.get('job'):
+            if not quick or quick.get('job')!=selection['job']:
+                return None
+            ranked=quick_chart_result(quick,completed,sport)
+            if not ranked:
+                return prop_probability.clicked(prop_probability.message('This result is unavailable. Run Quick Filtering again.'),selection)
+            return prop_probability.clicked(prop_probability.chart(selection['key'],ranked['player_lines']),selection)
+        if category!='Player Props' or selection.get('job'):
+            return None
+        models=stored_models(model_state)
+        ready=analysis.current_models(models,bundle,method,player_method)
+        rows=models['rows'] if ready else analysis.entries(bundle)
+        waiting=(not model_state or model_state.get('pending') or model_state.get('bundle_id')!=bundle['id']
+                 or model_state.get('method')!=method or model_state.get('player_method')!=player_method)
+        return prop_probability.clicked(prop_probability.chart(selection['key'],rows,waiting=waiting),selection)
 
     cells=dict(type='summary-model-table',bundle=ALL,category=ALL,group=ALL)
     @scoped_callback(app,'market-summary',Output(cells,'data-models'),Input('summary-models','data'),

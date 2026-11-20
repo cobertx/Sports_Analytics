@@ -110,7 +110,7 @@ def register(app,quotes,game_forecast,player_forecast,source_revision):
         event=dict(job=request['job'],status='error' if state['error'] else status)
         if event==completed:raise PreventUpdate
         if event['status']=='error':return prompt,'Quick Filtering failed. '+(state['error'] or 'This result expired.')+' Click Run Quick Filtering to retry.',event
-        return view.quick_results(bundle,ranked,request['criteria']),\
+        return view.quick_results(bundle,ranked,request['criteria'],request['job']),\
             ('Partial source coverage. ' if request.get('partial') else '')+f"Quick Filtering completed: {len(ranked['matches'])} qualifying quotes.",event
 
     return chart_result

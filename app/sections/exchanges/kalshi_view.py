@@ -15,7 +15,8 @@ from app.sections.markets.market_view import logo_badge, market_provider_heading
 from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
 from app.sections.markets.mispricing import quick_controls
-from sports_analytics.kalshi_analysis import FILTER, implied
+from sports_analytics.kalshi_analysis import FILTER, implied, adapter
+from app.sections.markets import prop_probability
 from app.sections.markets.market_view import probability_text
 from models.Game_Outcome.PPP.PPP import fair_american_odds
 from app.sections.markets.prompt_history import button as history_button
@@ -187,6 +188,7 @@ def layout(provider='Kalshi'):
                 html.Details([html.Summary('Contract rules, payout & settlement'), html.Div(id=f'{prefix}-rules')],
                              id=f'{prefix}-rules-panel',open=False,className='panel kalshi-rules'),
             ], id=f'{prefix}-quote-content'),
+            prop_probability.outlet('kalshi') if not polymarket else None,
         ], id=f'{prefix}-detail', style={'display': 'none'}, className='sportsbook-view kalshi-sportsbook'),
         html.Details([html.Summary('API connection & update speed'),
             html.P([f'This page uses {provider}’s ', html.A('public market-data REST API',
@@ -306,6 +308,25 @@ def odds_text(probability):
     return '+∞' if probability==0 else '−∞' if probability==1 else '—'
 
 
+def prop_outcome(row, sport, side):
+    from sports_analytics.market_summary import comparison
+    target = adapter(row, sport, ())
+    if not target or not target[0]['market_key'].startswith('player_'):
+        return None
+    return comparison(*target, side, 'Kalshi', sport, ())
+
+
+def prop_lines(rows, sport):
+    for row in rows:
+        if not player_market(row, sport):
+            continue
+        for side in ('yes', 'no'):
+            outcome = prop_outcome(row, sport, side)
+            if outcome:
+                yield dict(comparison=outcome, provider='Kalshi', method=row.get('model_method'),
+                           probability=row.get(side+'_probability'), implied=implied(row, side))
+
+
 def comparison_rows(row,snapshot=None,provider='Kalshi'):
     polymarket=provider=='Polymarket'
     formatter=selection
@@ -316,8 +337,15 @@ def comparison_rows(row,snapshot=None,provider='Kalshi'):
         probability=row.get(side+'_probability');market=implied(row,side)
         edge=probability-market if probability is not None and market is not None else None
         label=row.get(side+'_label') or side.title()
+        display=row.get('_display_label') or formatter(row,side,snapshot)[0]
+        action={}
+        if not polymarket and snapshot and player_market(row,snapshot['sport']):
+            key=prop_probability.player_line(prop_outcome(row,snapshot['sport'],side))
+            display,action=prop_probability.row_action(display,key,'kalshi',
+                context=[snapshot['sport'],snapshot['game_id'],snapshot.get('category')],
+                snapshot=(snapshot.get('view_scope') or [None])[0])
         result.append(html.Div([
-            html.Div([html.Span(row.get('_display_label') or formatter(row,side,snapshot)[0],className='market-selection'),
+            html.Div([html.Span(display,className='market-selection'),
                       html.Small('Previously loaded quote · '+str(row.get('quote_fetched_at') or 'timestamp unavailable'),
                                  className='kalshi-outcome-labels') if row.get('quote_stale') else None,
                       history_button(snapshot or {},row,provider,side),structure_button(snapshot or {},row,provider,side)],
@@ -334,7 +362,7 @@ def comparison_rows(row,snapshot=None,provider='Kalshi'):
              if not polymarket and snapshot else {}),
             className='market-outcome market-line-comparison'+(' polymarket-line-comparison' if polymarket else '')+
             (' market-criteria-match' if row.get(side+'_match') else ''),
-            key=row['ticker']+'-'+side))
+            key=row['ticker']+'-'+side,**action))
     return result
 
 

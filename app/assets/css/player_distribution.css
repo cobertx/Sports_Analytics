@@ -6,3 +6,16 @@
 .game-distribution-market > h4 { margin:20px 0 0; color:var(--text); }
 .player-distribution-chart h4 { margin: 0 0 8px; color: var(--text); font-size: 14px; }
 @media (max-width: 1050px) { .player-distribution-grid { grid-template-columns: minmax(0,1fr); } }
+
+[data-prop-chart] { cursor: pointer; }
+[data-prop-chart]:hover, [data-prop-chart]:focus-within { box-shadow: inset 3px 0 var(--probability); }
+[data-prop-chart]:hover .prop-chart-button, .prop-chart-button:focus-visible { color: var(--probability); }
+.prop-chart-button {
+    appearance: none; background: transparent; border: 0; padding: 0;
+    color: inherit; font: inherit; text-align: left; cursor: pointer;
+    text-decoration: underline; text-underline-offset: .2em;
+}
+.prop-chart-button:focus-visible { outline: 2px solid var(--probability); outline-offset: 3px; }
+.prop-probability-chart { margin-top: 20px; min-width: 0; scroll-margin-top: 18px; }
+.prop-chart-values { display: flex; flex-wrap: wrap; gap: 8px 20px; padding: 0; list-style: none; }
+.prop-chart-values li { color: var(--text); font-variant-numeric: tabular-nums; }

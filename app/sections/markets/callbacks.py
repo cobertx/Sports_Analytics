@@ -395,7 +395,8 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                 filtered_results_service.save(snapshot,ranked,criteria,request=request)
             except (DataSourceError,OSError,ValueError) as exc:
                 errors.append('Quick Filtering completed, but its report was not saved: '+str(exc))
-            return mispricing_results(snapshot,ranked,criteria,errors),history
+            return mispricing_results(snapshot,ranked,criteria,errors,
+                player_forecasts={method:forecasts[method][0] for method in chosen_players}),history
         if page is None:return calculate_filter()
         environment=forecast_environment(snapshot['sport'])
         snapshot_keys={game:forecast_snapshot_key(snapshot,game) for game in (False,True)}

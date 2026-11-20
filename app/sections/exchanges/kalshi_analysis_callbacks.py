@@ -13,32 +13,48 @@ from sports_analytics.kalshi_analysis import FILTER,identity,quick_scope,model_m
 from app.sections.markets import quick_methods
 from app.sections.markets.market_view import probability_text
 from app.sections.markets.mispricing import criteria_values, selected_methods, method_details, quick_progress
-from app.sections.exchanges.kalshi_view import route,odds_text,comparison_rows,table as quote_table
+from app.sections.exchanges.kalshi_view import route,odds_text,comparison_rows,prop_lines,prop_outcome,table as quote_table
 from sports_analytics.kalshi_labels import selection,selection_rows
 from app.sections.markets.prompt_history import button as history_button
 from app.sections.market_structure.market_structure_link import button as structure_button
 from sports_analytics.filter_jobs import FilterJobs,request_key
 from app.sections.markets.lazy_markets import markets as lazy_markets
+from app.sections.markets import prop_probability
 
 
 def results(snapshot, ranked, criteria, models):
     consensus=ranked.get('consensus',False)
+    matches=ranked['matches']
+    view=panel=None
+    player_lines=ranked.get('player_lines',())
+    if player_lines:
+        def render(key,selection):
+            return prop_probability.chart(key, (line for line in prop_lines(player_lines,snapshot['sport'])
+                                                 if line['method'] in selection['methods']))
+        view,panel=prop_probability.mount(render)
+
+    def table_row(item,rank):
+        row,side=item['row'],item['side']
+        label=selection(row,side,snapshot)[0]
+        key=prop_probability.player_line(prop_outcome(row,snapshot['sport'],side)) if view else None
+        methods=[value['method'] for value in item['estimates']] if 'estimates' in item else [item['method']]
+        label,action=prop_probability.row_action(label,key,view,methods=methods)
+        return html.Tr([
+            html.Td(rank),html.Td([label,history_button(snapshot,row,'Kalshi',side),
+                structure_button(snapshot,row,'Kalshi',side,surface='quick-filter' if consensus else 'apply-criteria')]),
+            html.Td(row['category']),html.Td(method_details(item)),html.Td(odds_text(item['implied'])),
+            html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),
+            html.Td(f"{100*item['edge']:+.2f}",className='mispricing-edge',**{'data-sign':signed_state(item['edge'])}),
+        ],**action)
+
     def table(items,start):
         return html.Div(html.Table([
             html.Thead(html.Tr([html.Th(label,scope='col') for label in
                 ['Rank','Selection','Category','Method (probability / edge)' if consensus else 'Method','Market odds','Market implied',
                  'Lowest probability' if consensus else 'Calculated probability','Lowest edge (pp)' if consensus else 'Edge (pp)']])),
-            html.Tbody([html.Tr([
-                html.Td(start+i),html.Td([selection(item['row'],item['side'],snapshot)[0],history_button(snapshot,item['row'],'Kalshi',item['side']),
-                    structure_button(snapshot,item['row'],'Kalshi',item['side'],surface='quick-filter' if consensus else 'apply-criteria')]),
-                html.Td(item['row']['category']),html.Td(method_details(item)),
-                html.Td(odds_text(item['implied'])),
-                html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),
-                html.Td(f"{100*item['edge']:+.2f}",className='mispricing-edge',**{'data-sign':signed_state(item['edge'])}),
-            ]) for i,item in enumerate(items)] or [html.Tr(html.Td('No qualifying markets.',colSpan=8))]),
+            html.Tbody([table_row(item,i) for i,item in enumerate(items,start)] or [html.Tr(html.Td('No qualifying markets.',colSpan=8))]),
         ],className='mispricing-table'),className='mispricing-table-scroll',tabIndex=0,role='region',
             **{'aria-label':f'Filtered selections starting at rank {start}'})
-    matches=ranked['matches']
     return html.Div([
         html.Div(f"{len(matches)} qualifying selections. Estimated probability > {100*criteria['probability']:g}% and "
                  f"edge > {100*criteria['edge']:g} pp. {ranked['evaluated']} evaluated; "
@@ -53,6 +69,7 @@ def results(snapshot, ranked, criteria, models):
                                max(0,len(matches)-3),size=50,text_more=True)],className='mispricing-remaining'),
         html.P('Edge uses each side’s ask / payout, before trading fees. Calculated probability retains binary settlement equality outcomes. '
                'Unsupported rules, missing history and unavailable prices are excluded.',className='ppp-comparison-note') if not consensus else None,
+        panel,
     ],className='mispricing-results')
 
 
@@ -182,6 +199,33 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
         if models.get('pending') and not models.get('keep_visible'):return []
         from app.sections.markets.game_distribution import panel
         return panel(models,method,'|'.join([game['sport'],game['id'],selected]))
+
+    app.clientside_callback('''function(models,selection,page){
+        if(!selection||!models||models.pending||page!=='kalshi')return window.dash_clientside.no_update;
+        return models.job||JSON.stringify(models.context);
+    }''',Output('kalshi-prop-request','data-model-revision'),Input('kalshi-models','data'),
+        State('kalshi-prop-request','data-selection'),State('workspace-page','value'),prevent_initial_call=True)
+
+    @app.callback(Output('kalshi-prop-result','children'),Input('kalshi-prop-request','data-selection'),
+                  Input('kalshi-prop-request','data-model-revision'),
+                  Input('kalshi-context','data'),
+                  Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),
+                  Input('kalshi-snapshot','value'),Input('kalshi-category','value'),
+                  State('kalshi-quotes','data'),State('kalshi-models','data'),
+                  State('workspace-page','value'),State('market-url','hash'),prevent_initial_call=True)
+    def kalshi_prop_probabilities(selection,_model_revision,game,method,player_method,selected,category,snapshot,models,page,location):
+        if not selection:
+            raise PreventUpdate
+        if page!='kalshi' or not game or not snapshot or category==FILTER or (
+                route(location)!=(game['sport'],game['id']) or selection.get('snapshot')!=selected):
+            return None
+        context=[game['sport'],game['id'],category]
+        if selection.get('context')!=context or [snapshot['sport'],snapshot['game_id'],snapshot['category']]!=context:
+            return None
+        shown=decorate(snapshot,game,selected,method,player_method,models)
+        waiting=not model_matches(models,game,selected,method,player_method) or models.get('pending')
+        content=prop_probability.chart(selection['key'],prop_lines(shown['rows'],game['sport']),waiting=waiting)
+        return prop_probability.clicked(content,selection)
 
     @app.callback(Output(rows,'children'),Output(rows,'className'),
                   Input('kalshi-models','data'),Input('kalshi-applied-criteria','data'),

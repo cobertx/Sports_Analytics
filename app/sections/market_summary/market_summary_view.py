@@ -11,6 +11,7 @@ from app.sections.markets.prompt_history import button as history_button
 from app.sections.market_structure.market_structure_link import button as structure_button
 from sports_analytics.market_summary import PROVIDERS
 from app.sections.markets.lazy_markets import markets as lazy_markets
+from app.sections.markets.prop_probability import outlet, player_line, row_action
 from sports_analytics.nba_markets import NBA_MARKETS
 from sports_analytics.nfl_markets import NFL_MARKETS,SPORTSBOOKS,draftkings_markets
 from sports_analytics.ncaaf_markets import NCAAF_MARKETS
@@ -152,6 +153,7 @@ def layout():
                             color='#57dbc4'),
             ],id='summary-game-probabilities',open=False,style={'display':'none'},
                 className='sportsbook-market summary-game-probabilities'),
+            outlet('summary'),
         ],id='summary-detail',style={'display':'none'}),
     ],id='market-summary-page',className='market-summary-page',style={'display':'none'})
 
@@ -290,12 +292,13 @@ def selection_table(bundle,items,title,snapshots,count):
         anchors.append([anchor['provider'],anchor['index'],anchor['side'] or ''])
         priced=[row['implied'] for row in quotes.values() if row['implied'] is not None]
         best=min(priced) if len(priced)>1 else None
+        label, action=row_action(outcome['label'],player_line(outcome),'summary',bundle=bundle['id'])
         content.append(html.Tr([
-            html.Th([html.Span(outcome['label']),html.Small(outcome['note']) if outcome['note'] else None],scope='row',className='summary-selection'),
+            html.Th([label,html.Small(outcome['note']) if outcome['note'] else None],scope='row',className='summary-selection'),
             *[cell for provider in providers for cell in quote_cell(bundle,quotes.get(provider),snapshots.get(provider),best is not None and
                          quotes.get(provider,{}).get('implied')==best)],
             *shared_cells(bundle,quotes),
-        ],**{'data-summary-row':json.dumps(anchors[-1],separators=(',',':'))}))
+        ],**{'data-summary-row':json.dumps(anchors[-1],separators=(',',':')),**action}))
     content=[html.P('Scroll across the table to see market odds and model estimates.',className='summary-scroll-hint'),html.Div(html.Table([
         html.Caption(title+' — Market odds by source',className='summary-table-caption'),
         html.Thead([
@@ -342,19 +345,20 @@ def sections(bundle,rows,category):
                 'No quoted selections are available in this category.',className='saved-market-empty')
 
 
-def quick_results(bundle,ranked,criteria):
+def quick_results(bundle,ranked,criteria,job=None):
     snapshots={p:{**r['snapshot'],'game':r.get('game')} for p,r in bundle['providers'].items() if r.get('snapshot')}
     def table(items,start):
         content=[]
         for rank,row in enumerate(items,start):
             snapshot=snapshots[row['provider']];original=snapshot['rows'][row['index']]
             details='; '.join(f"{v['method']}: {probability_text(v['probability'])}, {v['edge']*100:+.2f} pp" for v in row['estimates'])
-            content.append(html.Tr([html.Td(rank),html.Th([row['selection'],html.Div([
+            label,action=row_action(row['selection'],player_line(row.get('comparison')),'summary',bundle=bundle['id'],job=job)
+            content.append(html.Tr([html.Td(rank),html.Th([label,html.Div([
                 history_button(snapshot,original,row['provider'],row['side'] or 'yes'),
                 structure_button(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary')])],scope='row'),
                 html.Td(provider_logo(row['provider'])),html.Td(row['method'],title=details),
                 html.Td(odds_text(row['odds'],row['implied'])),html.Td(probability_text(row['implied'])),
-                html.Td(probability_text(row['probability'])),html.Td(metric_values(row,'odds')),html.Td(metric_values(row,'edge'))]))
+                html.Td(probability_text(row['probability'])),html.Td(metric_values(row,'odds')),html.Td(metric_values(row,'edge'))],**action))
         table=html.Div(html.Table([html.Thead(html.Tr([html.Th(label,scope='col') for label in
             ['Rank','Selection','Source','Methods','Market odds','Implied probability','Lowest calculated probability','Calculated odds','Lowest edge (pp)']])),
             html.Tbody(content or html.Tr(html.Td('No qualifying markets.',colSpan=9)))],className='summary-quick-table'),

@@ -94,14 +94,19 @@ class ComparisonChecks(TestCase):
     def test_navigation_and_page_controls_for_both_groups_and_every_sport(self):
         self.app()
         for sport in ['NBA','NFL','NCAAF']:
-            for group,count in [('game-outcome',6 if sport=='NBA' else 3),('player-stats',4)]:
+            expected = {'game-outcome': ['ppp','epa','elo'], 'player-stats': ['whp','uo','oam','pge']}
+            if sport == 'NBA':
+                expected['game-outcome'] += ['pace','aode','ff']
+                expected['player-stats'] += ['ptr','ila']
+            for group,model_keys in expected.items():
                 href=f'#research-{group}-comparison'
                 self.assertEqual(page_route('RESEARCH',href,sport),dict(sport=sport,group=group))
                 links=[c for c in components(research_view.navigation(sport,href)) if getattr(c,'href',None)==href]
                 self.assertEqual(len(links),1);self.assertIn('active',links[0].className)
                 self.assertIn('Methodology Comparison',str(research_view.page(sport,href)))
                 configured=self.cb['configure_comparison']('RESEARCH',href,sport)
-                self.assertEqual(len(configured[4]),count)
+                self.assertEqual([option['value'] for option in configured[3]],model_keys)
+                self.assertEqual(configured[4],model_keys)
                 self.assertEqual(configured[2],dict(sport=sport,group=group))
                 self.assertEqual(configured[0],{'display':'block'})
                 self.assertEqual(configured[1],{'display':'none'})
