@@ -13,10 +13,10 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.backtesting_service import BacktestingService
-from sports_analytics.backtesting_view import available_models,navigation,summary_route,summary_href
-from sports_analytics.backtesting_summary import catalog
+from app.sections.backtesting.backtesting_view import available_models,navigation,summary_route,summary_href
+from app.sections.backtesting.backtesting_summary import catalog
 from check_backtesting import saved_game_report
 
 
@@ -97,7 +97,8 @@ class BacktestSummaryChecks(TestCase):
     def test_all_methods_research_legacy_and_archives_are_listed_once_per_sport(self):
         for sport in ['NBA','NFL','NCAAF']:
             rows=catalog(self.service,sport)
-            self.assertEqual(len(rows),7);self.assertEqual(len({r['open'] for r in rows}),7)
+            expected=len(available_models(sport))
+            self.assertEqual(len(rows),expected);self.assertEqual(len({r['open'] for r in rows}),expected)
             self.assertEqual([r['created_at'] for r in rows],sorted([r['created_at'] for r in rows],reverse=True))
             self.assertEqual({r['group'] for r in rows},{'Game Outcome','Player Stats'})
             self.assertEqual(sum(r['workspace']=='Research' for r in rows),1)
@@ -106,7 +107,7 @@ class BacktestSummaryChecks(TestCase):
             self.assertIn('Test Player',[r['entity'] for r in rows])
             visible,listing,detail,data,message=self.cb['backtest_summary_list']('backtesting',sport,'#backtesting-summary',0,0)
             self.assertEqual(visible,{});self.assertEqual(listing,{});self.assertEqual(detail,{'display':'none'})
-            self.assertEqual(data,rows);self.assertIn('7 saved '+sport,message)
+            self.assertEqual(data,rows);self.assertIn(f'{expected} saved '+sport,message)
 
     def test_saved_reports_reopen_original_charts_settings_and_targets_without_replay(self):
         before={str(path):path.read_bytes() for path in self.service.root.rglob('*') if path.is_file()}
@@ -145,7 +146,7 @@ class BacktestSummaryChecks(TestCase):
     def test_empty_sport_missing_report_inactive_pages_and_wrong_sport_are_safe(self):
         for page,sport,href in [('historical','NBA','#backtesting-summary'),('backtesting','RESEARCH','#backtesting-summary'),
                                 ('backtesting','NBA','#backtesting-game-outcome-ppp')]:
-            with patch('sports_analytics.backtesting_summary.catalog',side_effect=AssertionError('Inactive pages must not scan archives')):
+            with patch('app.sections.backtesting.backtesting_summary.catalog',side_effect=AssertionError('Inactive pages must not scan archives')):
                 output=self.cb['backtest_summary_list'](page,sport,href,0,0)
                 self.assertEqual(output[0],{'display':'none'});self.assertIs(output[3],no_update)
         with patch.object(self.service,'history',return_value=[]):
@@ -160,19 +161,20 @@ class BacktestSummaryChecks(TestCase):
 
     def test_reports_survive_restart_and_refresh_picks_up_new_runs(self):
         restarted=BacktestingService(root=self.service.root)
-        self.assertEqual(len(catalog(restarted,'NBA')),7)
+        expected=len(available_models('NBA'))
+        self.assertEqual(len(catalog(restarted,'NBA')),expected)
         result=restarted.saved('NBA','game-outcome','elo',self.reports['NBA','game-outcome','elo']['run_id'])
         self.assertEqual(result,self.reports['NBA','game-outcome','elo'])
         extra=saved_game_report('f'*64,'2026-10-24T20:00:00Z');extra['context']['entity_label']='New team'
         restarted.ensure_exports(extra)
         rows=self.cb['backtest_summary_list']('backtesting','NBA','#backtesting-summary',1,0)[3]
-        self.assertEqual(len(rows),8);self.assertEqual(rows[0]['entity'],'New team')
+        self.assertEqual(len(rows),expected+1);self.assertEqual(rows[0]['entity'],'New team')
 
     def test_return_to_unchanged_report_preserves_charts_but_disk_edits_invalidate_them(self):
         show=self.cb['backtest_summary_result'];first=show('backtesting','NBA',self.href(),'margin')
         listed=show('backtesting','NBA','#backtesting-summary','margin',first[-1])
         self.assertIs(listed[0],no_update)
-        with patch('sports_analytics.backtesting_summary.render',side_effect=AssertionError('Do not rebuild retained charts')):
+        with patch('app.sections.backtesting.backtesting_summary.render',side_effect=AssertionError('Do not rebuild retained charts')):
             again=show('backtesting','NBA',self.href(),'margin',first[-1])
         self.assertIs(again[0],no_update);self.assertFalse(again[3])
         report=deepcopy(self.reports['NBA','game-outcome','ppp']);report['records'][0]['predicted_margin']+=3

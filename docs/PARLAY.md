@@ -80,10 +80,10 @@ imply that every price was simultaneously available or is still executable.
 ## Files and verification
 
 - `sports_analytics/parlay.py`: quote identity, add/toggle/update behavior, conflict bounds and price math.
-- `sports_analytics/parlay_view.py`: grouped leg cards and combined metrics.
-- `sports_analytics/market_view.py`: every saved market price becomes an accessible button.
-- `sports_analytics/dashboard.py`: default-model estimates, session state and drawer callbacks.
-- `sports_analytics/assets/parlay.css` and `parlay.js`: responsive docked layout and actual-height page spacing.
+- `app/sections/parlay/parlay_view.py` renders grouped leg cards and combined metrics.
+- `app/sections/markets/market_view.py` renders saved market prices as accessible buttons.
+- `app/sections/parlay/callbacks.py`: default-model estimates, session state and drawer callbacks.
+- `app/assets/css/parlay.css` and `app/assets/js/parlay.js` handle the docked layout and page spacing.
 
 Local tests cover American/decimal conversion, product prices/probabilities,
 same-game labeling, pushes, missing estimates, duplicates, quote replacement,

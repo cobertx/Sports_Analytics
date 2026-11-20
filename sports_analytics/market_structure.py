@@ -409,7 +409,7 @@ class MarketStructure:
 
     def load(self, request, provider, *, previous=None, refresh_trades=False):
         from .market_summary import entries, matching_game
-        from .market_structure_link import reference
+        from app.sections.market_structure.market_structure_link import reference
         service = self.kalshi if provider == 'Kalshi' else self.polymarket
         catalog = service.games(request['sport'], 14)
         game = matching_game(request['game'], request['sport'], catalog)

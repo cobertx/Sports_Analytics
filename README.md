@@ -2,7 +2,7 @@
 
 For local cache limits, on-demand market loading, background Quick Filtering and
 repeatable offline benchmarks, see [dashboard performance](docs/PERFORMANCE.md).
-For scoped loading, state restoration and navigation checks, see [navigation notes](docs/NAVIGATION.md).
+For scoped loading, state restoration and navigation checks, see [navigation notes](app/docs/NAVIGATION.md).
 
 A Python Dash workspace for analyzing historical **NBA, NFL, and NCAA Football (NCAAF)** team statistics, NBA and NFL player statistics, and developing forecasts of future performance. NCAAF FanDuel player links also open saved college player history using separately prepared data.
 
@@ -13,6 +13,13 @@ windows, minimum game counts, new-season carryover, formulas, calibration and
 saved-model behavior. The source research PDFs are retained separately.
 
 Each sport's left toolbar groups **FanDuel**, **Kalshi**, **Polymarket**, **Market Summary** and **Filtered Results** under **Market Data**. **Historical Data** opens nested **Team Statistics** and **Player Statistics** pages for NBA/NFL (NCAAF's standard menu has Team Statistics). These pages contain the historical filters, charts, career histories, and game log. **Backtesting** opens a model overview and nested model pages. Switching pages preserves the historical controls. Historical subpages use `#historical-team` and `#historical-player`, apply to the selected sport tab, and support browser back/forward navigation.
+
+NBA player forecasts include **Playing-Time Rotation (PTR)**. It simulates box-score
+opportunities from 240-minute team rotations and reports projected minutes and
+participation separately from prop settlement probabilities. [Model notes](models/Player_Stats/Playing_Time_Rotation/README.md)
+
+**Injury & Lineup Adjustment (ILA)** conditions NBA player forecasts on archived
+pregame injury statuses and optional timestamped lineup scenarios. [Model notes](models/Player_Stats/Injury_Lineup_Adjusted/README.md)
 
 **P&L History** is the top-level tab after **Strategy & Research** (`#pnl-history`). It
 tracks real, locally recorded USD bets and account cash flows. No sportsbook/exchange
@@ -171,8 +178,8 @@ retains table scroll position and open quote disclosures when more rows arrive.
 Background model polls carry only the game-scoped job reference. Complete forecast
 rows stay in the bounded server cache, and source revisions preserve exact file
 timestamps across browser requests so unchanged results can be reused.
-Choose PPP/EPA/ELO for game outcomes and
-WHP/UO/OAM/PGE for player props. Exchange buying prices are also shown in cents.
+Choose PPP/EPA/ELO for game outcomes or WHP/UO/OAM/PGE for player props.
+NBA player props also include PTR. Exchange buying prices are also shown in cents.
 Saved sportsbook quotes load without spending credits. **Pull Live Markets** refreshes all
 providers and shows the combined estimated cost of the FanDuel and DraftKings requests.
 Kalshi and Polymarket use public data. The four individual source pulls refresh only that
@@ -520,7 +527,7 @@ Saved snapshots reopen without API requests. Only public market-data endpoints
 are connected; the page does not place orders. Run
 `python scripts/check_polymarket.py` for offline discovery, pricing, snapshot and UI checks.
 
-The separate **Odds API** tab shows combined credit usage as a donut chart, with used, unused and total credits, plus a table of each configured connection's balance, status and last check. Add your keys to the ignored `.env` file and restart `python index.py`:
+The separate **Odds API** tab shows combined credit usage as a donut chart, with used, unused and total credits, plus a table of each configured connection's balance, status and last check. Add your keys to the ignored `.env` file and restart `python app/index.py`:
 
 ```dotenv
 ODDS_API_KEY=your_primary_api_key_here
@@ -583,9 +590,9 @@ Existing saved NBA and NFL snapshots are imported into the ledger without making
 
 NBA event-based EPV forecasting is available through `python -m models.Game_Outcome.EPA.NBA_EPA --seasons 2025 --home DET --away BOS --as-of 2026-10-20T03:48:47+00:00` and the NBA market forecast selector. It reconstructs possession scoring from public events, quarantines inconsistent games, fits pre-action expected possession values and signed team residuals, and calibrates a normal score-error baseline. The separate `python -m models.Game_Outcome.EPA.prepare_nba_epa --seasons 2025 --download` command remains a raw-input audit; subsequent audit runs without `--download` are offline. See [NBA EPA/EPV setup](models/Game_Outcome/EPA/NBA_EPA_SETUP.md) for preparation, reconstruction results and research limitations.
 
-NBA shares the NFL market-page structure: team-logo cards, bold latest-pull timestamps, a different background for data pulled within 24 hours, saved snapshot selection, an in-game **Pull Live Markets** button, collapsible player ladders and Game Lines comparisons. NBA cards and matchup headers use local PNGs from `images/NBA/Team Logos`; NFL uses its local PNGs. LA Clippers matches the `Los Angeles Clippers.png` filename. Abbreviations appear in the badge only when a local file is missing.
+NBA shares the NFL market-page structure: team-logo cards, bold latest-pull timestamps, a different background for data pulled within 24 hours, saved snapshot selection, an in-game **Pull Live Markets** button, collapsible player ladders and Game Lines comparisons. NBA cards and matchup headers use local PNGs from `app/images/NBA/Team Logos`; NFL uses its local PNGs. LA Clippers matches the `Los Angeles Clippers.png` filename. Abbreviations appear in the badge only when a local file is missing.
 
-The dashboard reads only the plural `images` folder. The removed singular `image` folder is not needed. All 30 NBA and 32 NFL assets are served through the app's local image routes.
+Team logos for NBA, NFL, and NCAAF live in `app/images/` and are served through the dashboard's local image routes.
 
 Each explicit NBA pull makes one FanDuel event-odds request for **13 keys**, costing **up to 13 credits** according to returned markets. Actual cost comes from response headers. No automatic odds refreshes, other bookmakers or fantasy markets are included. Keys follow [The Odds API's market list](https://the-odds-api.com/sports-odds-data/betting-markets.html):
 
@@ -660,17 +667,18 @@ Requires Python 3.11 or newer. From this repository in PowerShell:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements/requirements.txt
-Copy-Item .env.example .env
-.\.venv\Scripts\python.exe index.py
+.\.venv\Scripts\python.exe app/index.py
 ```
+
+Store local settings and API keys in `.env` at the repository root. Git ignores this file. If you need to set up a new `.env`, you can create it manually or copy `.env.example` as a starting point. The dashboard, history updater, and utilities load `.env` directly, so you can delete `.env.example` without affecting an existing setup.
 
 Open **http://127.0.0.1:8050**. Use `--port 8051` to change the port, or `--debug` for development. The default server listens locally. Stop it with Ctrl+C.
 
 On Windows, the dashboard reserves its listening address and port. If the address is already in use, the new launch prints a message and exits. Use the running dashboard or select a different port. Debug mode enables development tools with a single server process.
 
-With the virtual environment activated, you can also run `python index.py`. The original `python app.py` entry point remains available.
+With the virtual environment activated, run `python app/index.py` or launch the server directly with `python app/app.py`.
 
-Running `index.py` directly also selects this project's `.venv` automatically when it exists, so an IDE Run button using system Python can still launch the app. VS Code's default interpreter is configured to use `.venv`. Install the requirements with the setup command above when creating a new environment.
+Running `app/index.py` directly also selects this project's `.venv` automatically when it exists, so an IDE Run button using system Python can still launch the app. VS Code's default interpreter is configured to use `.venv`. Install the requirements with the setup command above when creating a new environment.
 
 Select NBA, NFL, or NCAAF, then choose a season. NBA and NFL offer team/player statistics; NCAAF offers teams only and automatically resets the mode to Teams when selected. The selected scope loads automatically when you open the page or change a filter, populating **Team or player** and **Statistic** from the actual observations. You can also click **Load historical data** to retry. Selectors are disabled with a source-status message when no data can be loaded. The game log hides Game ID for every sport and omits Week for NBA. It supports filtering, sorting, and pagination. **Export loaded dataset** downloads all loaded rows and numeric statistics as CSV.
 
@@ -761,14 +769,14 @@ that matchup adjustment improves every prop market.
 
 ## NBA team logo downloader
 
-Run `python download_nba_logos.py` to download all 30 current NBA team logos from ESPN's public team directory. It writes **500×500 transparent PNGs**, proportionally resized and centered, named for the team (for example `Golden State Warriors.png`). The default folder is **`images/NBA/Team Logos`**, alongside the NFL logos in the project's existing plural `images` folder. Restart the dashboard after adding logo files so they appear on NBA cards and matchup headers.
+Run `python download_nba_logos.py` to download all 30 current NBA team logos from ESPN's public team directory. It writes **500×500 transparent PNGs**, proportionally resized and centered, named for the team (for example `Golden State Warriors.png`). The default folder is **`app/images/NBA/Team Logos`**, alongside the NFL logos under `app/images/`. Restart the dashboard after adding logo files so they appear on NBA cards and matchup headers.
 
 Install its image dependency with `python -m pip install -r requirements/requirements-logos.txt`. Existing valid files are reported as **Already saved**, with their full paths; use `--overwrite` to download them again or `--output "another folder"` to select a different destination. The final message shows the total number of valid files ready in that folder. Failed files can be retried by rerunning; incomplete downloads never replace a completed image. No API key or Odds API credits are needed.
 
 ## NCAAF top 100 team logos
 
-Run `python download_ncaaf_logos.py` to save **500×500 transparent PNGs** under
-`images/NCAAF/Team Logos`, named for each school and mascot (for example
+Run `python app/tools/download_ncaaf_logos.py` to save **500×500 transparent PNGs** under
+`app/images/NCAAF/Team Logos`, named for each school and mascot (for example
 `Michigan Wolverines.png`). Install Pillow first with
 `python -m pip install -r requirements/requirements-logos.txt`.
 
@@ -793,11 +801,11 @@ filename and result. Failures return a nonzero exit status; rerun to retry them.
 Existing files outside the selected top 100 are preserved. NCAAF upcoming-game
 cards and game matchup headers use these local PNGs, matching the team display
 name to the filename. Teams without a downloaded logo show their abbreviation.
-Restart `python index.py` after adding logos so the dashboard indexes the files.
+Restart `python app/index.py` after adding logos so the dashboard indexes the files.
 
 ## NFL team logos
 
-The standalone `download_nfl_logos.py` script downloads the 32 NFL team logos from ESPN's public team directory to **`images/NFL/Team Logos`**. Filenames use full team names, such as `Arizona Cardinals.png`. Every output is validated as a complete **500×500 PNG**. Sources with different dimensions are resized proportionally and centered on a transparent canvas.
+The standalone `download_nfl_logos.py` script downloads the 32 NFL team logos from ESPN's public team directory to **`app/images/NFL/Team Logos`**. Filenames use full team names, such as `Arizona Cardinals.png`. Every output is validated as a complete **500×500 PNG**. Sources with different dimensions are resized proportionally and centered on a transparent canvas.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements/requirements-logos.txt
@@ -824,7 +832,7 @@ CFBD_API_KEY=your-key-here
 
 Alternatively set `$env:CFBD_API_KEY` in PowerShell. The server reads the key; it is not stored in the browser or cache. The college scope starts with `Michigan`; change it to another school or clear it and choose a week. These box-score endpoints require a team, week, or conference filter; the app supports team and week. A school filter returns only that school's observations. A week filter without a school returns teams across the requested FBS games. Each NCAAF import makes two requests: game metadata and team box scores. Historical availability, quotas, and endpoint access depend on the provider and your key.
 
-After adding or changing a key, restart `python index.py`, select NCAAF → Historical Data,
+After adding or changing a key, restart `python app/index.py`, select NCAAF → Historical Data,
 and click **Load historical data**. The default is the prior regular season for Michigan.
 Once loaded, the statistic types reflect the available box-score fields: Scoring,
 Offense (yards and first/third/fourth downs), Passing, Rushing, Defense, Kicking,
@@ -873,26 +881,35 @@ This is a reference baseline, not a trained opponent-aware model. It does not fo
 ## Structure and verification
 
 ```text
-index.py                       Dashboard launcher
-app.py                         App initialization, .env loading, and shared startup
-sports_analytics/
-  dashboard.py                 Three league sections and callbacks
-  assets/style.css             Responsive dashboard styling
-  data.py                      Validated queries, HTTP client, provider adapters
-  service.py                   Source metadata and SQLite cache
-  career.py                    Career season summaries and shared cache
-  schedule.py                  Upcoming ESPN games and daily schedule cache
-  odds_api.py                  Server-side Odds API connection and quota usage
-  nfl_markets.py               Fixed 17-market FanDuel NFL pulls and saved snapshots
-  nba_markets.py               NBA 13-market package and shared snapshot persistence
-  nba_model_data.py            Paired NBA box scores and estimated possessions
-  nba_ppp_service.py           NBA snapshot cutoffs and archived PPP estimates
-  market_view.py               Saved-game matchup headers and player odds ladders
-  forecast.py                  Rolling baseline and chronological evaluation
-  ingest.py                    Multi-season command line importer
+app/
+  index.py                    Dashboard launcher with automatic .venv selection
+  app.py                      Dash initialization, .env loading, and server startup
+  dashboard.py                App factory, shared shell, and section registration
+  sections/
+    historical/               Team and player history, charts, and career summaries
+    markets/                  Sportsbook schedules, game details, and Quick Filtering
+    exchanges/                Kalshi and Polymarket views and callbacks
+    market_summary/           Combined quotes, estimates, and filters
+    market_structure/         Cross-provider market structure panel
+    backtesting/              Simulation results, summaries, and job monitor
+    research/                 Experiment setup and model comparisons
+    in_game/                  Recorded in-game analytics
+    information/              News, weather, and player availability views
+    odds_api/                 Account usage and credit history
+    parlay/                   Parlay drawer and selection callbacks
+    pnl/                      Personal profit and loss views
+  components/                 Shared charts, controls, and presentation
+  shell/                      Navigation and loading behavior
+  assets/                     Stylesheets, browser scripts, and provider icons
+  images/                     Team logos grouped by league
+  docs/                       Navigation and presentation notes
+  tools/                      Team logo maintenance
+data/                         Input data, snapshots, and local caches
 models/                       Game-outcome and player-stat forecasting packages
-requirements/                 Runtime, documentation and logo dependency lists
-scripts/check_project.py      Offline CI layout, import, math, route and logo checks
+output/                       Generated reports and exports
+sports_analytics/             Data providers, forecasting services, and persistence
+requirements/                 Runtime, documentation, and logo dependency lists
+scripts/check_project.py      Offline project, route, and asset verification
 ```
 
 Every market prompt includes **Market Structure**, opening a shared panel for
@@ -1087,4 +1104,4 @@ concurrently; NCAAF source preparation remains sequential because it shares file
 
 GitHub Actions installs the project, checks dependencies, compiles source and runs this offline check on Python 3.11 and 3.13. It does not require local source caches, credentials, or test folders, and makes no external data/odds requests. Local `test/` and `tests/` folders are ignored by Git. If you maintain local tests, run them separately with `python -m unittest discover -s tests -v`.
 
-Generated `output/` copies, caches, forecasts, account usage logs, local environment files, editor settings and scratch files are also ignored. The source code, dependency lists, team logos under `images/`, and canonical model manuals under `models/` remain versioned. Ignore rules do not remove files from your computer or erase earlier Git history. Live data access is a separate check.
+Generated `output/` copies, caches, forecasts, account usage logs, local environment files, editor settings and scratch files are also ignored. The source code, dependency lists, team logos under `app/images/`, and canonical model manuals under `models/` remain versioned. Ignore rules do not remove files from your computer or erase earlier Git history. Live data access is a separate check.

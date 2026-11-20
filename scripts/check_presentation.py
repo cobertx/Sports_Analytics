@@ -7,9 +7,9 @@ from unittest import TestCase, main
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dash import dash_table
 import plotly.graph_objects as go
-from sports_analytics.presentation import PALETTE, chart_style, table_cell, table_header, table_filter
+from app.components.presentation import PALETTE, chart_style, table_cell, table_header, table_filter
 
-ASSETS = Path(__file__).resolve().parents[1] / 'sports_analytics' / 'assets'
+ASSETS = Path(__file__).resolve().parents[1] / 'app' / 'assets' / 'css'
 
 
 def luminance(color):

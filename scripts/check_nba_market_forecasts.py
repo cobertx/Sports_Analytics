@@ -29,7 +29,7 @@ from sports_analytics.whp_service import WHPMarketService
 from sports_analytics.usage_opportunity_service import UsageOpportunityMarketService
 from sports_analytics.opponent_adjusted_service import OpponentAdjustedMarketService
 from sports_analytics.pace_game_environment_service import PaceGameEnvironmentMarketService
-from sports_analytics.market_view import market_sections
+from app.sections.markets.market_view import market_sections
 from sports_analytics.nba_markets import NBA_TEAM_CODES
 
 

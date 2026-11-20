@@ -39,5 +39,13 @@ plays and paired score-script scenarios; overtime is unseparated. All four
 player methods are selectable for NCAAF saved games; college settings and
 coverage are in [NCAAF player methods](../../docs/NCAAF_PLAYER_METHODS.md).
 
+[Playing-Time Rotation (PTR)](Playing_Time_Rotation/README.md) projects NBA
+player minutes inside a 240-minute team budget and simulates props conditional on
+playing. It is available for NBA forecasts, backtests, and research.
+
+[Injury & Lineup Adjustment (ILA)](Injury_Lineup_Adjusted/README.md) conditions
+NBA rotations, opportunity shares, and shooting on timestamped lineup scenarios
+and archived injuries. It includes the NBA forecast and walk-forward workflows.
+
 Team/game outcome strategies are organized separately under
 [Game_Outcome](../Game_Outcome/README.md).

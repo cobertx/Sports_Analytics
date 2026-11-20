@@ -78,7 +78,7 @@ class ReplayChecks(TestCase):
 
     def test_prediction_timeline_omits_offseason_gaps_and_retains_dates_and_intervals(self):
         from copy import deepcopy
-        from sports_analytics.backtesting_results import render
+        from app.sections.backtesting.backtesting_results import render
         from sports_analytics.display_time import format_eastern
         dates=['2025-04-10T00:00:00Z','2025-04-12T00:00:00Z',
                '2025-10-21T00:00:00Z','2025-10-21T02:00:00Z']
@@ -179,7 +179,7 @@ class ReplayChecks(TestCase):
                         self.assertEqual([r['game_id'] for r in own['records']],['16-0','17-0','18-0'])
 
     def test_game_count_note_explains_team_scope_and_insufficient_saved_games(self):
-        from sports_analytics.dashboard import create_app
+        from app.dashboard import create_app
         service=BacktestingService()
         app=create_app(backtesting_service=service)
         callback=next(m['callback'].__wrapped__ for m in app.callback_map.values()
@@ -196,7 +196,7 @@ class ReplayChecks(TestCase):
             self.assertNotIn('backtest-limit',[item['id'] for item in metadata['inputs']])
 
     def test_error_distribution_statistics_follow_saved_report_targets(self):
-        from sports_analytics.backtesting_results import render,error_distribution,figure,error_summary
+        from app.sections.backtesting.backtesting_results import render,error_distribution,figure,error_summary
         source=saved_game_report()
         frozen=json.dumps(source,sort_keys=True)
         for target,expected in [('margin',-1),('total',-2)]:
@@ -279,7 +279,7 @@ class ReplayChecks(TestCase):
 
     def test_previous_simulations_open_via_dash_and_remain_selected_after_navigation(self):
         from dash import no_update
-        from sports_analytics.dashboard import create_app
+        from app.dashboard import create_app
         with tempfile.TemporaryDirectory() as directory:
             service=BacktestingService(root=directory)
             result=saved_game_report();service.ensure_exports(result)
@@ -318,7 +318,7 @@ class ReplayChecks(TestCase):
             self.assertEqual(remembered['NBA/game-outcome/ppp'],dict(run_id=result['run_id']))
             self.assertTrue(opened['backtest-poll']['disabled'])
             self.assertEqual(service.progress('running')['state'],'running')
-            with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='backtest-context')):
+            with patch('app.sections.backtesting.callbacks.ctx',SimpleNamespace(triggered_id='backtest-context')):
                 restored=callbacks['run_backtest'](1,context,0,*controls,None,[],remembered)
             self.assertEqual(restored[0],result)
             rendered,disabled=callbacks['show_backtest_results'](result,context,'total')
@@ -327,13 +327,13 @@ class ReplayChecks(TestCase):
             self.assertIn('_total_',download['filename'])
             self.assertIn(result['run_id'][:8],download['filename'])
             self.assertIn('predicted_total',download['content'])
-            with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='backtest-history-open')):
+            with patch('app.sections.backtesting.callbacks.ctx',SimpleNamespace(triggered_id='backtest-history-open')):
                 invalid=callbacks['run_backtest'](1,context,0,*controls,None,[],remembered,1,'../report')
             self.assertIs(invalid[0],no_update)
 
     def test_navigation_restores_each_pages_job_and_background_results(self):
         from dash import no_update
-        from sports_analytics.dashboard import create_app
+        from app.dashboard import create_app
         with tempfile.TemporaryDirectory() as directory:
             service = BacktestingService(root=directory)
             app = create_app(backtesting_service=service)
@@ -343,7 +343,7 @@ class ReplayChecks(TestCase):
             controls = ['A', None, None, None, 10, 5, None, 'exclude', None]
             def visit(trigger, context, visible_job=None):
                 nonlocal pages
-                with patch('sports_analytics.dashboard.ctx', SimpleNamespace(triggered_id=trigger)):
+                with patch('app.sections.backtesting.callbacks.ctx', SimpleNamespace(triggered_id=trigger)):
                     output = callback(1, context, 1, *controls, visible_job, [], pages)
                 if output[8] is not no_update: pages = output[8]
                 return output
@@ -383,7 +383,7 @@ class ReplayChecks(TestCase):
 
     def test_page_report_survives_rerun_failure_pruning_and_restart(self):
         from dash import no_update
-        from sports_analytics.dashboard import create_app
+        from app.dashboard import create_app
         with tempfile.TemporaryDirectory() as directory:
             context = dict(sport='NBA', group='game-outcome', model='ppp')
             result = dict(context=context, run_id='a'*64, records=[dict(game_id='saved')], skipped=[])
@@ -399,7 +399,7 @@ class ReplayChecks(TestCase):
                                 if m.get('callback') and m['callback'].__wrapped__.__name__ == 'run_backtest')
                 def invoke(trigger):
                     nonlocal pages
-                    with patch('sports_analytics.dashboard.ctx', SimpleNamespace(triggered_id=trigger)):
+                    with patch('app.sections.backtesting.callbacks.ctx', SimpleNamespace(triggered_id=trigger)):
                         output = callback(1, context, 1, *controls, 'other-page-job', [], pages)
                     if output[8] is not no_update: pages = output[8]
                     return output
@@ -414,7 +414,7 @@ class ReplayChecks(TestCase):
                     self.assertEqual(invoke('backtest-context')[0], result)
                     service._jobs.clear()
                     self.assertEqual(invoke('backtest-context')[0], result)
-            from sports_analytics.backtesting_results import layout
+            from app.sections.backtesting.backtesting_results import layout
             store = next(child for child in layout().children if getattr(child, 'id', None) == 'backtest-pages')
             self.assertEqual(store.storage_type, 'session')
 
@@ -484,7 +484,7 @@ class ReplayChecks(TestCase):
                 self.assertNotEqual(results[0]['run_id'], results[1]['run_id'])
 
     def test_run_button_allows_another_job_while_polling_the_current_job(self):
-        from sports_analytics.dashboard import create_app
+        from app.dashboard import create_app
         with tempfile.TemporaryDirectory() as directory:
             service = BacktestingService(root=directory)
             app = create_app(backtesting_service=service)
@@ -493,7 +493,7 @@ class ReplayChecks(TestCase):
             context = dict(sport='NBA', group='game-outcome', model='ppp')
             controls = ['A', None, None, None, 10, 5, None, 'exclude', None]
             with patch.object(service, 'start', side_effect=['first', 'second']) as start, \
-                    patch('sports_analytics.dashboard.ctx', SimpleNamespace(triggered_id='backtest-run')):
+                    patch('app.sections.backtesting.callbacks.ctx', SimpleNamespace(triggered_id='backtest-run')):
                 first = callback(1, context, 0, *controls, None, [])
                 self.assertFalse(first[6]); self.assertEqual(first[2], 'first')
                 second = callback(2, context, 0, *controls, first[2], [])
@@ -502,12 +502,12 @@ class ReplayChecks(TestCase):
             job = dict(state='running', percent=25, message='Evaluating',
                        parameters=dict(sport='NBA', group='game-outcome', key='ppp'))
             with patch.object(service, 'progress', return_value=job), \
-                    patch('sports_analytics.dashboard.ctx', SimpleNamespace(triggered_id='backtest-poll')):
+                    patch('app.sections.backtesting.callbacks.ctx', SimpleNamespace(triggered_id='backtest-poll')):
                 polled = callback(2, context, 1, *controls, 'second', [])
                 self.assertFalse(polled[6]); self.assertFalse(polled[3])
                 self.assertEqual(polled[4], 25)
             with app.server.test_client() as client:
-                with client.get('/assets/backtesting_monitor.css') as response:
+                with client.get('/assets/css/backtesting_monitor.css') as response:
                     self.assertIn('left: 0;', response.get_data(as_text=True))
 
     def test_object_array_keys_use_contents(self):

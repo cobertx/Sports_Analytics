@@ -5,8 +5,8 @@ from threading import Lock
 from models.Game_Outcome.PPP.PPP import fair_american_odds
 from .filter_jobs import forecast_progress
 from .market_summary import calculate,prepare_forecast
-from .market_view import criteria_match
-from .mispricing import run_forecasts
+from app.sections.markets.market_view import criteria_match
+from app.sections.markets.mispricing import run_forecasts
 
 
 def selection_key(row):return row['provider'],row['index'],row['side'] or ''

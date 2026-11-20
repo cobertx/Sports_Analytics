@@ -17,12 +17,12 @@ from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 from models.Game_Outcome.PPP.PPP import MarketProbability,PPPForecast
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.market_summary import calculate,entries,matching_game,polymarket_target,route
-from sports_analytics.market_summary_view import sections,comparison_rows,selection_table,pull_estimate,SUMMARY_BATCH,SUMMARY_STEP,visible_comparisons,shared_estimate
-from sports_analytics.lazy_markets import markets as lazy_markets
-from sports_analytics.mispricing import GAME_METHODS,PLAYER_METHODS
+from app.sections.market_summary.market_summary_view import sections,comparison_rows,selection_table,pull_estimate,SUMMARY_BATCH,SUMMARY_STEP,visible_comparisons,shared_estimate
+from app.sections.markets.lazy_markets import markets as lazy_markets
+from app.sections.markets.mispricing import GAME_METHODS,PLAYER_METHODS
 from check_kalshi import components
 
 
@@ -128,12 +128,12 @@ class SummaryAnalysisChecks(TestCase):
         aligned=comparison_rows(result['rows'],'Game Lines')['Game Lines','Game Total']
         self.assertTrue(any(set(r['quotes'])=={'FanDuel','DraftKings'} for r in aligned))
         self.assertTrue(any({'DraftKings','Kalshi','Polymarket'}<=set(r['quotes']) for r in aligned))
-        from sports_analytics.summary_probability import panel
+        from app.sections.market_summary.summary_probability import panel
         charts=panel(source,result['rows'],'PPP')[-1].children
         self.assertTrue(any(trace.name=='DraftKings implied' for chart in charts for trace in chart.children[1].figure.data))
 
     def test_game_line_charts_use_source_quotes_and_settlement_matched_forecasts(self):
-        from sports_analytics.summary_probability import panel
+        from app.sections.market_summary.summary_probability import panel
         source=bundle()
         fanduel=source['providers']['FanDuel']['snapshot']['rows']
         fanduel.extend(dict(group='Game',market='Total',market_key='alternate_totals',subject='Over',
@@ -159,7 +159,7 @@ class SummaryAnalysisChecks(TestCase):
         self.assertTrue(all(trace.name.endswith('implied') for c in market_only[-1].children for trace in c.children[1].figure.data))
 
     def test_probability_highlights_skip_exact_thresholds_and_keep_unqualified_gaps(self):
-        from sports_analytics.summary_probability import panel
+        from app.sections.market_summary.summary_probability import panel
         source=bundle()
         source['providers']={'FanDuel':source['providers']['FanDuel']}
         source['providers']['FanDuel']['snapshot']['rows']=[
@@ -298,7 +298,7 @@ class SummaryAnalysisChecks(TestCase):
         self.assertNotIn('market-structure-open',to_json(large))
         control=native_dom(large).find('button','market-structure-button')[0]
         self.assertEqual(json.loads(control.attrs['data-structure-context'])['provider'],'Kalshi')
-        from sports_analytics.static_markup import markup
+        from app.components.static_markup import markup
         from dash import html,dcc
         text='\"><script>alert("feed")</script>&{unsafe}'
         parser=NativeParser();parser.feed(markup(html.Span(text,title=text)))
@@ -502,7 +502,7 @@ class SummaryCallbackChecks(TestCase):
         self.catalog=dict(sport='NFL',days=7,games=[game()],Kalshi=dict(games=[exchange()]),Polymarket=dict(games=[exchange('Polymarket')]))
 
     def quotes(self,pull=False,previous=None):
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull' if pull else 'summary-game')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull' if pull else 'summary-game')):
             return self.cb['summary_quotes']('123',self.catalog,1 if pull else 0,'market-summary','NFL',previous)
 
     def test_probability_charts_render_only_open_game_lines_and_reuse_the_existing_forecast(self):
@@ -516,7 +516,7 @@ class SummaryCallbackChecks(TestCase):
         market,scope=callback(True,*args)
         self.assertIn('Calculating the selected forecast',str(market))
         with self.assertRaises(PreventUpdate):callback(True,*args[:-1],scope)
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             models,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None)
         calls=self.engines['PPP'].forecast.call_count
         completed,new_scope=callback(True,quoted,models,*args[2:])
@@ -581,14 +581,14 @@ class SummaryCallbackChecks(TestCase):
 
     def test_draftkings_route_loads_only_its_saved_archive_and_its_pull_stays_isolated(self):
         location='#nfl-draftkings-market'
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='nav-market-summary')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='nav-market-summary')):
             catalog,_=self.cb['summary_catalog']('market-summary','NFL',7,0,None,None,location)
         self.assertEqual(catalog['mode'],'draftkings')
         self.kalshi.games.assert_not_called();self.poly.games.assert_not_called()
         snapshot=self.dk.pull.return_value
         self.dk.history.return_value=[snapshot]
         archived='123|'+snapshot['pulled_at']
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-draftkings-view')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-draftkings-view')):
             record,_=self.cb['summary_quotes']('123',catalog,0,'market-summary','NFL',None,
                                               None,0,0,0,0,location,archived)
         self.assertEqual(set(record['providers']),{'DraftKings'})
@@ -603,7 +603,7 @@ class SummaryCallbackChecks(TestCase):
         self.assertIn('summary-table--single-source',table.attrs['class'])
         self.assertIn('DraftKings',str(table))
         self.assertNotIn('FanDuel',str(table))
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-draftkings')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-draftkings')):
             refreshed,_=self.cb['summary_quotes']('123',catalog,0,'market-summary','NFL',record,
                                                  None,0,0,0,1,location,archived)
         self.assertEqual(set(refreshed['providers']),{'DraftKings'})
@@ -615,7 +615,7 @@ class SummaryCallbackChecks(TestCase):
         self.fd.latest.return_value={};previous,_=self.quotes()
         self.assertIsNone(previous['providers']['FanDuel']['snapshot'])
         for service in (self.fd,self.kalshi,self.poly):service.reset_mock()
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
             result,_=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,None,1,0,0)
         self.fd.pull.assert_called_once();self.fd.latest.assert_not_called()
         self.assertIn(':FanDuel:1',self.fd.pull.call_args.args[1])
@@ -629,7 +629,7 @@ class SummaryCallbackChecks(TestCase):
         for provider,service,counts in [('Kalshi',self.kalshi,(0,1,0)),('Polymarket',self.poly,(0,0,1))]:
             with self.subTest(provider=provider):
                 for candidate in (self.fd,self.kalshi,self.poly):candidate.reset_mock()
-                with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-'+provider.lower())):
+                with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-'+provider.lower())):
                     result,_=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,None,*counts)
                 service.all_quotes.assert_called_once_with(exchange(provider),refresh=True,save=True)
                 self.fd.pull.assert_not_called();self.fd.latest.assert_not_called()
@@ -642,34 +642,34 @@ class SummaryCallbackChecks(TestCase):
         previous=self.quotes()[0];catalog=deepcopy(self.catalog)
         catalog['games'][0]['venue']='Updated venue'
         catalog['games'][0]['home']['id']='18'
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
             result,_=self.cb['summary_quotes']('123',catalog,0,'market-summary','NFL',previous,None,1,0,0)
         for provider in ('Kalshi','Polymarket'):
             self.assertEqual(result['providers'][provider],previous['providers'][provider])
 
     def test_expired_reference_cannot_erase_other_sources_or_spend_credits(self):
         previous=dict(id='expired',quote_ref='released',sport='NFL',game=game())
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
             result,status=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,None,1,0,0)
         self.assertIs(result,no_update);self.fd.pull.assert_not_called();self.assertIn('No pull was made',str(status))
 
     def test_failed_individual_pull_keeps_saved_quotes_and_model_identity(self):
         previous,_=self.quotes();before=deepcopy(previous)
         self.fd.pull.side_effect=DataSourceError('Credit allowance exhausted')
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
             result,status=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,None,1,0,0)
         self.assertEqual(result['id'],previous['id'])
         self.assertEqual(result['providers']['FanDuel']['snapshot'],previous['providers']['FanDuel']['snapshot'])
         self.assertIn('Saved quotes kept',str(status));self.assertIn('Credit allowance exhausted',result['providers']['FanDuel']['error'])
         self.assertEqual(previous,before)
         result['updating']=True
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
             unchanged,status=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',result,1,1,0,0)
         self.assertIs(unchanged,no_update);self.assertIn('Credit allowance exhausted',str(status))
         self.fd.pull.assert_called_once()
 
     def test_individual_pull_without_previous_bundle_does_not_load_other_sources(self):
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-fanduel')):
             result,_=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',None,None,1,0,0)
         self.fd.pull.assert_called_once();self.fd.latest.assert_not_called()
         self.kalshi.all_quotes.assert_not_called();self.poly.all_quotes.assert_not_called()
@@ -679,7 +679,7 @@ class SummaryCallbackChecks(TestCase):
     def test_unmatched_exchange_pull_keeps_other_sources_and_spends_no_credits(self):
         previous,_=self.quotes();catalog={**self.catalog,'Kalshi':dict(games=[])}
         for service in (self.fd,self.kalshi,self.poly):service.reset_mock()
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-kalshi')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull-kalshi')):
             result,status=self.cb['summary_quotes']('123',catalog,0,'market-summary','NFL',previous,None,0,1,0)
         self.kalshi.all_quotes.assert_not_called();self.poly.all_quotes.assert_not_called();self.fd.pull.assert_not_called()
         self.assertIn('No unambiguous matching event',str(status))
@@ -688,7 +688,7 @@ class SummaryCallbackChecks(TestCase):
     def test_previous_source_click_count_cannot_trigger_another_paid_pull_on_poll(self):
         self.kalshi.all_quotes.return_value['updating']=True
         previous,_=self.quotes()
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
             self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,1,1,0,0)
         self.fd.pull.assert_not_called()
 
@@ -703,7 +703,7 @@ class SummaryCallbackChecks(TestCase):
     def test_pending_cache_poll_publishes_fresh_quotes_without_spending_fanduel_credits(self):
         self.kalshi.all_quotes.return_value['updating']=True
         quoted,_=self.quotes();self.assertTrue(quoted['updating'])
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
             unchanged,_=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',deepcopy(quoted),1)
             self.assertIs(unchanged,no_update)
             self.kalshi.all_quotes.return_value={**self.kalshi.all_quotes.return_value,'updating':False,'fetched_at':'2026-10-24T12:05:00Z'}
@@ -720,7 +720,7 @@ class SummaryCallbackChecks(TestCase):
         previous['updating']=True
         previous['providers']['Polymarket']['snapshot']={**previous['providers']['Polymarket']['snapshot'],'updating':True}
         self.fd.latest.reset_mock();self.kalshi.all_quotes.reset_mock();self.poly.all_quotes.reset_mock()
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
             completed,_=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,1)
         self.fd.latest.assert_not_called();self.kalshi.all_quotes.assert_not_called()
         self.poly.all_quotes.assert_called_once()
@@ -731,7 +731,7 @@ class SummaryCallbackChecks(TestCase):
         previous=self.quotes()[0]
         self.kalshi.all_quotes.return_value={**self.kalshi.all_quotes.return_value,'updating':False,
             'fetched_at':'2026-10-24T12:05:00Z'}
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
             a=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',deepcopy(previous),1)[0]
             b=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',deepcopy(previous),2)[0]
         self.assertEqual(a['id'],b['id']);self.assertNotEqual(a['id'],previous['id'])
@@ -740,16 +740,16 @@ class SummaryCallbackChecks(TestCase):
         self.kalshi.all_quotes.return_value['updating']=True
         previous=self.quotes()[0]
         self.kalshi.all_quotes.return_value={**self.kalshi.all_quotes.return_value,'updating':False,'notices':['Refresh complete']}
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
             completed=self.cb['summary_quotes']('123',self.catalog,0,'market-summary','NFL',previous,1)[0]
         self.assertEqual(completed['id'],previous['id']);self.assertFalse(completed['updating'])
 
     def test_pending_catalog_poll_bypasses_recent_check_and_stops_after_refresh(self):
         self.schedule.load.return_value.updating=True
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
             old,_=self.cb['summary_catalog']('market-summary','NFL',7,0,None)
         self.assertTrue(old['updating']);self.schedule.load.return_value.updating=False
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
             fresh,_=self.cb['summary_catalog']('market-summary','NFL',7,0,old,1)
             self.assertFalse(fresh['updating'])
             with self.assertRaises(PreventUpdate):self.cb['summary_catalog']('market-summary','NFL',7,0,fresh,2)
@@ -758,12 +758,12 @@ class SummaryCallbackChecks(TestCase):
         quoted,_=self.quotes()
         with self.assertRaises(PreventUpdate):self.quotes(previous=quoted)
         self.fd.latest.assert_called_once()
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             models,_=self.cb['summary_models'](quoted,'EPA','OAM',0,'market-summary','NFL','123',None)
         self.engines['EPA'].forecast.assert_called_once();self.players['OAM'].forecast.assert_called_once()
         shown,signature=self.cb['summary_sections'](quoted,models,'All Markets','EPA','OAM','123','market-summary','NFL')
         self.assertIn('Calculated probability',str(shown))
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
             with self.assertRaises(PreventUpdate):self.cb['summary_models'](quoted,'EPA','OAM',0,'market-summary','NFL','123',models)
             # Simulate JSON.parse's Number precision, then a callback POST.
             # Unchanged revisions must still reuse this completed forecast.
@@ -776,7 +776,7 @@ class SummaryCallbackChecks(TestCase):
     def test_background_result_uses_small_scoped_reference_and_recovers_after_eviction(self):
         quoted,_=self.quotes();tasks=self.app._page_tasks
         self.addCleanup(tasks.queue.shutdown)
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             pending,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None,1)
         tasks.queue.tasks.join()
         event=self.cb['summary_model_poll'](1,pending,'123','market-summary','NFL',None)
@@ -787,7 +787,7 @@ class SummaryCallbackChecks(TestCase):
         self.assertNotIn('summary-quotes',{item['id'] for item in poll['inputs']+poll['state']})
         request=next(meta for meta in self.app.callback_map.values() if meta.get('callback') and meta['callback'].__wrapped__.__name__=='summary_models')
         self.assertNotIn('summary-model-poll',{item['id'] for item in request['inputs']})
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-model-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-model-poll')):
             result,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',pending,event)
             self.assertNotIn('rows',result);self.assertLess(len(to_json(result)),3000)
             browser=json.loads(to_json(result),parse_int=lambda value:int(float(value)))
@@ -800,7 +800,7 @@ class SummaryCallbackChecks(TestCase):
         wrong={**browser,'bundle_id':'another-game'}
         with self.assertRaises(PreventUpdate):self.cb['summary_model_cells'](wrong,'PPP','WHP',visible,'market-summary','NFL',quoted,'123',identities)
         with tasks.lock:tasks.values.pop(browser['job'])
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-model-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-model-poll')):
             retry,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',browser,4)
         self.assertTrue(retry['pending']);self.assertTrue(retry['clear'])
         cleared=self.cb['summary_model_cells'](retry,'PPP','WHP',visible,'market-summary','NFL',quoted,'123',identities)
@@ -808,7 +808,7 @@ class SummaryCallbackChecks(TestCase):
         tasks.queue.tasks.join();self.assertIsNotNone(tasks.peek(browser['job']))
         self.engines['PPP'].forecast.assert_called_once()
         with patch.object(tasks,'read',return_value=(None,False,'History unavailable')),\
-                patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-recalculate')):
+                patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-recalculate')):
             failed,_=self.cb['summary_models'](quoted,'PPP','WHP',1,'market-summary','NFL','123',browser,5)
         self.assertEqual(failed['status'],'error')
         self.assertNotIn('70.00%',str(self.cb['summary_model_cells'](failed,'PPP','WHP',visible,'market-summary','NFL',quoted,'123',identities)))
@@ -821,7 +821,7 @@ class SummaryCallbackChecks(TestCase):
         def k(*args,**kwargs):barrier.wait();return dict(games=[exchange()])
         def p(*args,**kwargs):barrier.wait();return dict(games=[exchange('Polymarket')])
         self.schedule.load.side_effect=scheduled;self.kalshi.games.side_effect=k;self.poly.games.side_effect=p
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
             catalog,status=self.cb['summary_catalog']('market-summary','NFL',7,0,None)
         self.assertEqual(len(catalog['games']),1)
         self.assertEqual(len(self.cb['summary_options'](catalog)),1)
@@ -879,7 +879,7 @@ class SummaryCallbackChecks(TestCase):
         identities,visible=table_states(raw)
         row_count=sum(len(json.loads(rows)) for rows in visible)
         self.assertLess(len(identities),3*row_count);self.assertIn('Market odds',str(raw))
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             models,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None)
         key,meta=next((key,meta) for key,meta in self.app.callback_map.items() if meta.get('callback') and
                       meta['callback'].__wrapped__.__name__=='summary_model_cells')
@@ -904,7 +904,7 @@ class SummaryCallbackChecks(TestCase):
         quoted,_=self.quotes()
         raw,_=self.cb['summary_sections'](quoted,None,'Game Lines','PPP','WHP','123','market-summary','NFL')
         identities,visible=table_states(raw)
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             models,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None)
         values=self.cb['summary_model_cells'](models,'PPP','WHP',visible,'market-summary','NFL',quoted,'123',identities)
         by_row={key:metrics for table in values for key,metrics in json.loads(table).items()}

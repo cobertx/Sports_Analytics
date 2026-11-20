@@ -22,7 +22,7 @@ from sports_analytics.nfl_markets import NflMarketService
 from sports_analytics.nba_markets import NbaMarketService
 from sports_analytics.ncaaf_markets import NcaafMarketService
 from sports_analytics.usage_log import ApiUsageLog, usage_summary
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 
 PRIMARY='primary-test-secret'; BACKUP='backup-test-secret'
 P=sha256(PRIMARY.encode()).hexdigest(); B=sha256(BACKUP.encode()).hexdigest()

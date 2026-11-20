@@ -20,8 +20,8 @@ from sports_analytics.backtest_process import BacktestProcesses
 from sports_analytics.backtesting_service import BacktestingService
 from sports_analytics.data import Query
 from sports_analytics.service import DataService
-from sports_analytics.dashboard import create_app
-from sports_analytics.mispricing import FILTER_CATEGORY, criteria_values, filter_context
+from app.dashboard import create_app
+from app.sections.markets.mispricing import FILTER_CATEGORY, criteria_values, filter_context
 from sports_analytics.whp_service import WHPMarketService
 
 
@@ -104,7 +104,7 @@ class ConcurrencyChecks(TestCase):
             self.assertTrue(all('Insufficient league history' in row['reason'] for row in result['skipped']))
 
     def test_dashboard_enables_cpu_isolation(self):
-        with patch('sports_analytics.dashboard.BacktestingService', wraps=BacktestingService) as backend:
+        with patch('app.dashboard.BacktestingService', wraps=BacktestingService) as backend:
             application=create_app()
         self.assertTrue(backend.call_args.kwargs['isolated'])
         self.assertIs(backend.call_args.kwargs['history_updater'],application._history_updates)

@@ -25,7 +25,7 @@ from dash._utils import to_json
 from models.replay import input_digest
 from models.Player_Stats.Usage_Opportunity.historical_data import UsageHistoryRepository,eligible
 from sports_analytics.frame_cache import FrameCache
-from sports_analytics.market_view import market_sections
+from app.sections.markets.market_view import market_sections
 from sports_analytics.nfl_markets import NflMarketService
 from sports_analytics.service import DataService
 
@@ -47,7 +47,7 @@ def python_peak(work):
 def quick_filter_benchmark():
     import check_mispricing as fixtures
     from check_dashboard_efficiency import post
-    from sports_analytics.mispricing import criteria_values,filter_context,FILTER_CATEGORY
+    from app.sections.markets.mispricing import criteria_values,filter_context,FILTER_CATEGORY
     fixture=fixtures.MispricingChecks();fixture.setUp();release=Event();entered=Event()
     forecast=fixture.game_services['PPP'].forecast.return_value
     def blocked(snapshot):

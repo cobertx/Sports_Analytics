@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pandas as pd
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from sports_analytics.market_navigation import remembered_market
+from app.sections.markets.market_navigation import remembered_market
 from sports_analytics.history_scope import analysis_scope
 from sports_analytics.data import DataSourceError
 from sports_analytics.page_cache import PageTasks
@@ -75,7 +75,7 @@ class ProviderReturnChecks(TestCase):
         filename=self.f.service.history(self.f.game,'Game Lines')[0]
         route='#nfl-kalshi-game-'+self.f.game['id']
         state=dict(v=2,entries={'kalshi:NFL':dict(route=route,snapshot=filename,category='Game Lines')})
-        with (patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='nav-kalshi')),
+        with (patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='nav-kalshi')),
               patch.object(self.f.service,'quotes',side_effect=AssertionError('No new live quote call'))):
             result=self.cb['kalshi_quotes']('kalshi','NFL',self.f.game,'Game Lines','live',0,0,5,
                 route,None,None,None,None,state)
@@ -86,7 +86,7 @@ class ProviderReturnChecks(TestCase):
     def test_failure_keeps_only_matching_quotes_and_terminates_pending_state(self):
         route='#nfl-kalshi-game-'+self.f.game['id']
         previous={**self.f.service.quotes(self.f.game),'selection':'live'}
-        with (patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-quote-timer')),
+        with (patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-quote-timer')),
               patch.object(self.f.service,'quotes',side_effect=DataSourceError('offline fixture'))):
             result=self.cb['kalshi_quotes']('kalshi','NFL',self.f.game,'Game Lines','live',1,0,5,route,None,None,previous)
             self.assertEqual(result[0]['rows'],[{**row,'quote_stale':True,'quote_fetched_at':previous['fetched_at']} for row in previous['rows']])
@@ -105,7 +105,7 @@ class ProviderReturnChecks(TestCase):
 
     def test_failed_calculation_is_a_scoped_terminal_result(self):
         snapshot=self.f.service.quotes(self.f.game)
-        with patch('sports_analytics.kalshi_analysis_callbacks.calculate',side_effect=DataSourceError('model input offline')):
+        with patch('app.sections.exchanges.kalshi_analysis_callbacks.calculate',side_effect=DataSourceError('model input offline')):
             model=self.cb['kalshi_models'](snapshot,None,self.f.game,'PPP','WHP','live','kalshi','Game Lines',None)
         self.assertEqual(model['predictions'],{})
         self.assertIn('model input offline',model['errors'])
@@ -118,7 +118,7 @@ class RetainedRefreshChecks(TestCase):
         callback=callback_functions(f.app)['show_saved_markets']
         route='#nfl-game-123';selection=f.saved['pulled_at']
         previous=dict(context=[route,selection],view_key=['Game','PPP','WHP',None,POLICY_VERSION],rendered=True)
-        with (patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-applied-criteria')),
+        with (patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-applied-criteria')),
               patch.object(PageTasks,'read',return_value=(None,True,None))):
             content,state=callback('Game',selection,route,None,'PPP','WHP',previous,'market')
         self.assertIs(content,no_update)

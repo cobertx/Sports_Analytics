@@ -16,9 +16,9 @@ from models.Game_Outcome.Adjusted_Offensive_Defensive_Efficiency import (
 from models.Game_Outcome.Adjusted_Offensive_Defensive_Efficiency.NBA_AODE import simulate
 from models.Game_Outcome.Pace_Possession import NBAPaceConfig, NBAPaceModel
 from sports_analytics.backtesting_service import BacktestingService, evaluated_records
-from sports_analytics.backtesting_view import find_model
-from sports_analytics.mispricing import selected_methods
-from sports_analytics.quick_methods import choices, prompt_key, scope
+from app.sections.backtesting.backtesting_view import find_model
+from app.sections.markets.mispricing import selected_methods
+from app.sections.markets.quick_methods import choices, prompt_key, scope
 
 
 class AdjustedEfficiencyChecks(TestCase):

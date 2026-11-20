@@ -2,7 +2,7 @@
 const fs=require('node:fs'),path=require('node:path');
 const events={},writes=[],no={},window={location:{hash:''},dash_clientside:{no_update:no,
   set_props:(id,props)=>writes.push({id,props})},addEventListener:(name,fn)=>events[name]=fn};
-new Function('window',fs.readFileSync(path.join(__dirname,'../sports_analytics/assets/market_transition.js'),'utf8'))(window);
+new Function('window',fs.readFileSync(path.join(__dirname,'../app/assets/js/market_transition.js'),'utf8'))(window);
 const api=window.dash_clientside.market_transition;
 let checks=0;function check(value,label){if(!value)throw Error(label);checks++;}
 const hash='#nfl-kalshi-game-KXNFLGAME-TEST';window.location.hash=hash;

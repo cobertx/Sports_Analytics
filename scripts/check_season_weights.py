@@ -176,7 +176,7 @@ class ProbabilityPolicyChecks(TestCase):
         from sports_analytics.market_summary import current_models
         fixture=SummaryCallbackChecks();fixture.setUp();self.addCleanup(fixture.doCleanups)
         bundle,_=fixture.quotes()
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             models,_=fixture.cb['summary_models'](bundle,'EPA','OAM',0,'market-summary','NFL','123',None)
         self.assertTrue(current_models(models,bundle,'EPA','OAM'))
         old=deepcopy(models);old.pop('weighting_policy')
@@ -199,7 +199,7 @@ class ProbabilityPolicyChecks(TestCase):
         self.assertEqual(displayed(fixture.cb['summary_model_cells'](
             expired,'EPA','OAM',visible,'market-summary','NFL',bundle,'123',[identity])),[('—',''),'—','—'])
         fixture.engines['EPA'].forecast.reset_mock()
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
             fresh,_=fixture.cb['summary_models'](bundle,'EPA','OAM',0,'market-summary','NFL','123',old)
         fixture.engines['EPA'].forecast.assert_not_called()  # The current-policy forecast is already cached.
         self.assertTrue(current_models(fresh,bundle,'EPA','OAM'))
@@ -234,7 +234,7 @@ class ProbabilityPolicyChecks(TestCase):
             return forecast
         fixture.game_services['PPP'].forecast.side_effect=estimate
         old=dict(context=['#nfl-game-123',fixture.saved['pulled_at']],view_key=['Game','PPP','WHP',None])
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-url')):
+        with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-url')):
             _,history=fixture.cb['show_saved_markets']('Game',fixture.saved['pulled_at'],'#nfl-game-123',None,'PPP','WHP',old,'market')
         self.assertEqual(history['view_key'][-1],POLICY_VERSION)
         self.assertTrue(calculated.wait(2))

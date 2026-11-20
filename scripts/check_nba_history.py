@@ -17,8 +17,9 @@ from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.data import DataSourceError,Query,fetch
 from sports_analytics.nba_espn import load,identities,IDENTITIES
 from sports_analytics.service import DataService
-from sports_analytics.dashboard import career_figure,create_app,ALL_TEAMS
-from sports_analytics.prompt_history import button
+from app.dashboard import create_app
+from app.sections.historical.callbacks import ALL_TEAMS, career_figure
+from app.sections.markets.prompt_history import button
 from sports_analytics.career import CareerService
 
 SEASON=date.today().year-(date.today().month<7)
@@ -174,7 +175,7 @@ class PromptLandingChecks(TestCase):
         network.start();self.addCleanup(network.stop)
 
     def test_link_loads_its_season_and_player_scope_before_old_controls_settle(self):
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='workspace-page')), \
+        with patch('app.sections.historical.callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')), \
              patch('sports_analytics.service.fetch',return_value=self.source) as request:
             initial=self.cb['load_data'](0,0,'NBA',SEASON-1,'team','postseason',None,5,'historical',None,self.href)
             self.assertIsNone(initial[0]);self.assertTrue(initial[4])
@@ -191,6 +192,7 @@ class PromptLandingChecks(TestCase):
         self.assertEqual(figure.layout.shapes[0].y0,15.5)
         self.assertIn('1/1 historical hits',str(figure.layout.annotations))
         self.assertIn('Requires 5 recorded appearances',str(cards))
+        self.assertEqual(self.cb['historical_market_status'](dataset,entity,metric,self.href,'Cached.'),'')
 
     def test_archived_nba_prompt_charts_the_full_season_even_without_prior_games(self):
         template=self.source[self.source.entity_id.eq('201935')]
@@ -213,7 +215,7 @@ class PromptLandingChecks(TestCase):
         self.assertIn('5/21 historical hits',str(figure.layout.annotations))
 
     def test_explicit_season_changes_are_respected_after_navigation(self):
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='season')), \
+        with patch('app.sections.historical.callbacks.ctx',SimpleNamespace(triggered_id='season')), \
              patch('sports_analytics.service.fetch',return_value=self.source) as request:
             self.cb['load_data'](0,0,'NBA',SEASON-1,'player','regular',None,None,'historical',None,self.href)
             self.service._refresh.tasks.join()

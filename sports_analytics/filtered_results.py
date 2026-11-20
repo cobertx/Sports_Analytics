@@ -11,7 +11,7 @@ from models.season_weights import POLICY_VERSION
 
 from .data import DataSourceError
 from .kalshi import parse_time
-from .market_view import MARKET_NAMES, selection_text
+from app.sections.markets.market_view import MARKET_NAMES, selection_text
 
 SPORTS = {'NBA', 'NFL', 'NCAAF'}
 PROVIDERS = {'FanDuel', 'Kalshi', 'Polymarket'}
@@ -54,7 +54,7 @@ class FilteredResults:
             matchup = snapshot['away_team']+' at '+snapshot['home_team']
             href = f'#{sport.lower()}-game-{game_id}'
         else:
-            from .kalshi_view import matchup as teams
+            from app.sections.exchanges.kalshi_view import matchup as teams
             resolved = teams(game)
             matchup = ' at '.join(team['name'] for team in resolved[0]) if resolved else game.get('title',game_id)
             href = f'#{sport.lower()}-{provider.lower()}-game-{game_id}'

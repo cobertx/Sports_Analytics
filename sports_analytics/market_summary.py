@@ -5,11 +5,11 @@ import re
 from models.Game_Outcome.PPP.PPP import fair_american_odds,implied_probability
 from models.season_weights import POLICY_VERSION
 from .kalshi import parse_time
-from .kalshi_view import matchup,team_identity
+from app.sections.exchanges.kalshi_view import matchup,team_identity
 from .kalshi_analysis import adapter as kalshi_target,implied as exchange_implied
-from .market_view import MARKET_NAMES,_market_probability,selection_text
-from .mispricing import run_forecasts
-from .prompt_history import exchange_target
+from app.sections.markets.market_view import MARKET_NAMES,_market_probability,selection_text
+from app.sections.markets.mispricing import run_forecasts
+from app.sections.markets.prompt_history import exchange_target
 from .availability import revision as availability_revision
 from .availability_adjustment import note as availability_note
 from .nfl_markets import SPORTSBOOKS

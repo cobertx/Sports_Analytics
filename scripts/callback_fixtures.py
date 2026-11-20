@@ -1,5 +1,5 @@
 """Exercise unchanged calculation contracts and scoped HTTP callback inputs."""
-from sports_analytics.navigation import (navigate,restore_game_route,sport_page_navigation,
+from app.shell.navigation import (navigate,restore_game_route,sport_page_navigation,
     exchange_visibility,market_detail_labels,forecast_methods,research_visibility,in_game_visibility,summary_visibility,filtered_visibility)
 
 

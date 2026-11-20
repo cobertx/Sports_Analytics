@@ -6,7 +6,7 @@ const document = {documentElement: {}, addEventListener: (name, handler) => { cl
   querySelectorAll: () => sections};
 function MutationObserver(handler) { observe = handler; this.observe = () => {}; }
 new Function('document', 'MutationObserver', 'requestAnimationFrame',
-  fs.readFileSync(path.join(__dirname, '../sports_analytics/assets/exchange_accordions.js'), 'utf8'))(
+  fs.readFileSync(path.join(__dirname, '../app/assets/js/exchange_accordions.js'), 'utf8'))(
     document, MutationObserver, fn => frames.push(fn));
 const flush = () => { observe(); while (frames.length) frames.shift()(); };
 const section = (scope, open = false) => ({id: 'spread', dataset: {marketScope: scope}, open, matches: () => true});

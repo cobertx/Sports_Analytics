@@ -14,11 +14,11 @@ from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 from scripts.callback_fixtures import wire_value
 from sports_analytics.historical_links import history_target,target_metric
-from sports_analytics.prompt_history import button,fanduel_target,exchange_target,outcomes,prior_history
-from sports_analytics.market_view import market_sections
-from sports_analytics import kalshi_view
-from sports_analytics.exchange_render import render
-from sports_analytics.dashboard import ALL_TEAMS
+from app.sections.markets.prompt_history import button,fanduel_target,exchange_target,outcomes,prior_history
+from app.sections.markets.market_view import market_sections
+from app.sections.exchanges import kalshi_view
+from app.sections.exchanges.exchange_render import render
+from app.sections.historical.callbacks import ALL_TEAMS
 import check_market_history as history_fixtures
 import check_kalshi as kalshi_fixtures
 import check_polymarket as poly_fixtures
@@ -253,7 +253,7 @@ class PromptChartChecks(TestCase):
             self.assertIn('/',bars[0].marker.pattern.shape)
 
     def test_url_renders_linked_chart_without_waiting_for_stale_dropdowns(self):
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-url')):
+        with patch('app.sections.historical.callbacks.ctx',SimpleNamespace(triggered_id='market-url')):
             figure,cards,records,_=self.cb['analyze'](self.dataset,'a','receptions',3,'DEN',self.href,'historical')
         self.assertEqual(len(records),7)
         self.assertTrue(all(record['receiving_yards']<100 for record in records))

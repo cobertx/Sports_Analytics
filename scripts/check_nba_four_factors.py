@@ -17,9 +17,9 @@ from models.Game_Outcome.Four_Factors.NBA_FF import (
     fit_factor_effects, from_latent, observed_factors, scoring_rate, simulate, to_latent,
 )
 from sports_analytics.backtesting_service import BacktestingService, evaluated_records
-from sports_analytics.mispricing import selected_methods
+from app.sections.markets.mispricing import selected_methods
 from sports_analytics.nba_model_data import FACTOR_INPUTS, aggregate_team_games
-from sports_analytics.quick_methods import choices, prompt_key, scope
+from app.sections.markets.quick_methods import choices, prompt_key, scope
 
 
 def history():

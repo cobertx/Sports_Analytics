@@ -15,7 +15,7 @@ from dash import no_update
 from dash.exceptions import PreventUpdate
 from sports_analytics import pnl
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from check_kalshi import components
 
 
@@ -145,7 +145,7 @@ class PnlChecks(TestCase):
         self.assertEqual(cb['in_game_supported_page']('NBA','pnl'),'historical')
         for page in ['historical','market','backtesting','information']:
             navigation=cb['navigate'](page,'PNL')
-            self.assertEqual(navigation[0],{'display':'none'});self.assertEqual(navigation[1],{'display':'none'});self.assertTrue(navigation[4]);self.assertEqual(navigation[8],{'display':'none'})
+            self.assertEqual(navigation[0],{'display':'none'});self.assertEqual(navigation[1],{'display':'none'});self.assertTrue(navigation[3]);self.assertEqual(navigation[-1],{'display':'none'})
         empty=cb['pnl_history']('PNL',None,'__all__',0)
         self.assertEqual(empty[3],[]);self.assertEqual(empty[4],[]);self.assertIn('No history',empty[5])
         self.assertNotIn('$0.00',str(empty[0]))
@@ -159,10 +159,10 @@ class PnlChecks(TestCase):
         contents='data:text/csv;base64,'+base64.b64encode(source.encode()).decode()
         document,controls,message=cb['pnl_statement'](contents,'statement.csv','PNL')
         inputs=[c for c in components(controls) if isinstance(getattr(c,'id',None),dict)]
-        with patch('sports_analytics.pnl_view.ctx',SimpleNamespace(triggered_id='pnl-import-preview-button')):
+        with patch('app.sections.pnl.pnl_view.ctx',SimpleNamespace(triggered_id='pnl-import-preview-button')):
             preview=cb['pnl_preview'](1,document,[c.value for c in inputs],None,'bet','open','gross','iso',[],[c.id for c in inputs],'PNL')
         self.assertFalse(preview[3]);self.assertEqual(len(preview[0]),1);self.assertEqual(self.ledger.records(),[])
-        with patch('sports_analytics.pnl_view.ctx',SimpleNamespace(triggered_id='pnl-import-basis')):
+        with patch('app.sections.pnl.pnl_view.ctx',SimpleNamespace(triggered_id='pnl-import-basis')):
             changed=cb['pnl_preview'](1,document,[c.value for c in inputs],None,'bet','open','net','iso',[],[c.id for c in inputs],'PNL')
         self.assertTrue(changed[3]);self.assertIsNone(changed[0])
 

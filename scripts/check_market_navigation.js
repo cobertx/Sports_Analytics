@@ -149,7 +149,7 @@ function checkDeferredNavigation(source,transitionSource) {
 if (typeof module !== 'undefined' && module.exports) {
   const fs = require('node:fs');
   const path = require('node:path');
-  const source = fs.readFileSync(path.join(__dirname, '../sports_analytics/assets/market_navigation.js'), 'utf8');
-  const transitionSource=fs.readFileSync(path.join(__dirname,'../sports_analytics/assets/market_transition.js'),'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../app/assets/js/market_navigation.js'), 'utf8');
+  const transitionSource=fs.readFileSync(path.join(__dirname,'../app/assets/js/market_transition.js'),'utf8');
   console.log(`Passed ${checkMarketNavigation(source)+checkDeferredNavigation(source,transitionSource)} market navigation checks.`);
 }

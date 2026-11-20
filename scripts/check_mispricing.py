@@ -13,9 +13,9 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from models.Game_Outcome.PPP.PPP import MarketProbability
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.data import DataSourceError
-from sports_analytics.mispricing import FILTER_CATEGORY,criteria_values,filter_context,rank_markets,results
+from app.sections.markets.mispricing import FILTER_CATEGORY,criteria_values,filter_context,rank_markets,results
 
 
 def snapshot(sport='NFL'):
@@ -129,7 +129,7 @@ class MispricingChecks(TestCase):
         self.assertEqual(ranked['evaluated'],2)
         rendered=results(saved,ranked,criteria_values(99,0),['Player history unavailable'])
         self.assertIn('No qualifying markets.',str(rendered));self.assertIn('Player history unavailable',str(rendered))
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-quick-filter')):
+        with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-quick-filter')):
             response=self.cb['request_quick_filter'](1,None,5,['PPP'],['WHP'],'#nfl-game-123','saved')
         self.assertIs(response[0],no_update)
 
@@ -139,7 +139,7 @@ class MispricingChecks(TestCase):
                 self.app._filter_jobs.forecasts.clear()
                 for service in [*self.game_services.values(),*self.player_services.values()]:service.reset_mock()
                 location=f'#{sport.lower()}-game-123';selection=self.saved['pulled_at']
-                with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-quick-filter')):
+                with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-quick-filter')):
                     request,status=self.cb['request_quick_filter'](1,75,5,['EPA'],[player_method],location,selection)
                 rendered,history=self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,['EPA'],[player_method],75,5,None)
                 self.assertIn('Top 3 by edge',str(rendered));self.assertIn('Remaining qualifying markets',str(rendered))

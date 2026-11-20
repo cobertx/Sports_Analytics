@@ -21,8 +21,8 @@ from scripts.check_research import player_inputs
 from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.backtesting_service import BacktestingService,game_model
 from sports_analytics.comparison import Comparisons,compare_reports,methods,page_route
-from sports_analytics.dashboard import create_app
-from sports_analytics import research_view
+from app.dashboard import create_app
+from app.sections.research import research_view
 
 
 def report(key='ppp',identity='a'*64):
@@ -67,7 +67,7 @@ class ComparisonChecks(TestCase):
     def app(self):
         # These HTTP tests advance jobs by polling. Reuse the no-watcher
         # fixture so a daemon cannot hold its temporary manifest at cleanup.
-        with patch('sports_analytics.comparison_callbacks.Comparisons',return_value=self.manager):
+        with patch('app.sections.research.comparison_callbacks.Comparisons',return_value=self.manager):
             self.application=create_app(backtesting_service=self.backend)
         self.cb=callback_functions(self.application)
         return self.application
@@ -239,7 +239,7 @@ class ComparisonChecks(TestCase):
     def test_callbacks_preserve_page_jobs_validate_before_launch_and_skip_progress_rerenders(self):
         self.app();run=self.cb['run_comparison']
         common=[['ppp','epa'],'__all__','__all__',None,None,None,2,'exclude','Model Default',5,None]
-        with patch('sports_analytics.comparison_callbacks.ctx',SimpleNamespace(triggered_id='comparison-run')):
+        with patch('app.sections.research.comparison_callbacks.ctx',SimpleNamespace(triggered_id='comparison-run')):
             initial=run(1,self.context,0,0,0,*common,None,{},None,[],[])
             self.assertEqual(self.backend.start.call_count,2)
             for call in self.backend.start.call_args_list:
@@ -248,7 +248,7 @@ class ComparisonChecks(TestCase):
             self.backend.start.reset_mock()
             rejected=run(2,self.context,0,0,0,*invalid,initial[0],initial[2],None,[],[])
             self.backend.start.assert_not_called();self.assertIs(rejected[0],no_update)
-        with patch('sports_analytics.comparison_callbacks.ctx',SimpleNamespace(triggered_id='comparison-context')):
+        with patch('app.sections.research.comparison_callbacks.ctx',SimpleNamespace(triggered_id='comparison-context')):
             restored=run(1,self.context,0,0,0,*common,None,initial[2],None,[],[])
         self.assertEqual(restored[0]['id'],initial[0]['id']);self.assertTrue(restored[3])
         shown=self.cb['show_comparison'](restored[0],self.context,'margin','common',5,None)

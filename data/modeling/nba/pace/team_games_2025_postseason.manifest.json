@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "query": {
+    "sport": "NBA",
+    "season": 2025,
+    "entity_type": "team",
+    "season_type": "postseason",
+    "team": "",
+    "week": null
+  },
+  "source": "NBA Stats via SportsDataverse",
+  "source_fetched_at": "2026-11-19T18:04:19+00:00",
+  "cache_key": "5d5a0c76c50c9db200e1c3732ed742f1ce6d99aa19affdee11773a81064c121e",
+  "games": 85,
+  "sha256": "d7f5262c61e4578ef874d637174e4484bcee673cb324e0172a6dd17e997dd525",
+  "possessions": "mean of both teams' FGA + 0.44*FTA - OREB + TOV; includes overtime",
+  "availability": "Observed source availability; legacy rows use UTC game date + 2 days"
+}

@@ -16,11 +16,11 @@ from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 import check_kalshi as fixtures
 from check_kalshi import raw_market, GAME, NOW, contract
-from sports_analytics import kalshi_view as view
+from app.sections.exchanges import kalshi_view as view
 from scripts.callback_fixtures import wire_value
-from sports_analytics.exchange_render import render
+from app.sections.exchanges.exchange_render import render
 from sports_analytics.kalshi_analysis import definition,identity
-from sports_analytics.lazy_markets import markets as lazy_markets
+from app.sections.markets.lazy_markets import markets as lazy_markets
 from check_kalshi import components
 
 
@@ -104,7 +104,7 @@ class ExchangeUpdateChecks(TestCase):
     def test_unchanged_quote_revisits_do_not_republish_rows_but_new_timestamps_do(self):
         app,callbacks=self.fixture.app()
         callback=callbacks['kalshi_quotes']
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='nav-kalshi-active')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='nav-kalshi-active')):
             first=callback('kalshi','NFL',self.game,'Game Lines','live',0,0,5,view.href('NFL',GAME))
             same=callback('kalshi','NFL',self.game,'Game Lines','live',0,0,5,view.href('NFL',GAME),
                 None,None,first[0],first[1])
@@ -130,7 +130,7 @@ class ExchangeUpdateChecks(TestCase):
                     outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
                     inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
                     state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['kalshi-quotes.data']))
-        with patch('sports_analytics.kalshi_analysis_callbacks.calculate',side_effect=slow),ThreadPoolExecutor(max_workers=2) as pool:
+        with patch('app.sections.exchanges.kalshi_analysis_callbacks.calculate',side_effect=slow),ThreadPoolExecutor(max_workers=2) as pool:
             forecast=pool.submit(callbacks['kalshi_models'],self.snapshot,None,self.game,'PPP','WHP','live','kalshi','Game Lines',None)
             try:
                 self.assertTrue(entered.wait(3))
@@ -226,7 +226,7 @@ class ExchangeUpdateChecks(TestCase):
 
     def test_catalog_polls_keep_cards_header_and_tabs_when_game_metadata_is_unchanged(self):
         _,callbacks=self.fixture.app()
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-list-timer')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-list-timer')):
             first=callbacks['kalshi_games']('kalshi','NFL',7,0,0)
             second=callbacks['kalshi_games']('kalshi','NFL',7,0,1,first[0])
         self.assertIs(second[0],no_update);self.assertIs(second[2],no_update)
@@ -235,7 +235,7 @@ class ExchangeUpdateChecks(TestCase):
 
     def test_dropdown_is_not_reemitted_when_already_selected(self):
         _,callbacks=self.fixture.app()
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-context')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-context')):
             result=callbacks['kalshi_quotes']('kalshi','NFL',self.game,'Game Lines','live',0,0,5)
             self.assertIs(result[3],no_update)
             empty=callbacks['kalshi_quotes']('kalshi','NFL',None,'Game Lines','live',0,0,5)
@@ -244,7 +244,7 @@ class ExchangeUpdateChecks(TestCase):
     def test_cache_checks_only_fetch_pending_active_game_and_publish_completion(self):
         _,callbacks=self.fixture.app()
         state=dict(game=self.game['id'],category='Game Lines',updating=True)
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-cache-poll')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-cache-poll')):
             with patch.object(self.service,'quotes',return_value=self.snapshot) as fetch:
                 for active in [None,{**state,'updating':False},{**state,'game':'another'}]:
                     with self.assertRaises(PreventUpdate):
@@ -264,7 +264,7 @@ class ExchangeUpdateChecks(TestCase):
             if not release.wait(5):raise AssertionError('Timed out waiting for test release')
             return self.snapshot
         context=SimpleNamespace(triggered_id='kalshi-quote-timer')
-        with patch('sports_analytics.kalshi_callbacks.ctx',context),patch.object(self.service,'quotes',side_effect=slow) as fetch:
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',context),patch.object(self.service,'quotes',side_effect=slow) as fetch:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 first=pool.submit(callbacks['kalshi_quotes'],'kalshi','NFL',self.game,'Game Lines','live',0,0,2)
                 try:
@@ -273,7 +273,7 @@ class ExchangeUpdateChecks(TestCase):
                     self.assertEqual(fetch.call_count,1)
                 finally:release.set()
                 self.assertEqual(first.result(timeout=3)[0],dict(self.snapshot,selection='live'))
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-pull')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-pull')):
             saved=callbacks['kalshi_quotes']('kalshi','NFL',self.game,'Game Lines','live',2,1,2)[0]
         self.assertTrue(Path(saved['saved']).exists())
 

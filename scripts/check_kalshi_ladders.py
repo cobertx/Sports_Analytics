@@ -11,9 +11,9 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update,Patch
 from sports_analytics.data import DataSourceError
 from sports_analytics.kalshi_labels import selection,selection_rows
-from sports_analytics import kalshi_view as view
-from sports_analytics.exchange_render import render
-from sports_analytics.lazy_markets import LazyMarkets
+from app.sections.exchanges import kalshi_view as view
+from app.sections.exchanges.exchange_render import render
+from app.sections.markets.lazy_markets import LazyMarkets
 import check_kalshi as fixtures
 from check_kalshi import contract,raw_market,GAME,SPREAD
 from check_exchange_updates import apply_patch,normalized,expand_sections
@@ -94,7 +94,7 @@ class KalshiLadderChecks(TestCase):
         changed=deepcopy(snapshot);changed['rows'][0].update(yes_ask=.7,no_ask=.4)
         second=render(changed,first[-1])
         self.assertIsInstance(second[3],Patch)
-        from sports_analytics.kalshi_view import market_sections
+        from app.sections.exchanges.kalshi_view import market_sections
         self.assertEqual(apply_patch(first[3],second[3]),normalized(expand_sections(market_sections(changed))))
 
     def test_incomplete_raw_response_cannot_replace_the_good_persistent_cache(self):
@@ -117,7 +117,7 @@ class KalshiLadderChecks(TestCase):
         stale['rows'][0].update(quote_stale=True,quote_fetched_at=stale['fetched_at'])
         stale['fetched_at']='2026-10-23T20:05:00+00:00'
         second=render(stale,first[-1],table_open=True)
-        from sports_analytics.kalshi_view import market_sections,table
+        from app.sections.exchanges.kalshi_view import market_sections,table
         self.assertEqual(apply_patch(first[3],second[3]),normalized(market_sections(stale)))
         self.assertEqual(apply_patch(first[0],second[0]),normalized(table(stale)[0]))
         recovered=dict(self.snapshot,fetched_at=stale['fetched_at'])
@@ -147,7 +147,7 @@ class KalshiRefreshChecks(TestCase):
         self.snapshot=dict(self.fixture.service.quotes(self.game),selection='live')
 
     def refresh(self,snapshot,previous=None,game=None,category='Game Lines'):
-        with (patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-quote-timer')),
+        with (patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-quote-timer')),
               patch.object(self.fixture.service,'quotes',return_value=snapshot)):
             return self.callbacks['kalshi_quotes']('kalshi','NFL',game or self.game,category,'live',1,0,5,
                        None,None,None,previous or self.snapshot)[0]
@@ -175,7 +175,7 @@ class KalshiRefreshChecks(TestCase):
 
     def test_catalog_failure_and_missing_active_game_or_category_do_not_reset_tabs(self):
         catalog=dict(sport='NFL',window_days=7,games=[self.game])
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-list-timer')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-list-timer')):
             with patch.object(self.fixture.service,'games',side_effect=DataSourceError('offline')):
                 output=self.callbacks['kalshi_games']('kalshi','NFL',7,0,1,catalog)
             self.assertIs(output[0],no_update);self.assertIs(output[2],no_update)

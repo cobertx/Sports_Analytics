@@ -17,10 +17,10 @@ from dash.exceptions import PreventUpdate
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.backtesting_service import BacktestingService,NFL_PLAYER_COHORT,PREDICTIVE_Z
-from sports_analytics.backtesting_view import GROUPS,available_models,model_config,navigation,page,PERFORMANCE_ROUTE,summary_route
-from sports_analytics.dashboard import create_app
+from app.sections.backtesting.backtesting_view import GROUPS,available_models,model_config,navigation,page,PERFORMANCE_ROUTE,summary_route
+from app.dashboard import create_app
 from sports_analytics.data import DataSourceError
-from sports_analytics.performance_summary import PerformanceSummaries,settings,render,range_accuracy,comparison_charts
+from app.sections.backtesting.performance_summary import PerformanceSummaries,settings,render,range_accuracy,comparison_charts
 from check_backtesting import saved_game_report
 from check_kalshi import components
 
@@ -116,7 +116,7 @@ class PerformanceSummaryChecks(TestCase):
                 aside=next(c for c in components(detail) if getattr(c,'className',None)=='backtest-coverage')
                 self.assertEqual(aside.children[0].children,rate)
                 self.assertEqual(len(next(c for c in components(detail) if c.__class__.__name__=='DataTable').data),count)
-                with patch('sports_analytics.backtesting_summary.ctx',SimpleNamespace(triggered_id='backtest-summary-export')):
+                with patch('app.sections.backtesting.backtesting_summary.ctx',SimpleNamespace(triggered_id='backtest-summary-export')):
                     download=callbacks['backtest_summary_export'](1,'backtesting','NBA',href,'total')
                 from io import StringIO
                 self.assertEqual(len(pd.read_csv(StringIO(download['content']))),count)
@@ -189,7 +189,7 @@ class PerformanceSummaryChecks(TestCase):
         self.assertEqual(manifest['entries']['oam']['state'],'not saved')
         self.assertEqual(manifest['entries']['pge']['state'],'not saved')
         self.assertIsNone(self.manager.latest(context,'player_points','__all__'))
-        self.assertIn('Shared reference line: 20.5',str(render(self.manager,manifest,'player_points',5)))
+        self.assertIn('Reference line 20.5',str(render(self.manager,manifest,'player_points',5)))
 
     def test_entering_and_changing_category_auto_loads_history_and_restores_controls_without_running(self):
         for key in ['ppp','epa','elo']:self.seed(key)
@@ -253,7 +253,8 @@ class PerformanceSummaryChecks(TestCase):
         self.assertEqual(list(charts[0].data[0].marker.color),['#ffa3af','#57dbc4'])
         self.assertEqual(charts[0].layout.shapes[0].y0,.8)
         self.assertEqual(list(charts[1].data[0].y),[1,.5])
-        self.assertEqual(list(charts[1].data[0].x),['2025-09-19','2025-09-20'])
+        self.assertEqual(list(charts[1].data[0].x),[1,2])
+        self.assertEqual(list(charts[1].data[0].text),['2025-09-19','2025-09-20'])
         self.assertEqual(charts[1].data[0].customdata[-1],[1,2,2])
         self.assertEqual(charts[1].layout.shapes[0].y0,.8)
         self.assertEqual(charts[1].layout.yaxis.tickformat,'.0%')
@@ -280,20 +281,36 @@ class PerformanceSummaryChecks(TestCase):
         rows[6]['actual']=21
         rows[10]['actual']=20
         metric=dict(method='WHP',label='Player points',compared=12,**range_accuracy(rows))
-        content=comparison_charts(dict(records={'whp':rows}),{'whp':metric},'all')
+        content=comparison_charts(dict(records={'whp':rows}),{'whp':metric},'all','NBA')
         chart=[c.figure for c in components(content) if c.__class__.__name__=='Graph'][1]
         self.assertIsNone(chart.data[0].y[0])
         self.assertEqual(chart.data[0].y[1],1)
         self.assertAlmostEqual(chart.data[0].y[10],6/7)
         self.assertAlmostEqual(chart.data[0].y[11],7/8)
         self.assertEqual(chart.data[0].customdata[-1],[98,99,100])
-        self.assertEqual(chart.data[0].x[-1],'2026-04-13')
+        self.assertEqual(chart.data[0].text[-1],'2026-04-13')
         self.assertFalse(chart.data[0].connectgaps)
         for row in rows:row['interval_level']=.9
-        empty=comparison_charts(dict(records={'whp':rows}),{'whp':{**metric,**range_accuracy(rows)}},'all')
+        empty=comparison_charts(dict(records={'whp':rows}),{'whp':{**metric,**range_accuracy(rows)}},'all','NBA')
         chart=[c.figure for c in components(empty) if c.__class__.__name__=='Graph'][1]
         self.assertFalse(chart.data)
         self.assertTrue(any('No valid 80% intervals' in note.text for note in chart.layout.annotations))
+
+    def test_coverage_trend_places_consecutive_seasons_side_by_side(self):
+        first_dates=['2020-09-30']*150+['2020-10-11','2020-12-22','2020-12-23','2020-12-23']
+        second_dates=['2020-10-11','2020-12-22']
+        records={key:[dict(actual=10,predicted=10,lower=5,upper=15,interval_level=.8,date=day+'T20:00:00Z')
+                      for day in dates] for key,dates in [('ppp',first_dates),('epa',second_dates)]}
+        metrics={key:dict(method=key.upper(),label=key,compared=len(rows),**range_accuracy(rows))
+                 for key,rows in records.items()}
+        content=comparison_charts(dict(records=records),metrics,'all','NBA')
+        chart=[c.figure for c in components(content) if c.__class__.__name__=='Graph'][1]
+        self.assertEqual(list(chart.data[0].x),[1,2,3,4])
+        self.assertEqual(list(chart.data[1].x),[2,3])
+        self.assertEqual(list(chart.layout.xaxis.ticktext),['2020-09-30','2020-10-11','2020-12-22','2020-12-23'])
+        self.assertEqual(list(chart.data[1].text),second_dates)
+        dividers=[shape for shape in chart.layout.shapes if shape.xref=='x']
+        self.assertEqual([(line.x0,line.x1) for line in dividers],[(2.5,2.5)])
 
     def test_matching_completed_reports_load_without_starting_jobs_and_reuse_the_manifest(self):
         for key in NBA_GAME_KEYS:self.seed(key)
@@ -357,7 +374,7 @@ class PerformanceSummaryChecks(TestCase):
         path.write_text(json.dumps(dict(result=changed)),encoding='utf-8')
         manifest=self.manager.ensure(self.context,self.request,'__all__')
         content=render(self.manager,manifest,'total',5,'common')
-        self.assertIn('1 identical evaluated',str(content));self.assertIn('MAE',str(content))
+        self.assertIn('Shared sample (1)',str(content));self.assertIn('MAE',str(content))
         self.assertNotIn('Winner accuracy',str(content));self.assertNotIn('Brier score',str(next(c for c in components(content) if c.__class__.__name__=='Thead')))
         rows=performance_rows(content)
         self.assertTrue(all(row['Compared']=='1' for row in rows))
@@ -369,7 +386,7 @@ class PerformanceSummaryChecks(TestCase):
         full=render(self.manager,manifest,'margin',5,'all')
         self.assertEqual([row['Compared'] for row in performance_rows(full)],
                          ['1' if key=='epa' else '2' for key in NBA_GAME_KEYS])
-        self.assertIn('Each model uses its own evaluated sample',str(full))
+        self.assertIn('Per-model samples',str(full))
 
     def test_range_accuracy_includes_endpoints_and_excludes_invalid_or_other_level_ranges(self):
         row=dict(actual=10,lower=10,upper=20,interval_level=.8)
@@ -422,7 +439,7 @@ class PerformanceSummaryChecks(TestCase):
         row=performance_rows(content)[0]
         self.assertEqual(row['Accuracy (80% range)'],'—')
         self.assertEqual(row['80% range hits / samples'],'0 / 0')
-        self.assertIn('must be rerun',str(content))
+        self.assertIn('Rerun legacy 90% simulations for 80% coverage.',str(content))
 
     def test_player_team_scope_runs_all_supported_methods_and_unsupported_methods_stay_explicit(self):
         context=dict(sport='NFL',group='player-stats')
@@ -433,7 +450,7 @@ class PerformanceSummaryChecks(TestCase):
         self.assertEqual({call.kwargs['key'] for call in start.call_args_list},{'uo','oam','pge'})
         self.assertTrue(all(call.kwargs['entity']=='__all__' and call.kwargs['team_filter']=='PIT' for call in start.call_args_list))
         self.assertIn('Over accuracy',str(render(self.manager,manifest,'player_pass_yds',5)))
-        with patch('sports_analytics.performance_summary.market_spec',return_value=None),patch.object(self.backend,'start',return_value='pending') as start:
+        with patch('app.sections.backtesting.performance_summary.market_spec',return_value=None),patch.object(self.backend,'start',return_value='pending') as start:
             other=self.manager.ensure(context,settings(context,'player_tds','__all__',10),'__all__')
         self.assertEqual(start.call_count,1)
         self.assertEqual(sum(e['state']=='unsupported' for e in other['entries'].values()),3)
@@ -485,13 +502,22 @@ class PerformanceSummaryChecks(TestCase):
         with self.assertRaises(ValueError):self.manager.ensure(self.context,{**self.request,'start':'2026-12-01','end':'2026-01-01'},'__all__')
 
     def test_failed_and_interrupted_methods_preserve_completed_results_and_can_be_retried(self):
-        self.seed('ppp')
+        report=self.seed('ppp')
         with patch.object(self.backend,'start',return_value='job-pending'):
             manifest=self.manager.ensure(self.context,self.request,'__all__')
+        active_rows=performance_rows(render(self.manager,manifest,'margin',5))
+        self.assertEqual({row['Status'] for row in active_rows},{'Completed','Running'})
+        completed=next(row for row in active_rows if row['Status']=='Completed')
+        link,stamp=completed['Saved simulation']
+        self.assertEqual((link.children,stamp.dateTime),('Open results',report['created_at']))
+        self.assertEqual(summary_route(link.href)['run_id'],report['run_id'])
         with patch.object(self.backend,'progress',return_value=dict(state='failed',message='No saved model inputs')):
             failed=self.manager.refresh(self.context,manifest['id'])
         content=render(self.manager,failed,'margin',5)
-        self.assertIn('No saved model inputs',str(content));self.assertIn('Open results',str(content))
+        issues=next(c for c in components(content) if getattr(c,'className',None)=='backtest-status performance-run-issues')
+        self.assertIn('No saved model inputs',str(issues))
+        failed_rows=[row for row in performance_rows(content) if row['Status']!='Completed']
+        self.assertTrue(all(row['Status']=='' and row['Saved simulation'] is None for row in failed_rows))
         self.assertEqual(failed['entries']['ppp']['state'],'completed')
         with patch.object(self.backend,'start',return_value='new-job') as start:
             retried=self.manager.ensure(self.context,self.request,'__all__')

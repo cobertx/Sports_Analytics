@@ -101,6 +101,29 @@ class AvailabilityStore:
             return [str(path), stat.st_size, str(stat.st_mtime_ns), interval]
         except OSError:return [str(path),None,interval]
 
+    def at_cutoff(self, snapshot, *, minutes=30):
+        """Read the latest eligible packet, independent of the forecast's execution time."""
+        sport = snapshot.get('sport')
+        start, pulled = timestamp(snapshot.get('commence_time')), timestamp(snapshot.get('pulled_at'))
+        if sport not in SPORTS or not start or not pulled:
+            return None, 'Timestamped game information is required for availability adjustments.'
+        cutoff = min(start, pulled).astimezone(timezone.utc)
+        archive = self.directory / 'archive' / sport.lower()
+        paths = [self.directory / (sport.lower()+'.json')]
+        for day in (cutoff - pd.Timedelta(days=1), cutoff):
+            paths.extend(sorted((archive / day.strftime('%Y-%m-%d')).glob('*.json')))
+        latest, latest_at = None, None
+        for path in paths:
+            packet = self.read(path)
+            if not packet or packet.get('sport') != sport:
+                continue
+            retrieved = timestamp(packet['fetched_at'])
+            if 0 <= (cutoff - retrieved).total_seconds() <= minutes * 60 and (latest_at is None or retrieved > latest_at):
+                latest, latest_at = packet, retrieved
+        if latest is None:
+            return None, 'No fresh pregame availability archive for this snapshot.'
+        return latest, None
+
     def load(self, snapshot):
         sport = snapshot.get('sport')
         if sport not in SPORTS:return None, 'Availability adjustments cover NBA and NFL.'

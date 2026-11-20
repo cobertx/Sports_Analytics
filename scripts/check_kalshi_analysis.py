@@ -15,13 +15,13 @@ from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 from models.Game_Outcome.PPP.PPP import MarketProbability,PPPForecast
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.kalshi import contract
 from sports_analytics.kalshi_analysis import (FILTER,adapter,calculate,decorate,identity,implied,
                                              model_snapshot,rank,threshold)
-from sports_analytics import kalshi_view as view
-from sports_analytics.exchange_render import render
+from app.sections.exchanges import kalshi_view as view
+from app.sections.exchanges.exchange_render import render
 from check_exchange_updates import apply_patch,normalized
 import check_kalshi as fixtures
 from check_kalshi import raw_market,components,NOW,GAME
@@ -52,7 +52,7 @@ class KalshiAnalysisChecks(TestCase):
         return calculate(self.game,snapshot or self.snapshot,'live',method,player_method,self.game_engine,self.player_engine,previous)
 
     def test_game_distributions_match_actual_integer_settlement_and_nba_no_tie_rule(self):
-        from sports_analytics.game_distribution import distributions,panel
+        from app.sections.markets.game_distribution import distributions,panel
         from models.Game_Outcome.PPP.NBA_PPP import NBAPPPForecast
         from models.Game_Outcome.ELO.ELO import NBAELOForecast,ELOForecast
         from dash import dcc
@@ -213,7 +213,7 @@ class KalshiFilterCallbacks(TestCase):
         self.cb=callback_functions(self.app)
 
     def scan(self,selected='live'):
-        with patch('sports_analytics.kalshi_analysis_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-apply-criteria')):
+        with patch('app.sections.exchanges.kalshi_analysis_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-apply-criteria')):
             return self.cb['kalshi_scan'](1,0,0,-100,self.game,FILTER,selected,'kalshi')
 
     def test_distribution_callback_is_scoped_and_never_refits_or_pulls_quotes(self):
@@ -280,11 +280,11 @@ class KalshiFilterCallbacks(TestCase):
         with self.assertRaises(PreventUpdate):self.cb['kalshi_scan'](1,0,75,5,self.game,'Game Lines','live','kalshi')
 
     def test_manual_pull_from_filter_archive_switches_live_and_saves_without_duplicate_fetch(self):
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-pull')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-pull')):
             selected=self.cb['kalshi_quotes']('kalshi','NFL',self.game,FILTER,'archive.json',0,1,5)
         self.assertEqual(selected[-1],'live');self.assertTrue(all(value is no_update for value in selected[:3]))
         self.exchange.quotes.assert_not_called()
-        with patch('sports_analytics.kalshi_analysis_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-pull')):
+        with patch('app.sections.exchanges.kalshi_analysis_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-pull')):
             scan,_,_=self.cb['kalshi_scan'](0,1,75,5,self.game,FILTER,'archive.json','kalshi')
         self.exchange.all_quotes.assert_called_once_with(self.game,refresh=True,save=True)
         self.assertEqual(scan['selection'],'live')

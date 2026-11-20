@@ -12,9 +12,9 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from dash.exceptions import PreventUpdate
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.filtered_results import FilteredResults,route
-from sports_analytics.filtered_results_view import rows
+from app.sections.markets.filtered_results_view import rows
 from check_mispricing import FILTER_CATEGORY,components
 import check_mispricing as mispricing_checks
 import check_kalshi_analysis as kalshi_checks

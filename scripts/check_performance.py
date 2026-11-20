@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.historical_links import market_metrics
 from sports_analytics.backtesting_service import BacktestingService, input_csv
 from sports_analytics.data import DataSourceError, Query
@@ -168,7 +168,7 @@ class PagePerformanceChecks(TestCase):
         self.network.start();self.addCleanup(self.network.stop)
 
     def load(self,previous=None,trigger='workspace-page'):
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id=trigger)):
+        with patch('app.sections.historical.callbacks.ctx',SimpleNamespace(triggered_id=trigger)):
             return self.cb['load_data'](1,0,'NBA',2025,'player','regular',None,None,'historical',previous)
 
     def test_reopening_unchanged_history_does_not_rebuild_dependents_and_refresh_still_works(self):
@@ -197,7 +197,7 @@ class PagePerformanceChecks(TestCase):
 
     def test_derived_historical_metrics_are_shared_and_external_sql_edits_invalidate_them(self):
         dataset=self.load()[0]
-        with patch('sports_analytics.dashboard.market_metrics',wraps=market_metrics) as derive:
+        with patch('app.sections.historical.callbacks.market_metrics',wraps=market_metrics) as derive:
             self.cb['select_player_teams'](dataset,None,'#historical-player')
             self.cb['select_options'](dataset,None,'001','#historical-player')
             self.cb['select_categories'](dataset,'001',None,None,'pts','#historical-player')

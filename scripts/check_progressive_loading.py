@@ -54,11 +54,18 @@ class ProgressiveLoadingChecks(TestCase):
         if not node():self.skipTest('Node unavailable')
         f=self.fixture(history.PagePerformanceChecks)
         route='#historical-player';scope=dict(route=route,sport='NBA',ready=True)
+        career_pending=dict(pending=True,scope=dict(route=route,sport='NBA',kind='player'))
         self.assertIn('market-url',{item['id'] for item in f.app.callback_map['historical-results.className']['inputs']})
         result=run_client(f.app,steps=[],references=[
             dict(output='historical-results.className',args=[scope,route,'NBA'],expected='historical-results'),
             dict(output='historical-results.className',args=[scope,'#historical-team','NBA'],expected='historical-results history-view-pending'),
             dict(output='historical-results.className',args=[scope,route,'NFL'],expected='historical-results history-view-pending'),
+            dict(output='historical-loading.display',args=[True,None,'historical',route,'NBA','player'],expected='show'),
+            dict(output='historical-loading.display',args=[True,career_pending,'historical',route,'NBA','player'],expected='show'),
+            dict(output='historical-loading.display',args=[False,career_pending,'historical',route,'NBA','player'],expected='show'),
+            dict(output='historical-loading.display',args=[False,career_pending,'historical','#historical-team','NBA','team'],expected='auto'),
+            dict(output='historical-loading.display',args=[False,None,'historical',route,'NBA','player'],expected='auto'),
+            dict(output='historical-loading.display',args=[True,career_pending,'market','#nba-games','NBA','player'],expected='hide'),
             dict(output='summary-market-sections.className',args=[dict(id='v1',sport='NFL',game=dict(id='123')),['v1','PPP','WHP','All Markets'],'123','NFL','All Markets'],expected=''),
             dict(output='summary-market-sections.className',args=[dict(id='v1',sport='NFL',game=dict(id='123')),['v1','PPP','WHP','All Markets'],'456','NFL','All Markets'],expected='summary-quotes-pending'),
             dict(output='career-poll.disabled',args=['historical',dict(pending=True),'NBA'],expected=False),
@@ -66,7 +73,7 @@ class ProgressiveLoadingChecks(TestCase):
             dict(output='kalshi-model-poll.disabled',args=['kalshi',dict(pending=True),'NBA'],expected=False),
             dict(output='kalshi-model-poll.disabled',args=['kalshi',dict(pending=True),'PNL'],expected=True),
             dict(output='summary-model-poll.disabled',args=['market-summary',dict(pending=False),'NFL'],expected=True)])
-        self.assertEqual(result['checks'],10)
+        self.assertEqual(result['checks'],16)
 
     def test_kalshi_http_returns_pending_without_waiting_and_reuses_exact_completed_result(self):
         f=self.fixture(kalshi.KalshiFilterCallbacks)
@@ -76,7 +83,7 @@ class ProgressiveLoadingChecks(TestCase):
         values={'workspace-page':'kalshi','sport':'NFL','market-url':route,'kalshi-context':f.game,
             'kalshi-quotes':f.snapshot,'kalshi-game-method':'PPP','kalshi-player-method':'WHP',
             'kalshi-snapshot':'live','kalshi-category':'Game Lines','kalshi-model-poll':0}
-        with patch('sports_analytics.kalshi_analysis_callbacks.calculate',side_effect=work) as fit:
+        with patch('app.sections.exchanges.kalshi_analysis_callbacks.calculate',side_effect=work) as fit:
             start=perf_counter();reply=post(f.app,'kalshi_models',values,'kalshi-quotes.data')
             elapsed=(perf_counter()-start)*1000
             self.assertLess(elapsed,1000);self.assertTrue(entered.wait(1))
@@ -102,7 +109,7 @@ class ProgressiveLoadingChecks(TestCase):
         values={'workspace-page':'market-summary','sport':'NFL','market-url':'#nfl-market-summary',
             'summary-quotes':f.data,'summary-game':'123','summary-game-method':'PPP','summary-player-method':'WHP',
             'summary-recalculate':0,'summary-model-poll':0,'history-update-poll':0,'summary-category':'All Markets'}
-        with patch('sports_analytics.market_summary_callbacks.analysis.calculate',side_effect=work) as fit:
+        with patch('app.sections.market_summary.market_summary_callbacks.analysis.calculate',side_effect=work) as fit:
             start=perf_counter();pending=post(f.app,'summary_models',values,'summary-quotes.data')['response']['summary-models']['data']
             elapsed=(perf_counter()-start)*1000
             self.assertLess(elapsed,1000);self.assertTrue(entered.wait(1));self.assertTrue(pending['pending'])
@@ -167,7 +174,7 @@ class ProgressiveLoadingChecks(TestCase):
         values={'workspace-page':'market-summary','sport':'NFL','market-url':'#nfl-market-summary','summary-quotes':f.data,
             'summary-game':'123','summary-game-method':'PPP','summary-player-method':'WHP',
             'summary-recalculate':0,'summary-model-poll':0,'history-update-poll':0}
-        with patch('sports_analytics.market_summary_callbacks.analysis.calculate',side_effect=RuntimeError('Controlled fit failure')):
+        with patch('app.sections.market_summary.market_summary_callbacks.analysis.calculate',side_effect=RuntimeError('Controlled fit failure')):
             first=post(f.app,'summary_models',values,'summary-quotes.data');values['summary-models']=first['response']['summary-models']['data']
             f.app._page_tasks.queue.tasks.join()
             values['summary-model-completed']=post(f.app,'summary_model_poll',values,'summary-model-poll.n_intervals')['response']['summary-model-completed']['data']

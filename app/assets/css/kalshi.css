@@ -1,0 +1,38 @@
+.kalshi-page { gap: 22px; min-width: 0; }
+.exchange-update-status { position: relative; display: grid; gap: 4px; margin: 8px 0; }
+.exchange-update-status .exchange-update-line {
+  block-size: 36px; line-height: 22px; margin: 0; padding: 6px 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.exchange-update-status .action-loading > .action-loading { min-height: 0; padding-top: 0; }
+.exchange-update-status .action-loading > div:has(> .action-loading-overlay) > .action-loading-overlay {
+  inset: 0; padding: 6px 10px;
+}
+.exchange-quotes-pending .exchange-update-status > * { visibility: hidden; }
+.exchange-quotes-pending .exchange-update-status::before {
+  content: 'Loading market odds…'; position: absolute; inset: 0 0 auto; box-sizing: border-box; block-size: 36px;
+  padding: 6px 10px; line-height: 22px; font-size: 13px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--accent);
+}
+.kalshi-game-card h3 { margin: 16px 0 10px; font-size: 20px; }
+.kalshi-game-card .game-card-footer { margin-top: 22px; }
+.kalshi-game-card .game-card-footer small { color: var(--muted); font-size: 11px; }
+.kalshi-matchup-header > .market-link { display: block; width: fit-content; margin: 0 auto 18px; }
+.kalshi-market-lines { overflow-x: auto; }
+.kalshi-market .polymarket-line-comparison { grid-template-columns: minmax(230px,1fr) 82px minmax(145px,.5fr); min-width: 500px; }
+.kalshi-market .kalshi-price { width: 82px; }
+.kalshi-contract .market-selection { display: block; }
+.kalshi-contract > .market-outcome { padding: 10px 12px; }
+.kalshi-contract + .kalshi-contract { border-top: 1px solid var(--line); }
+.kalshi-outcome-labels { display: block; font-size: 10px; color: var(--muted); line-height: 1.6; margin-top: 3px; }
+.kalshi-detail-table { padding: 20px 22px; margin-top: 22px; }
+.kalshi-detail-table > summary { cursor: pointer; color: #d7e5f0; font-size: 13px; }
+.kalshi-detail-table[open] > summary { margin-bottom: 18px; }
+.kalshi-detail-controls { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr); gap: 18px; margin-top: 22px; }
+.kalshi-rules,.kalshi-api-info { padding: 20px 22px; margin-top: 22px; }
+.kalshi-rules summary,.kalshi-api-info summary { cursor: pointer; color: #d7e5f0; font-size: 13px; }
+.kalshi-rules details { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.kalshi-rules p { white-space: pre-wrap; font-size: 12px; }
+.kalshi-api-info p { font-size: 12px; }
+.kalshi-api-info a { color: var(--accent); }
+@media (max-width:600px) { .kalshi-detail-controls { grid-template-columns:1fr; gap:0; } }

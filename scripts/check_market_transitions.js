@@ -132,6 +132,6 @@ function checkMarketTransitions(source) {
 
 if(typeof module!=='undefined'&&module.exports) {
   const fs=require('node:fs'),path=require('node:path');
-  const source=fs.readFileSync(path.join(__dirname,'../sports_analytics/assets/market_transition.js'),'utf8');
+  const source=fs.readFileSync(path.join(__dirname,'../app/assets/js/market_transition.js'),'utf8');
   console.log(`Passed ${checkMarketTransitions(source)} market transition checks.`);
 }

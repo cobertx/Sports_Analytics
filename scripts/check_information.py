@@ -14,10 +14,10 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.information import InformationService,PAGES,news_items,official_sources,route,time_text
-from sports_analytics.information_view import news,weather
+from app.sections.information.information_view import news,weather
 from check_kalshi import components
 
 NOW=datetime(2026,10,24,20,tzinfo=timezone.utc)

@@ -13,10 +13,10 @@ dynamic = ["dependencies"]
 dependencies = {file = ["requirements/requirements.txt"]}
 
 [tool.setuptools.packages.find]
-include = ["sports_analytics*", "models*"]
+include = ["app", "app.*", "sports_analytics*", "models*"]
 
 [tool.setuptools.package-data]
-sports_analytics = ["assets/*.css", "assets/*.js", "assets/providers/*.ico", "assets/providers/*.md"]
+app = ["assets/css/*.css", "assets/js/*.js", "assets/providers/*", "assets/leagues/*.png", "images/*/Team Logos/*.png", "images/*/Team Logos/*.json", "docs/*.md"]
 "models" = ["*.md"]
 "models.Game_Outcome" = ["*.md"]
 "models.Player_Stats" = ["*.md"]
@@ -24,6 +24,8 @@ sports_analytics = ["assets/*.css", "assets/*.js", "assets/providers/*.ico", "as
 "models.Player_Stats.Usage_Opportunity" = ["*.md", "*.pdf"]
 "models.Player_Stats.Opponent_Adjusted_Matchup" = ["*.md", "*.pdf"]
 "models.Player_Stats.Pace_Game_Environment" = ["*.md", "*.pdf"]
+"models.Player_Stats.Playing_Time_Rotation" = ["*.md"]
+"models.Player_Stats.Injury_Lineup_Adjusted" = ["*.md"]
 "models.Game_Outcome.PPP" = ["*.md", "*.pdf"]
 "models.Game_Outcome.EPA" = ["*.md", "*.pdf"]
 "models.Game_Outcome.ELO" = ["*.md", "*.pdf"]

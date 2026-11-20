@@ -16,10 +16,10 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from sports_analytics.data import DataSourceError,Query
 from sports_analytics.service import DataService
 from sports_analytics.schedule import ScheduleService
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.polymarket import GAMMA,PolymarketService
-from sports_analytics.kalshi_view import team_aliases,team_identity
-from sports_analytics.market_view import NBA_LOGO_FILES,NFL_LOGO_FILES,NCAAF_LOGO_FILES
+from app.sections.exchanges.kalshi_view import team_aliases,team_identity
+from app.sections.markets.market_view import NBA_LOGO_FILES,NFL_LOGO_FILES,NCAAF_LOGO_FILES
 import check_kalshi as kalshi_fixtures
 import check_polymarket as polymarket_fixtures
 
@@ -52,7 +52,7 @@ class LoadingSpeedChecks(TestCase):
         with patch('sports_analytics.service.fetch',side_effect=slow) as source:
             try:
                 start=perf_counter()
-                with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='workspace-page')):
+                with patch('app.sections.historical.callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
                     first=cb(0,0,'NBA',2025,'player','regular',None,None,'historical',None,'#historical-player')
                 elapsed=perf_counter()-start
                 self.assertLess(elapsed,1);self.assertTrue(entered.wait(2));self.assertTrue(first[4])
@@ -62,7 +62,7 @@ class LoadingSpeedChecks(TestCase):
                 source.assert_called_once_with(query)
             finally:release.set()
             service._refresh.shutdown(wait=True)
-            with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='historical-cache-poll')):
+            with patch('app.sections.historical.callbacks.ctx',SimpleNamespace(triggered_id='historical-cache-poll')):
                 second=cb(0,0,'NBA',2025,'player','regular',None,None,'historical',first[0],'#historical-player',1)
         self.assertFalse(second[4]);self.assertNotEqual(first[0]['revision'],second[0]['revision'])
         self.assertEqual(service.read(second[0]['key']).frame.pts.iloc[0],40.)
@@ -79,7 +79,7 @@ class LoadingSpeedChecks(TestCase):
         app=create_app(service=service)
         cb=next(m['callback'].__wrapped__ for m in app.callback_map.values() if m.get('callback') and m['callback'].__wrapped__.__name__=='load_data')
         def load(previous=None):
-            with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='historical-cache-poll')):
+            with patch('app.sections.historical.callbacks.ctx',SimpleNamespace(triggered_id='historical-cache-poll')):
                 return cb(0,0,'NBA',2025,'player','regular',None,None,'historical',previous,'#historical-player',1)
         with patch('sports_analytics.service.fetch',side_effect=slow) as source:
             try:

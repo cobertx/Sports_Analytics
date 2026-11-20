@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "query": {
+    "sport": "NBA",
+    "season": 2021,
+    "entity_type": "team",
+    "season_type": "regular",
+    "team": "",
+    "week": null
+  },
+  "source": "NBA Stats via SportsDataverse",
+  "source_fetched_at": "2026-10-30T20:02:11+00:00",
+  "cache_key": "226fd564c827c9d26762251d69ac89aa0e33bfd0eaaa58b39331918051d01fe1",
+  "games": 1230,
+  "sha256": "aac306eb8633a9b85a620b3480cdd5f96b1031b11a6949ffe2b5b6f8e1a1363a",
+  "possessions": "mean of both teams' FGA + 0.44*FTA - OREB + TOV; includes overtime",
+  "availability": "Observed source availability; legacy rows use UTC game date + 2 days"
+}

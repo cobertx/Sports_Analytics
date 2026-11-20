@@ -13,11 +13,11 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
 from scripts.callback_fixtures import callback_functions
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.information import InformationService,news_items
 from sports_analytics.game_information import (ADDITIONAL_INFORMATION,GameInformationService,
     scope,relevant_news,weather_point,kickoff_weather,roof)
-from sports_analytics.game_information_view import conditions,contents
+from app.sections.information.game_information_view import conditions,contents
 from sports_analytics.data import DataSourceError
 from sports_analytics.schedule import scheduled_games
 from check_information import article,forecasts,NOW
@@ -167,7 +167,7 @@ class GameInformationChecks(TestCase):
         with app.server.test_client() as client:
             self.assertEqual(client.get('/_dash-layout').status_code,200)
             self.assertEqual(client.get('/_dash-dependencies').status_code,200)
-            self.assertEqual(client.get('/assets/game_information.css').status_code,200)
+            self.assertEqual(client.get('/assets/css/game_information.css').status_code,200)
 
     def test_callbacks_skip_other_pages_and_hide_previous_game_reports(self):
         _,cb,_=self.app();packet=self.loaded()
@@ -177,7 +177,7 @@ class GameInformationChecks(TestCase):
         shown=cb['game_header_conditions'](packet,other,'market','#nfl-game-999')
         self.assertIn('Loading',str(shown));self.assertNotIn('65°',str(shown))
         self.assertEqual(cb['game_header_conditions'](packet,game('NBA'),'market','#nba-game-123'),[])
-        with patch('sports_analytics.game_information_view.ctx',SimpleNamespace(triggered_id='game-information-poll')):
+        with patch('app.sections.information.game_information_view.ctx',SimpleNamespace(triggered_id='game-information-poll')):
             self.assertIs(cb['load_game_information'](self.g,'market','#nfl-game-123',ADDITIONAL_INFORMATION,0,1,packet),no_update)
 
     def test_schedule_preserves_actual_event_venue_and_team_identifiers(self):

@@ -17,10 +17,10 @@ from dash._utils import to_json
 from models.replay import input_digest
 from scripts.callback_fixtures import wire_value
 from sports_analytics.frame_cache import FrameCache
-from sports_analytics.lazy_markets import LazyMarkets,markets
-from sports_analytics.market_view import market_sections
+from app.sections.markets.lazy_markets import LazyMarkets,markets
+from app.sections.markets.market_view import market_sections
 from sports_analytics.filter_jobs import FilterJobs
-from sports_analytics.mispricing import filter_context,criteria_values,FILTER_CATEGORY,run_forecasts
+from app.sections.markets.mispricing import filter_context,criteria_values,FILTER_CATEGORY,run_forecasts
 from check_mispricing import components,finish_filter
 import check_mispricing as fanduel_fixtures
 import check_kalshi_analysis as kalshi_fixtures
@@ -154,7 +154,7 @@ class LazyRowChecks(TestCase):
 
     def test_snapshot_and_method_changes_create_a_new_exchange_scope(self):
         from check_kalshi_analysis import snapshot,game
-        from sports_analytics.exchange_render import render
+        from app.sections.exchanges.exchange_render import render
         original={**snapshot(),'game':game(),'view_scope':['live','PPP','WHP']}
         first=render(original)
         for scope in [['archive.json','PPP','WHP'],['live','EPA','WHP']]:

@@ -12,9 +12,9 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from models.Game_Outcome.PPP.PPP import PPPForecast,MarketProbability
 from sports_analytics.data import DataSourceError
 from sports_analytics.kalshi_analysis import calculate,decorate,model_matches
-from sports_analytics.kalshi_view import odds_text
+from app.sections.exchanges.kalshi_view import odds_text
 from sports_analytics.kalshi_labels import selection
-from sports_analytics.lazy_markets import markets
+from app.sections.markets.lazy_markets import markets
 from scripts.callback_fixtures import wire_value
 from check_dashboard_efficiency import post
 import check_kalshi_analysis as fixtures
@@ -155,7 +155,7 @@ class ModelDisplayChecks(TestCase):
             entered.set()
             if not release.wait(10):raise AssertionError('Forecast was not released')
             return calculate(*args,**kwargs)
-        with patch('sports_analytics.kalshi_analysis_callbacks.calculate',side_effect=slow):
+        with patch('app.sections.exchanges.kalshi_analysis_callbacks.calculate',side_effect=slow):
             pending=self.models();self.assertTrue(entered.wait(2))
             self.assertTrue(pending['pending']);self.assertTrue(pending['keep_visible'])
             self.assertEqual(pending['predictions'],ready['predictions'])

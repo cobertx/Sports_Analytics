@@ -14,10 +14,10 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.polymarket import GAMMA,CLOB,PolymarketService,book_prices,category
-from sports_analytics import polymarket_view as view
+from app.sections.exchanges import polymarket_view as view
 
 NOW=datetime(2026,10,23,20,tzinfo=timezone.utc)
 
@@ -205,7 +205,7 @@ class PolymarketChecks(TestCase):
         self.assertIn('polymarket-market-sections',ids);self.assertIn('kalshi-market-sections',ids)
         self.client.reset_mock()
         with self.assertRaises(PreventUpdate):cb['polymarket_quotes']('kalshi','NBA',game,'Game Lines','live',0,0,5)
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='polymarket-quote-timer')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='polymarket-quote-timer')):
             with self.assertRaises(PreventUpdate):cb['polymarket_quotes']('polymarket','NBA',game,'Game Lines','live',0,0,0)
         self.client.json.assert_not_called();self.client.session.post.assert_not_called()
         self.assertTrue(cb['polymarket_visibility']('historical','NBA',view.href('NBA','100'),5,'live',game)[-2])

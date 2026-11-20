@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash._utils import to_json
-from sports_analytics.navigation import (PAGES,navigate,sport_page_navigation,exchange_visibility,
+from app.shell.navigation import (PAGES,navigate,sport_page_navigation,exchange_visibility,
     in_game_visibility,summary_visibility,filtered_visibility,research_visibility)
 import check_market_transitions as transition_fixtures
 from check_dashboard_efficiency import post
@@ -39,7 +39,7 @@ def graph(app):
 
 
 def run_client(app,before=None,references=None,steps=None):
-    config=dict(asset=(ROOT/'sports_analytics/assets/market_transition.js').read_text(encoding='utf-8'),
+    config=dict(asset=(ROOT/'app/assets/js/market_transition.js').read_text(encoding='utf-8'),
         inline=app._inline_scripts,clients=[m for m in app._callback_list if m.get('clientside_function')],
         pages=PAGES,steps=STEPS if steps is None else steps,before=before or [],after=graph(app),references=references or [])
     result=subprocess.run([node(),str(ROOT/'scripts/navigation_harness.js')],input=to_json(config),

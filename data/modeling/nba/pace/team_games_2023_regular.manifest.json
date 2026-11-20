@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "query": {
+    "sport": "NBA",
+    "season": 2023,
+    "entity_type": "team",
+    "season_type": "regular",
+    "team": "",
+    "week": null
+  },
+  "source": "NBA Stats via SportsDataverse",
+  "source_fetched_at": "2026-10-30T20:02:03+00:00",
+  "cache_key": "2d37375639c92c2495044420120f2fb5751600e036f27540c3deebd9a6e77b62",
+  "games": 1230,
+  "sha256": "36c47ca4fa5a046bf7109352de2ea0d958170c11a626b1cba8d674260f63b140",
+  "possessions": "mean of both teams' FGA + 0.44*FTA - OREB + TOV; includes overtime",
+  "availability": "Observed source availability; legacy rows use UTC game date + 2 days"
+}

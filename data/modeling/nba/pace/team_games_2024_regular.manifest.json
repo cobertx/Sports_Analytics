@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "query": {
+    "sport": "NBA",
+    "season": 2024,
+    "entity_type": "team",
+    "season_type": "regular",
+    "team": "",
+    "week": null
+  },
+  "source": "NBA Stats via SportsDataverse",
+  "source_fetched_at": "2026-10-25T19:25:42+00:00",
+  "cache_key": "cf479c0f93f1335f5ee09d0613b7c5583d0186cdb30abcc40fd7025527e50a9e",
+  "games": 1230,
+  "sha256": "efe440146e104b65c9ce0982667fbc26f1aca16023adfff2286f2e3292e940d1",
+  "possessions": "mean of both teams' FGA + 0.44*FTA - OREB + TOV; includes overtime",
+  "availability": "Observed source availability; legacy rows use UTC game date + 2 days"
+}

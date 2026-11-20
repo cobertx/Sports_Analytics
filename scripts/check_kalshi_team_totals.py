@@ -18,9 +18,9 @@ from models.Game_Outcome.EPA.NBA_EPA import NBAEPAForecast
 from models.Game_Outcome.ELO.ELO import ELOForecast,NBAELOForecast
 from sports_analytics.kalshi_analysis import adapter,calculate,decorate,quick_calculate,player_subject
 from sports_analytics.kalshi_labels import selection,selection_rows
-from sports_analytics.kalshi_view import market_sections,market_groups,odds_text
-from sports_analytics.exchange_render import render
-from sports_analytics.quick_methods import prompt_key,plan
+from app.sections.exchanges.kalshi_view import market_sections,market_groups,odds_text
+from app.sections.exchanges.exchange_render import render
+from app.sections.markets.quick_methods import prompt_key,plan
 from sports_analytics.availability_adjustment import AvailabilityAdjuster
 from sports_analytics.market_summary import comparison
 from check_exchange_updates import apply_patch,normalized,expand_sections

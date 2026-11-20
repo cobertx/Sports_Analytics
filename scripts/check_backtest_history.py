@@ -16,8 +16,8 @@ from sports_analytics.backtest_history import NBAReplayHistory
 from sports_analytics.backtesting_service import BacktestingService,eligible_pairs,evaluation_bounds,estimation_history
 from sports_analytics.data import DataSourceError,Query
 from sports_analytics.service import DataService
-from sports_analytics.performance_summary import PerformanceSummaries,settings
-from sports_analytics.backtesting_view import available_models,model_config
+from app.sections.backtesting.performance_summary import PerformanceSummaries,settings
+from app.sections.backtesting.backtesting_view import available_models,model_config
 from check_backtesting import saved_game_report
 
 

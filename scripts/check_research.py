@@ -12,10 +12,10 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts.check_backtesting import team_history
 from scripts.callback_fixtures import callback_functions
 from sports_analytics.backtesting_service import BacktestingService,estimation_history,game_model
-from sports_analytics.backtesting_view import available_models
+from app.sections.backtesting.backtesting_view import available_models
 from sports_analytics.research_config import default_config,configured,parameter_fields,form_parameters
-from sports_analytics import research_view
-from sports_analytics.dashboard import create_app
+from app.sections.research import research_view
+from app.dashboard import create_app
 
 
 def player_inputs():
@@ -95,7 +95,7 @@ class ResearchChecks(TestCase):
             self.assertEqual(context,dict(sport='NBA',group='player-stats',model='whp',workspace='research',team_filter='BOS'))
             self.assertEqual(configured_page[2],'__all__')
             self.assertIn(dict(label='All players',value='__all__'),configured_page[1])
-            with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='backtest-context')):
+            with patch('app.sections.research.callbacks.ctx',SimpleNamespace(triggered_id='backtest-context')):
                 initial=callbacks['research_parameters'](context,0,None)
                 retained=callbacks['research_parameters']({**context,'team_filter':'DET'},0,initial[2])
                 self.assertIs(retained[0],no_update)
@@ -194,7 +194,7 @@ class ResearchChecks(TestCase):
             common=['__all__','player_points',None,None,10,5,None,'exclude','Model Default',None,
                     [dict(label='All players',value='__all__')],{}]
             with patch.object(service,'start',return_value='research-job') as start, \
-                    patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='backtest-run')):
+                    patch('app.sections.backtesting.callbacks.ctx',SimpleNamespace(triggered_id='backtest-run')):
                 result=callbacks['run_backtest'](1,context,0,*common,None,None,values,ids)
                 kwargs=start.call_args.kwargs
                 self.assertEqual(kwargs['config_overrides']['window'],12)

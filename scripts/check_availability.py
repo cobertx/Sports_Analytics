@@ -22,7 +22,7 @@ from models.Player_Stats.Weighted_Historical_Performance.prediction_service impo
 from sports_analytics.availability import AvailabilityStore, parse
 from sports_analytics.data import DataSourceError
 from sports_analytics.availability_adjustment import AvailabilityAdjuster, inputs, absence_columns, adjusted_distribution, summary, note
-from sports_analytics.availability_view import panel
+from app.sections.information.availability_view import panel
 
 NOW = datetime(2026,11,12,12,tzinfo=timezone.utc)
 

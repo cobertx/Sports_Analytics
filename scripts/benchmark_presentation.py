@@ -16,9 +16,9 @@ from contextlib import ExitStack
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dash._utils import to_json
-from sports_analytics.dashboard import create_app
-from sports_analytics.backtesting_results import render
-from sports_analytics.in_game_view import court_figure, football_figure
+from app.dashboard import create_app
+from app.sections.backtesting.backtesting_results import render
+from app.sections.in_game.in_game_view import court_figure, football_figure
 from scripts.check_backtesting import saved_game_report
 
 

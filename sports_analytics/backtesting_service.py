@@ -157,10 +157,16 @@ def implementation_signature(revisions):
     return sha256(b''.join(Path(revision[0]).read_bytes() for revision in revisions)).hexdigest()
 
 
-def source_revisions(root=ROOT):
+def source_revisions(root=ROOT, *, injury_reports=False):
     """Repository inputs only; never enumerate generated forecast/audit trees."""
     sources=[]
-    for directory in [root/'data/cache',root/'data/modeling']:
+    directories = [root/'data/cache', root/'data/modeling']
+    if injury_reports:
+        availability = root/'data/information_variable/availability'
+        directories.append(availability/'archive/nba')
+        if (availability/'nba.json').is_file():
+            sources.append(availability/'nba.json')
+    for directory in directories:
         for folder,children,names in walk(directory):
             children[:]=[name for name in children if name not in {'forecasts','evaluations'}]
             sources.extend(Path(folder)/name for name in names if Path(name).suffix in {'.csv','.sqlite3','.npz','.json'})
@@ -186,7 +192,8 @@ def read_input_csv(path,dtype,columns=None):
 def valid_report_page(sport,group,key):
     return (sport in {'NBA','NFL','NCAAF'} and group in {'game-outcome','player-stats'}
             and (key in ({'ppp','epa','elo'} if group=='game-outcome' else {'whp','uo','oam','pge'})
-                 or (sport=='NBA' and group=='game-outcome' and key in NBA_PACE_INPUT_METHODS)))
+                 or (sport=='NBA' and group=='game-outcome' and key in NBA_PACE_INPUT_METHODS)
+                 or (sport=='NBA' and group=='player-stats' and key in {'ptr','ila'})))
 
 
 def read_report(path,sport,group,key):
@@ -235,13 +242,16 @@ def default_evaluation_games(sport,entity='__all__'):
 
 
 def default_lookback(sport,group,key):
-    from .backtesting_view import find_model,model_config
+    from app.sections.backtesting.backtesting_view import find_model,model_config
     config=model_config(find_model(sport,(group,key)),sport)
     if group=='game-outcome':
         return 'All available (Model Default)','This model has no fixed game-count window; it uses eligible saved history with recency weighting.'
     if key=='whp':
         return f'{config["window"]} (Model Default)','Target window in appearances. Older eligible games also support model priors and calibration.'
     baseline=config.get('baseline',config)
+    if key in {'ptr','ila'}:
+        return (f'{config["rotation_window"]} / {baseline["role_window"]} / {baseline["efficiency_window"]} (Model Default)',
+                'Default rotation / opportunity role / efficiency windows. Enter a whole number to cap all input histories.')
     return (f'{baseline["role_window"]} / {baseline["efficiency_window"]} / {baseline["team_window"]} (Model Default)',
         'Default role / efficiency / team windows. League priors and calibration retain their model settings. Enter a whole number to cap all input histories.')
 
@@ -610,8 +620,15 @@ class BacktestingService:
     def player_service(self,key):
         module,name={'uo':('Usage_Opportunity','UsageOpportunityMarketService'),
                      'oam':('Opponent_Adjusted_Matchup','OpponentAdjustedMarketService'),
-                     'pge':('Pace_Game_Environment','PaceGameEnvironmentMarketService')}[key]
-        service=getattr(import_module('models.Player_Stats.'+module+'.prediction_service'),name)()
+                     'pge':('Pace_Game_Environment','PaceGameEnvironmentMarketService'),
+                     'ptr':('Playing_Time_Rotation','PlayingTimeRotationMarketService'),
+                     'ila':('Injury_Lineup_Adjusted','InjuryLineupMarketService')}[key]
+        service_class=getattr(import_module('models.Player_Stats.'+module+'.prediction_service'),name)
+        if key in {'ptr','ila'}:
+            from models.Player_Stats.Usage_Opportunity.historical_data import UsageHistoryRepository
+            service=service_class(repository=UsageHistoryRepository(data=self.data))
+        else:
+            service=service_class()
         service.repository.root=self.root/'model_cache'/key
         return service
 
@@ -712,7 +729,7 @@ class BacktestingService:
             games=eligible_pairs(targets,entity,lower,upper,self.now(),limit=limit)
             config=asdict(model.config)
         else:
-            if key not in {'whp','uo','oam','pge'}:raise ValueError('Choose an available player model.')
+            if not valid_report_page(sport,group,key):raise ValueError('Choose an available player model.')
             frame=season_phases(self.player_inputs(sport),sport);dataset=None
             frame=frame[frame.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
             spec=stat_spec(sport,market or '')
@@ -741,7 +758,7 @@ class BacktestingService:
             ROOT/'sports_analytics/ncaaf_model_data.py'])))
         # Game models use only the complete frame hashed below. Player models
         # additionally read league/team histories from their repositories.
-        source_state=source_revisions() if group=='player-stats' else []
+        source_state=source_revisions(injury_reports=True) if key=='ila' else source_revisions() if group=='player-stats' else []
         identity=dict(sport=sport,group=group,model=key,entity=entity,market=market,start=start,end=end,limit=limit,
                       tolerance=tolerance,line=line,include_playoffs=include_playoffs,lookback=lookback,
                       interval_level=PREDICTIVE_INTERVAL,config=config,implementation=signature,
@@ -887,14 +904,25 @@ class BacktestingService:
                     if fitted is None:raise DataSourceError(forecast.errors.get((game.entity_name,market),'Required opportunity history is unavailable.'))
                 price=fitted.market(line,'Over') if line is not None else None
                 actual=float(game.value);mean=float(getattr(fitted,'mean'))
-                result['records'].append(dict(game_id=str(game.game_id),date=cutoff.isoformat(),
+                record=dict(game_id=str(game.game_id),date=cutoff.isoformat(),
                     label=f'{game.entity_name} · {game.team} vs {game.get("opponent","")}',actual=actual,predicted=mean,
                     lower=player_quantile(fitted,(1-PREDICTIVE_INTERVAL)/2),
                     upper=player_quantile(fitted,(1+PREDICTIVE_INTERVAL)/2),interval_level=PREDICTIVE_INTERVAL,
                     baseline=float(past.value.tail(5).mean()) if len(past) else None,
                     probability=price.probability if price else None,
                     event_actual=int(actual>line) if line is not None and actual!=line else None,
-                    push=bool(line is not None and actual==line),latest_training=fitted.diagnostics.get('last_game_date')))
+                    push=bool(line is not None and actual==line),latest_training=fitted.diagnostics.get('last_game_date'))
+                if key in {'ptr','ila'}:
+                    minutes=pd.to_numeric(game.get('min'),errors='coerce')
+                    record.update(actual_minutes=float(minutes) if pd.notna(minutes) and np.isfinite(minutes) else None,
+                                  projected_minutes=fitted.diagnostics['minutes_if_playing'],
+                                  participation_probability=fitted.diagnostics['play_probability'])
+                if key=='ila':
+                    availability = forecast.availability
+                    record.update(injury_report_at=availability.get('fetched_at'),
+                                  lineup_scenarios_at=availability.get('scenarios_at'),
+                                  lineup_role_weight=fitted.diagnostics.get('lineup_evidence',{}).get('role_conditioned_weight',0.))
+                result['records'].append(record)
             except (ValueError,RuntimeError,OSError,IndexError,np.linalg.LinAlgError) as exc:
                 result['skipped'].append(dict(game_id=str(game.game_id),date=game.event_date.isoformat(),
                     reason=(str(game.entity_name)+': ' if aggregate else '')+str(exc)))

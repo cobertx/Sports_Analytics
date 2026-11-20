@@ -10,7 +10,7 @@ from dash.exceptions import PreventUpdate
 from dash import no_update
 from models.Game_Outcome.PPP.PPP import MarketProbability
 from sports_analytics.summary_filtering import calculate_filter
-from sports_analytics.market_summary_view import layout,QUICK
+from app.sections.market_summary.market_summary_view import layout,QUICK
 from check_market_summary import bundle,GameForecast,PlayerForecast
 import check_market_summary as fixtures
 from check_kalshi import components
@@ -74,7 +74,7 @@ class SummaryFilteringChecks(TestCase):
         self.assertFalse(any(r['provider']=='Kalshi' and r['index']==0 for r in ranked['matches']))
 
     def fixture(self):
-        availability=patch('sports_analytics.summary_filter_callbacks.availability_revision',return_value='fixture-availability')
+        availability=patch('app.sections.market_summary.summary_filter_callbacks.availability_revision',return_value='fixture-availability')
         availability.start();self.addCleanup(availability.stop)
         fixture=fixtures.SummaryCallbackChecks();fixture.setUp();self.addCleanup(fixture.doCleanups)
         self.addCleanup(fixture.app._summary_quick_jobs.queue.shutdown)
@@ -108,7 +108,7 @@ class SummaryFilteringChecks(TestCase):
         invalid,error=apply(2,101,0,'123','NFL','market-summary','Game Lines')
         self.assertIs(invalid,no_update);self.assertIn('Previous criteria remain applied',error)
         f.engines['PPP'].forecast.assert_not_called()
-        with patch('sports_analytics.market_summary_callbacks.ctx',Mock(triggered_id='summary-quotes')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',Mock(triggered_id='summary-quotes')):
             models,_=f.cb['summary_models'](f.data,'PPP','WHP',0,'market-summary','NFL','123',None)
         quick=f.cb['summary_quick_submit'](1,['PPP','ELO'],['WHP'],50,0,f.data,'123',QUICK,'market-summary','NFL')
         f.app._summary_quick_jobs.queue.tasks.join()
@@ -145,7 +145,7 @@ class SummaryFilteringChecks(TestCase):
             advanced.set()
             if not release.wait(5):raise AssertionError('Filter never released')
             return dict(matches=[],evaluated=0,unavailable=0,errors=[])
-        with patch('sports_analytics.summary_filter_callbacks.calculate_filter',side_effect=blocked) as fit:
+        with patch('app.sections.market_summary.summary_filter_callbacks.calculate_filter',side_effect=blocked) as fit:
             start=perf_counter();request=f.cb['summary_quick_submit'](1,['PPP'],['WHP'],50,0,f.data,'123',QUICK,'market-summary','NFL')
             self.assertLess(perf_counter()-start,1);self.assertTrue(entered.wait(1))
             for tick in range(3):
@@ -166,8 +166,8 @@ class SummaryFilteringChecks(TestCase):
         def fit(*args):
             state['revision']=1
             return dict(matches=[],evaluated=0,unavailable=0,errors=[])
-        with patch('sports_analytics.summary_filter_callbacks.availability_revision',side_effect=lambda sport:state['revision']),\
-                patch('sports_analytics.summary_filter_callbacks.calculate_filter',side_effect=fit) as compute:
+        with patch('app.sections.market_summary.summary_filter_callbacks.availability_revision',side_effect=lambda sport:state['revision']),\
+                patch('app.sections.market_summary.summary_filter_callbacks.calculate_filter',side_effect=fit) as compute:
             request=f.cb['summary_quick_submit'](1,['PPP'],['WHP'],50,0,f.data,'123',QUICK,'market-summary','NFL')
             f.app._summary_quick_jobs.queue.tasks.join();self.assertEqual(compute.call_count,2)
             result=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',1,None)

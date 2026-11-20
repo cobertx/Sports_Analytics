@@ -11,9 +11,9 @@ import pandas as pd
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from sports_analytics.backtesting_service import BacktestingService,NFL_PLAYER_COHORT,player_backtest_rows,player_position_rows
-from sports_analytics.backtesting_view import available_models,model_config
+from app.sections.backtesting.backtesting_view import available_models,model_config
 from sports_analytics.data import DataSourceError
-from sports_analytics.performance_summary import PerformanceSummaries,settings
+from app.sections.backtesting.performance_summary import PerformanceSummaries,settings
 from models.Player_Stats.Weighted_Historical_Performance.markets import FOOTBALL
 
 

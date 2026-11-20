@@ -1,6 +1,6 @@
 /* Real navigation assets in a controlled DOM; no requests or JS dependencies. */
 const fs=require('node:fs'),path=require('node:path');
-const assets=name=>fs.readFileSync(path.join(__dirname,'../sports_analytics/assets',name),'utf8');
+const assets=name=>fs.readFileSync(path.join(__dirname,'../app/assets/js',name),'utf8');
 let checks=0;
 const check=(ok,label)=>{if(!ok)throw Error(label);checks++;};
 function setup(){

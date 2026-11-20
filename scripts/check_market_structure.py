@@ -14,10 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.check_market_summary import bundle, binary, exchange, game
 from scripts.callback_fixtures import callback_functions
 from sports_analytics.data import DataSourceError
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.market_structure import MarketStructure, trade_summary, flow_summary, validate, BASE, DATA, CLOB, MAX_PAGES, TRADE_PAGE_SIZE, TRADE_CHART_POINTS
-from sports_analytics.market_structure_link import button, context
-from sports_analytics.market_structure_view import render
+from app.sections.market_structure.market_structure_link import button, context
+from app.sections.market_structure.market_structure_view import render
 from plotly.utils import PlotlyJSONEncoder
 from dash.exceptions import PreventUpdate
 
@@ -108,7 +108,7 @@ class StructureChecks(TestCase):
 
     def test_flow_pies_keep_absolute_counts_money_and_sample_scope_separate(self):
         import plotly.graph_objects as go
-        from sports_analytics.market_structure_view import activity,amount,flow_pies
+        from app.sections.market_structure.market_structure_view import activity,amount,flow_pies
         from check_kalshi import components
         market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
         trades=dict(trade_summary([kalshi_trade(),kalshi_trade('no','2',quantity='2.25',price='.4')],'Kalshi',market,NOW,NOW),
@@ -138,7 +138,7 @@ class StructureChecks(TestCase):
         self.assertIn('No usable trade data',str(empty.children[1]))
 
     def test_empty_failed_or_unclassified_trade_samples_are_unavailable_not_zero(self):
-        from sports_analytics.market_structure_view import activity
+        from app.sections.market_structure.market_structure_view import activity
         market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
         empty=dict(trade_summary([],'Kalshi',market,NOW,NOW),complete=False,start=NOW.isoformat(),end=NOW.isoformat(),error='Archive offline')
         for provider in ('Kalshi','Polymarket'):
@@ -209,7 +209,7 @@ class StructureChecks(TestCase):
         self.assertTrue(all_trades['complete'])
 
     def test_missing_trade_data_is_not_zero_and_partial_counts_are_not_total_splits(self):
-        from sports_analytics.market_structure_view import activity
+        from app.sections.market_structure.market_structure_view import activity
         market = dict(ticker='TEST',title='Test',labels=dict(yes='Over 47.5',no='Under 47.5'),errors=[])
         rendered = json.dumps(activity(market,'Kalshi'),cls=PlotlyJSONEncoder)
         self.assertIn('Direction-priced traded value',rendered)
@@ -269,7 +269,7 @@ class StructureChecks(TestCase):
         self.assertEqual(self.service.client.json.call_count,calls_before)
 
     def test_direction_conflicts_are_excluded_and_zero_shares_are_not_invented(self):
-        from sports_analytics.market_structure_view import activity
+        from app.sections.market_structure.market_structure_view import activity
         market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
         rows=[{**kalshi_trade(),'taker_book_side':'ask'},
               {**kalshi_trade(identity='2'),'taker_outcome_side':'invalid'},
@@ -285,7 +285,7 @@ class StructureChecks(TestCase):
         self.assertIn('Trade-price history unavailable',rendered)
 
     def test_quotes_use_best_levels_complementary_asks_and_explicit_missing_prices(self):
-        from sports_analytics.market_structure_view import quotes,price
+        from app.sections.market_structure.market_structure_view import quotes,price
         book=dict(sides=dict(yes=dict(levels=[dict(price=.5),dict(price=.6005)]),no=dict(levels=[dict(price=.3)])))
         bid,ask=quotes(book,'Kalshi')
         self.assertEqual(bid,dict(yes=.6005,no=.3));self.assertEqual(ask,dict(yes=.7,no=.3995))
@@ -307,7 +307,7 @@ class StructureChecks(TestCase):
 
     def test_trade_chart_uses_actual_yes_prices_and_keeps_explicit_units(self):
         import plotly.graph_objects as go
-        from sports_analytics.market_structure_view import price_history
+        from app.sections.market_structure.market_structure_view import price_history
         market=self.source['providers']['Kalshi']['snapshot']['rows'][0]
         rows=[kalshi_trade('no','later',quantity='2.5',price='.7'),
               {**kalshi_trade(identity='earlier'),'created_time':(NOW-timedelta(minutes=1)).isoformat()}]
@@ -337,7 +337,7 @@ class StructureChecks(TestCase):
 
     def test_depth_chart_mirrors_per_price_sizes_and_uses_provider_asks(self):
         import plotly.graph_objects as go
-        from sports_analytics.market_structure_view import depth_chart
+        from app.sections.market_structure.market_structure_view import depth_chart
         book=dict(sides=dict(yes=dict(depth=[dict(price=.6,size=2),dict(price=.5,size=4)],
                                       ask_depth=[dict(price=.65,size=11)]),
                              no=dict(depth=[dict(price=.3,size=3),dict(price=.2,size=5)])))
@@ -369,7 +369,7 @@ class StructureChecks(TestCase):
 
     def test_depth_highlight_handles_one_sided_and_crossed_books(self):
         import plotly.graph_objects as go
-        from sports_analytics.market_structure_view import depth_chart
+        from app.sections.market_structure.market_structure_view import depth_chart
         bids=[dict(price=.25,size=2),dict(price=.2,size=4)]
         one_sided=depth_chart(dict(sides=dict(yes=dict(depth=bids))),'Polymarket','yes','Over')
         figure=go.Figure(one_sided.children[1].figure)
@@ -390,12 +390,12 @@ class StructureChecks(TestCase):
         data = dict(request=recent,providers={p:dict(pending=False,data=dict(markets=[]))
                                              for p in ('FanDuel','Kalshi','Polymarket')})
         with patch.object(self.service,'read',return_value=data) as read, \
-                patch('sports_analytics.market_structure_view.ctx',SimpleNamespace(triggered_id='structure-window')):
+                patch('app.sections.market_structure.market_structure_view.ctx',SimpleNamespace(triggered_id='structure-window')):
             result,_ = callback(request,0,0,'24h',None,[])
             self.assertEqual(result['request']['window'],'24h')
             read.assert_called_once_with(recent,refresh=False)
         with patch.object(self.service,'read') as read, \
-                patch('sports_analytics.market_structure_view.ctx',SimpleNamespace(triggered_id='structure-poll')):
+                patch('app.sections.market_structure.market_structure_view.ctx',SimpleNamespace(triggered_id='structure-poll')):
             with self.assertRaises(PreventUpdate):callback(request,0,1,'24h',data,[])
             read.assert_not_called()
 
@@ -520,19 +520,19 @@ class StructureChecks(TestCase):
         self.assertEqual(regular.children,'Market Structure')
         app = create_app(structure_service=self.service)
         callbacks = callback_functions(app)
-        with patch('sports_analytics.market_structure_view.ctx',SimpleNamespace(triggered_id=regular.id)):
+        with patch('app.sections.market_structure.market_structure_view.ctx',SimpleNamespace(triggered_id=regular.id)):
             request,style,label = callbacks['structure_open']([1],0,0,'#nfl-game-123','NFL','market',[regular.id])
         self.assertEqual(style,{})
         self.assertIn('New Orleans',label)
-        with patch('sports_analytics.market_structure_view.ctx',SimpleNamespace(triggered_id='structure-click')):
+        with patch('app.sections.market_structure.market_structure_view.ctx',SimpleNamespace(triggered_id='structure-click')):
             opened=callbacks['structure_open']([],0,0,'#nfl-market-summary','NFL','market-summary',[],
                 dict(context=getattr(summary,'data-structure-context'),nonce=1))
             self.assertEqual(opened,(request,style,label))
             invalid=callbacks['structure_open']([],0,0,'#nfl-market-summary','NFL','market-summary',[],dict(context='invalid',nonce=2))
             self.assertIsNone(invalid[0]);self.assertEqual(invalid[1],{'display':'none'})
-        with patch('sports_analytics.market_structure_view.ctx',SimpleNamespace(triggered_id='structure-close')):
+        with patch('app.sections.market_structure.market_structure_view.ctx',SimpleNamespace(triggered_id='structure-close')):
             self.assertEqual(callbacks['structure_open']([1],1,0,'#nfl-game-123','NFL','market',[regular.id])[:2],(None,{'display':'none'}))
-        with patch('sports_analytics.market_structure_view.ctx',SimpleNamespace(triggered_id=None)):
+        with patch('app.sections.market_structure.market_structure_view.ctx',SimpleNamespace(triggered_id=None)):
             with self.assertRaises(PreventUpdate):
                 callbacks['structure_open']([0],0,0,'#nfl-game-123','NFL','market',[regular.id])
         metadata = next(m for m in app.callback_map.values() if m.get('callback') and m['callback'].__wrapped__.__name__ == 'structure_open')

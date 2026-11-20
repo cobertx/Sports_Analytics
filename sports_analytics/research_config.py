@@ -10,6 +10,8 @@ def player_config(sport,key):
         'uo':('Usage_Opportunity','config','UsageOpportunityConfig'),
         'oam':('Opponent_Adjusted_Matchup','config','MatchupConfig'),
         'pge':('Pace_Game_Environment','config','PaceConfig'),
+        'ptr':('Playing_Time_Rotation','config','RotationConfig'),
+        'ila':('Injury_Lineup_Adjusted','config','InjuryLineupConfig'),
     }[key]
     return getattr(import_module(f'models.Player_Stats.{folder}.{module}'),name).for_sport(sport)
 

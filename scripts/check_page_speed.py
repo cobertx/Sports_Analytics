@@ -18,11 +18,11 @@ from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 from models.Game_Outcome.PPP.PPP import PPPForecast
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.market_view import market_sections
+from app.sections.markets.market_view import market_sections
 from sports_analytics.page_cache import PageTasks,QuotePages
 from sports_analytics.data import DataSourceError
-from sports_analytics.kalshi_callbacks import register
-from sports_analytics.market_summary_callbacks import register as register_summary
+from app.sections.exchanges.kalshi_callbacks import register
+from app.sections.market_summary.market_summary_callbacks import register as register_summary
 from sports_analytics.summary_quote_jobs import SummaryQuoteJobs
 import check_mispricing as fixtures
 import check_market_summary as summary_fixtures
@@ -175,16 +175,16 @@ class PageSpeedChecks(TestCase):
             if not release.wait(5):raise AssertionError('Source never released')
             return deepcopy(self.snapshot)
         self.source.quotes.side_effect=slow
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-context')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-context')):
             first=callback('kalshi','NFL',self.game,'Game Lines','live',0,0,0,'#nfl-kalshi-game-'+GAME)
         self.assertTrue(entered.wait(2));self.assertTrue(first[0]['page_pending'])
         release.set();cache.tasks.queue.tasks.join()
         state=dict(game=GAME,category='Game Lines',updating=True,page_pending=True)
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-cache-poll')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-cache-poll')):
             final=callback('kalshi','NFL',self.game,'Game Lines','live',0,0,0,'#nfl-kalshi-game-'+GAME,1,state)
         self.assertEqual(final[0]['rows'],self.snapshot['rows']);self.assertFalse(final[0]['page_pending'])
         self.source.quotes.side_effect=None
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-pull')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='kalshi-pull')):
             callback('kalshi','NFL',self.game,'Game Lines','live',0,1,0,'#nfl-kalshi-game-'+GAME)
         self.source.quotes.assert_called_with(self.game,'Game Lines',refresh=True,save=True)
 
@@ -212,14 +212,14 @@ class PageSpeedChecks(TestCase):
         register_summary(app,Mock(),{'NFL':markets},services['Kalshi'],services['Polymarket'],game_fit,player_fit,pages=pages)
         cb=callback_functions(app)
         start=perf_counter()
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-game')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-game')):
             first,_=cb['summary_quotes'](game['id'],catalog,0,'market-summary','NFL',None)
         self.assertLess(perf_counter()-start,1);self.assertTrue(entered.wait(2));self.assertTrue(first['updating'])
         cb['summary_models'](first,'PPP','WHP',0,'market-summary','NFL',game['id'],None)
         game_fit.assert_called_once();player_fit.assert_called_once()
         release.set()
         for page in pages.values():page.tasks.queue.tasks.join()
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
             final,_=cb['summary_quotes'](game['id'],catalog,0,'market-summary','NFL',first,1)
         self.assertFalse(final['updating'])
         self.assertEqual(final['providers']['Kalshi']['snapshot']['rows'],bundle['providers']['Kalshi']['snapshot']['rows'])
@@ -238,10 +238,10 @@ class PageSpeedChecks(TestCase):
         pages['Kalshi'].read.side_effect=lambda *a,**k:disk_wait(source['providers']['Kalshi']['snapshot'])
         pages['Polymarket'].read.return_value=source['providers']['Polymarket']['snapshot']
         app=Dash(__name__,suppress_callback_exceptions=True)
-        with patch('sports_analytics.market_summary_callbacks.SummaryQuoteJobs',return_value=jobs):
+        with patch('app.sections.market_summary.market_summary_callbacks.SummaryQuoteJobs',return_value=jobs):
             register_summary(app,Mock(),{'NFL':markets},Mock(),Mock(),Mock(),Mock(),pages=pages)
         cb=callback_functions(app)
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-game')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-game')):
             # Match the real first browser request: a disabled interval may not
             # have published n_intervals yet. It must still use the job queue.
             with app.server.test_request_context('/_dash-update-component'):
@@ -249,7 +249,7 @@ class PageSpeedChecks(TestCase):
             first=jobs.resolve(wire)
         self.assertLess(perf_counter()-start,.5);self.assertTrue(first['updating'])
         deadline=perf_counter()+2;current=first
-        with patch('sports_analytics.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
+        with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-cache-poll')):
             while not (current['providers']['Polymarket']['snapshot'] or {}).get('rows') and perf_counter()<deadline:
                 newer,_=cb['summary_quotes']('123',catalog,0,'market-summary','NFL',current,1)
                 if newer is not no_update:current=newer
@@ -305,13 +305,13 @@ class PageSpeedChecks(TestCase):
         self.assertIn('Calculating',json.dumps(payload));self.assertNotIn('dash_core_components.Graph',json.dumps(payload))
         previous=payload['market-forecast-history']['data'];self.assertTrue(previous['pending'])
         cb=fixture.cb['show_saved_markets']
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-model-poll')), \
+        with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-model-poll')), \
                 patch.object(fixture.markets,'history',side_effect=AssertionError('A pending poll needs no disk reads')), \
-                patch('sports_analytics.dashboard.forecast_revision',side_effect=AssertionError('A pending poll needs no file scans')):
+                patch('app.sections.markets.callbacks.forecast_revision',side_effect=AssertionError('A pending poll needs no file scans')):
             self.assertEqual(cb('Game',fixture.saved['pulled_at'],'#nfl-game-123',None,'PPP','WHP',previous,'market',1),(no_update,no_update))
         release.set();self.assertTrue(finished.wait(2));deadline=perf_counter()+3
         while perf_counter()<deadline:
-            with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-model-poll')):
+            with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-model-poll')):
                 result=cb('Game',fixture.saved['pulled_at'],'#nfl-game-123',None,'PPP','WHP',previous,'market',2)
             if result[1] is not no_update:break
             sleep(.01)

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "query": {
+    "sport": "NBA",
+    "season": 2022,
+    "entity_type": "team",
+    "season_type": "regular",
+    "team": "",
+    "week": null
+  },
+  "source": "NBA Stats via SportsDataverse",
+  "source_fetched_at": "2026-10-30T20:02:06+00:00",
+  "cache_key": "4ea1e08f330b4d520d207bd24efb8ee8cae8c90f6209948a0323fe622d74f937",
+  "games": 1230,
+  "sha256": "9200cadf865c2471c03719d4d8631996e6cf124dbaca9b2b64ac6b43936fd627",
+  "possessions": "mean of both teams' FGA + 0.44*FTA - OREB + TOV; includes overtime",
+  "availability": "Observed source availability; legacy rows use UTC game date + 2 days"
+}

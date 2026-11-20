@@ -8,14 +8,14 @@ from unittest import TestCase,main
 from unittest.mock import Mock,patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from dash import no_update
+from dash import html, no_update
 from dash.exceptions import PreventUpdate
 from models.season_weights import POLICY_VERSION
 from scripts.callback_fixtures import callback_functions
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.kalshi_analysis import FILTER
-from sports_analytics.mispricing import filter_context
-from sports_analytics import kalshi_view
+from app.sections.markets.mispricing import filter_context
+from app.sections.exchanges import kalshi_view
 import check_kalshi as fixtures
 
 
@@ -44,28 +44,28 @@ class MarketTransitionChecks(TestCase):
         self.assertTrue(all(value is no_update for value in shown[2:]))
 
     def test_return_to_fanduel_game_does_not_reload_snapshots_or_rebuild_header(self):
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_prop_ids={'market-url.hash':'market-url'})):
+        with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_prop_ids={'market-url.hash':'market-url'})):
             result=self.cb['open_game']('#nfl-game-123','NFL','market',[],None,'saved.csv',dict(sport='NFL',id='123',token='same'))
         self.assertTrue(all(value is no_update for value in result));self.markets.history.assert_not_called()
         history=dict(context=['#nfl-game-123','saved.csv'],view_key=['Game','PPP','WHP',None,POLICY_VERSION])
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-url')):
+        with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-url')):
             shown=self.cb['show_saved_markets']('Game','saved.csv','#nfl-game-123',None,'PPP','WHP',history,'market')
         self.assertEqual(shown,(no_update,no_update));self.markets.history.assert_not_called()
         request=filter_context('#nfl-game-123','saved.csv',['PPP'],['WHP'],dict(probability=.75,edge=.05))
         previous=dict(context=['#nfl-game-123','saved.csv'],filter_key=request)
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-url')):
+        with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-url')):
             filtered=self.cb['quick_filter_markets'](request,'Mispricing','#nfl-game-123','saved.csv',['PPP'],['WHP'],75,5,previous,'market')
         self.assertEqual(filtered,(no_update,no_update));self.markets.history.assert_not_called()
 
     def test_fanduel_catalog_scope_expires_and_manual_refresh_always_works(self):
         scope=dict(sport='NFL',days=7,checked_at=time())
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='workspace-page')):
+        with patch('app.sections.markets.schedule.ctx',SimpleNamespace(triggered_id='workspace-page')):
             with self.assertRaises(PreventUpdate):self.cb['upcoming_games']('market','NFL',7,0,0,None,[],scope)
         self.schedule.load.assert_not_called();self.markets.latest.assert_not_called()
         self.schedule.load.return_value=SimpleNamespace(games=[],fetched_at='2026-10-24T00:00:00Z',stale_days=[],failed_days=[])
         for trigger,stale_scope,days in [('workspace-page',dict(scope,checked_at=time()-301),7),
                                          ('workspace-page',scope,14),('market-refresh',scope,7),('market-timer',scope,7)]:
-            with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id=trigger)):
+            with patch('app.sections.markets.schedule.ctx',SimpleNamespace(triggered_id=trigger)):
                 result=self.cb['upcoming_games']('market','NFL',days,1,1,None,[],stale_scope)
             self.assertEqual(result[-1]['sport'],'NFL');self.assertEqual(result[-1]['days'],days)
             self.assertGreater(result[-1]['checked_at'],scope['checked_at']-1)
@@ -75,14 +75,14 @@ class MarketTransitionChecks(TestCase):
         for provider,service in [('kalshi',self.exchange),('polymarket',self.poly)]:
             previous=dict(sport='NFL',window_days=7,checked_at=time(),games=[],fetched_at='2026-10-24T00:00:00Z',notices=[])
             service.games.return_value=previous
-            with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
+            with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
                 with self.assertRaises(PreventUpdate):self.cb[provider+'_games'](provider,'NFL',7,0,0,previous)
             service.games.assert_not_called()
             for trigger in [provider+'-list-refresh',provider+'-list-timer']:
-                with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id=trigger)):
+                with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id=trigger)):
                     self.cb[provider+'_games'](provider,'NFL',7,1,1,previous)
             self.assertEqual(service.games.call_count,2)
-            with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
+            with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')):
                 self.cb[provider+'_games'](provider,'NFL',14,1,1,previous)
             self.assertEqual(service.games.call_count,3)
 
@@ -109,8 +109,29 @@ class MarketTransitionChecks(TestCase):
         self.assertNotIn('kalshi-quotes',{item['id'] for item in meta['inputs']})
         self.assertNotIn('kalshi-models',{item['id'] for item in meta['inputs']})
         with self.app.server.test_client() as client:
-            for url in ['/assets/market_transition.js','/assets/market_transition.css','/_dash-dependencies']:
+            for url in ['/assets/js/market_transition.js','/assets/css/market_transition.css','/_dash-dependencies']:
                 with client.get(url) as response:self.assertEqual(response.status_code,200)
+
+    def test_provider_headers_only_contain_brand_and_open_link(self):
+        headers = [component for component in fixtures.components(self.app.layout)
+                   if 'market-provider-heading' in (getattr(component, 'className', '') or '').split()]
+        self.assertEqual(len(headers), 4)
+        providers = set()
+        with self.app.server.test_client() as client:
+            for header in headers:
+                brand, link = header.children
+                logo, title = brand.children
+                self.assertIsInstance(logo, html.Img)
+                self.assertIsInstance(title, html.H2)
+                self.assertIsInstance(link, html.A)
+                provider = title.children.removesuffix(' Market')
+                self.assertEqual(title.children, provider + ' Market')
+                self.assertEqual(link.children, f'Open {provider} ↗')
+                self.assertTrue(link.href.startswith('https://'))
+                with client.get(logo.src) as response:
+                    self.assertEqual(response.status_code, 200)
+                providers.add(provider)
+        self.assertEqual(providers, {'FanDuel', 'DraftKings', 'Kalshi', 'Polymarket'})
 
     def test_late_quick_filter_cannot_replace_the_current_game_forecast_poll_state(self):
         metadata=next(m for m in self.app.callback_map.values() if m.get('callback')

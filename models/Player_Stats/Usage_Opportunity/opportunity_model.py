@@ -70,7 +70,7 @@ def allocate(total, shares, rng):
     return np.column_stack([*columns, remaining])
 
 
-def share_rows(player, team, columns, config, rng, *, minutes=False, adjustment=None, environment=None):
+def share_rows(player, team, columns, config, rng, *, minutes=False, adjustment=None, environment=None, sampler=None):
     """Bootstrap aligned player/team appearances, not future realized workload."""
     totals = team[['game_id', 'team', *columns]].rename(columns={c: 'team_' + c for c in columns})
     sample = player.merge(totals, on=['game_id', 'team'], how='inner', validate='one_to_one')
@@ -84,7 +84,10 @@ def share_rows(player, team, columns, config, rng, *, minutes=False, adjustment=
     for column in columns:
         if (sample[column] > sample['team_' + column] + 1e-6).any():
             raise UsageOpportunityError(f'Player {column} exceeds its matched team total.')
-    drawn = draw_rows(sample, config, rng) if environment is None else environment.draw_rows(sample, config, rng)
+    if sampler is not None:
+        drawn = sampler(sample, config, rng)
+    else:
+        drawn = draw_rows(sample, config, rng) if environment is None else environment.draw_rows(sample, config, rng)
     shares = {column: np.divide(drawn[column].to_numpy(float), drawn['team_' + column].to_numpy(float),
                                 out=np.zeros(config.simulations), where=drawn['team_' + column].to_numpy(float) > 0)
               for column in columns}

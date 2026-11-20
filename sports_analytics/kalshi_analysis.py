@@ -7,11 +7,11 @@ from models.season_weights import POLICY_VERSION
 
 from .data import DataSourceError
 from .kalshi import parse_time
-from .market_view import criteria_match
-from .mispricing import PLAYER_METHODS, ALL_PROBABILITIES, consensus_rankings, run_forecasts
+from app.sections.markets.market_view import criteria_match
+from app.sections.markets.mispricing import ALL_PROBABILITIES, consensus_rankings, run_forecasts
 from .availability import revision as availability_revision
 from .availability_adjustment import note as availability_note
-from . import quick_methods
+from app.sections.markets import quick_methods
 
 FILTER = 'Mispricing Filter'
 ADAPTER_VERSION = 4
@@ -65,7 +65,7 @@ def implied(row, side):
 
 def model_snapshot(game, snapshot, cutoff=None):
     # Match only explicit away/home labels; a "vs" title does not establish venue.
-    from .kalshi_view import matchup
+    from app.sections.exchanges.kalshi_view import matchup
     found=matchup(game)
     if not found or found[1]!=['Away','Home']:
         raise DataSourceError('The provider has not identified away/home teams for this game.')
@@ -115,7 +115,7 @@ def player_subject(row):
 
 
 def team_total_subject(row, sport, teams):
-    from .kalshi_view import team_identity
+    from app.sections.exchanges.kalshi_view import team_identity
     for value in (row.get('yes_label',''),row.get('title',''),row.get('subtitle','')):
         match=re.match(r'^(?:Will\s+)?(.+?)(?:\s*:\s*|\s+(?:over|under|scores?|to score|at least|more than)\b)',value or '',re.I)
         if match:
@@ -134,7 +134,7 @@ def adapter(row, sport, teams):
     label=row.get('yes_label','');title=row.get('title','')
     base=dict(group='Game',market=title,odds=None)
     if family in {'GAME','SPREAD'}:
-        from .kalshi_view import team_identity
+        from app.sections.exchanges.kalshi_view import team_identity
         name=label if family=='GAME' else re.split(r'\s+wins?\s+by\s+',label,flags=re.I)[0]
         team=team_identity(name,sport)['name']
         if team not in teams:return None
@@ -200,7 +200,7 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
     if game_rows:
         distributions={};distribution_errors=[]
         if gf:
-            from .game_distribution import distributions as game_distributions
+            from app.sections.markets.game_distribution import distributions as game_distributions
             try:distributions,distribution_errors=game_distributions(gf,source,method)
             except AttributeError:distribution_errors=['This forecast does not provide a compatible game distribution.']
             except (ValueError,TypeError,OverflowError) as exc:distribution_errors=[str(exc)]
@@ -295,7 +295,7 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
         displayed=decorate(subset,game,selected,game_method,player_method,models,context=context)
         return rank(displayed,ALL_PROBABILITIES),models.get('errors',[])
     tasks={method:lambda method=method:evaluate(method,False) for method in quick_methods.game_methods(game['sport']) if method in needed}
-    tasks.update({method:lambda method=method:evaluate(method,True) for method in PLAYER_METHODS if method in needed})
+    tasks.update({method:lambda method=method:evaluate(method,True) for method in quick_methods.player_methods(game['sport']) if method in needed})
     forecasts=run_forecasts(tasks,game['sport'],report)
     if report:report(85,'Applying thresholds and ranking selections')
     ranked=quick_methods.consensus({method:record[0] for method,record in forecasts.items()},assignments,

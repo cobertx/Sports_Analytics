@@ -36,6 +36,6 @@ function checkExchangePanels(source) {
 if (typeof module !== 'undefined' && module.exports) {
   const fs = require('node:fs');
   const path = require('node:path');
-  const source = fs.readFileSync(path.join(__dirname, '../sports_analytics/assets/exchange_panels.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../app/assets/js/exchange_panels.js'), 'utf8');
   console.log(`Passed ${checkExchangePanels(source)} exchange panel checks.`);
 }

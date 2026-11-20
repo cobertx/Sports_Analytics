@@ -10,11 +10,12 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app, ALL_TEAMS
+from app.dashboard import create_app
+from app.sections.historical.callbacks import ALL_TEAMS
 from sports_analytics.historical_links import history_href, history_target, target_entity, target_metric, market_metrics
-from sports_analytics.historical_view import historical_route
-from sports_analytics.market_navigation import remembered_market
-from sports_analytics.market_view import market_sections, game_header
+from app.sections.historical.historical_view import historical_route
+from app.sections.markets.market_navigation import remembered_market
+from app.sections.markets.market_view import market_sections, game_header
 from sports_analytics.nba_markets import NBA_MARKETS
 from sports_analytics.nfl_markets import NFL_MARKETS
 from sports_analytics.metrics import relevant_metrics
@@ -87,7 +88,7 @@ class MarketHistoryChecks(TestCase):
         entry=dict(route='#nfl-game-123',snapshot='older-snapshot',category='Receiving',section='market-section-example')
         saved=dict(NFL=entry)
         self.assertEqual(self.callbacks['sport_page_navigation']('historical','NFL','player',saved)[-1],entry['route'])
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_prop_ids={})):
+        with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_prop_ids={})):
             opened=self.callbacks['open_game'](entry['route'],'NFL','market',[],None,None,None,saved)
         self.assertEqual(opened[4],'older-snapshot')
         categories=self.callbacks['snapshot_categories'](opened[4],entry['route'],'Game',saved)
@@ -158,7 +159,7 @@ class MarketHistoryChecks(TestCase):
         self.assertEqual(cb['restore_game_route'](href),('NFL','historical'))
         self.assertEqual(cb['statistics_modes']('NFL',href,'team'),'player')
         self.assertEqual(cb['historical_market_scope'](href)[0:2],(2026,'regular'))
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='sport')):
+        with patch('app.sections.historical.callbacks.ctx',SimpleNamespace(triggered_id='sport')):
             dataset=cb['load_data'](0,0,'NFL',2026,'player','regular','Michigan',None,'historical')[0]
         self.assertEqual(cb['select_player_teams'](dataset,'DEN',href)[1],ALL_TEAMS)
         entity=cb['select_options'](dataset,ALL_TEAMS,'a',href)[1]

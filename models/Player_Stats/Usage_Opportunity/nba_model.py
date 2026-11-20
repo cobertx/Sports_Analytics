@@ -3,6 +3,8 @@
 Rebound/assist/defensive-event pools are explicit box-score proxies. Tracking
 chances, injury information and actual overtime predictions are not inferred.
 """
+from functools import partial
+
 import numpy as np
 from .efficiency_model import conversion
 from .opportunity_model import share_rows, allocate, observed
@@ -21,12 +23,13 @@ def features(frame):
     return data
 
 
-def simulate_nba(players, teams, config, rng, *, adjustment=None, environment=None):
+def simulate_nba(players, teams, config, rng, *, adjustment=None, environment=None, rotation=None, lineup=None):
     result = SimulationResult()
     teams = {team: features(rows) for team, rows in teams.items()}
     state_source = team_states if environment is None else environment.team_states
     states = state_source(teams, config, rng, [*CHANNELS, 'min', 'two_pm', 'fg3m', 'ftm'])
     for team, state in states.items():
+        context = (lineup or {}).get(team)
         if (state['min'] < 240).any() or state[list(CHANNELS)].lt(0).any().any():
             raise UsageOpportunityError('NBA team counts must be nonnegative and team minutes at least 240.')
         ids, roles, posteriors, samples = [], [], {}, {}
@@ -35,20 +38,28 @@ def simulate_nba(players, teams, config, rng, *, adjustment=None, environment=No
                 continue
             try:
                 frame = features(info['history'])
-                role, role_sample = share_rows(frame, teams[team], [*CHANNELS, 'min'], config, rng, minutes=True, environment=environment)
+                sampler = None if context is None else partial(context.sample_roles, identity=identity)
+                role, role_sample = share_rows(frame, teams[team], [*CHANNELS, 'min'], config, rng,
+                                               minutes=True, environment=environment, sampler=sampler)
                 fit = {}
                 for name, made, attempts in [('two', 'two_pm', 'two_pa'), ('three', 'fg3m', 'fg3a'), ('ft', 'ftm', 'fta')]:
-                    fit[name] = conversion(frame, made, attempts, config, rng, adjustment=adjustment, team=team)
+                    fit[name] = (conversion(frame, made, attempts, config, rng, adjustment=adjustment, team=team)
+                                 if context is None else context.sample_conversion(frame, made, attempts, config, rng,
+                                                                                  identity=identity))
                 ids.append(identity); roles.append(role); posteriors[identity] = fit
                 samples[identity] = role_sample
             except UsageOpportunityError as exc:
                 result.errors[identity] = f'Current-team opportunity history for {identity} ({team}): {exc}'
         if not ids:
             continue
-        minutes = np.column_stack([role['minutes'] for role in roles])
+        historical_minutes = np.column_stack([role['minutes'] for role in roles])
         budget = 240. if environment is None else 5*environment.duration[team]
-        scale = np.minimum(1., budget / np.maximum(1., minutes.sum(axis=1)))
-        minutes *= scale[:, None]
+        if rotation is None:
+            scale = np.minimum(1., budget / np.maximum(1., historical_minutes.sum(axis=1)))[:, None]
+            minutes = historical_minutes * scale
+        else:
+            minutes = np.column_stack([rotation[team][players[identity]['entity_id']] for identity in ids])
+            scale = np.divide(minutes, historical_minutes, out=np.zeros_like(minutes), where=historical_minutes > 0)
         pools, allocations = {}, {}
         for channel in CHANNELS:
             # Normalize historical team overtime to a regulation baseline.
@@ -58,7 +69,7 @@ def simulate_nba(players, teams, config, rng, *, adjustment=None, environment=No
             if adjustment is not None:
                 projected = adjustment.ratio(team, state, 'nba:' + channel, projected)
             pool = integer_pool(projected)
-            shares = np.column_stack([role[channel] for role in roles]) * scale[:, None]
+            shares = np.column_stack([role[channel] for role in roles]) * scale
             allocations[channel] = allocate(pool, shares, rng)
             pools[channel] = pool
         # The Other bucket uses team-level shooting rates; quoted players have
@@ -72,7 +83,11 @@ def simulate_nba(players, teams, config, rng, *, adjustment=None, environment=No
         team_fg = makes['two'].sum(axis=1) + makes['three'].sum(axis=1)
         assist_pool = np.minimum(pools['ast'], team_fg)
         pools['ast'] = assist_pool
-        allocations['ast'] = allocate(assist_pool, np.column_stack([r['ast'] for r in roles])*scale[:, None], rng)
+        allocations['ast'] = allocate(assist_pool, np.column_stack([r['ast'] for r in roles]) * scale, rng)
+        if rotation is not None:
+            estimated_possessions = (state['two_pa'] + state['fg3a'] + .44 * state['fta']
+                                     - state['oreb'] + state['tov']).to_numpy(float)
+            regulation_possessions = estimated_possessions * 240 / state['min'].to_numpy(float)
         for i, identity in enumerate(ids):
             player_fg = makes['two'][:, i] + makes['three'][:, i]
             assists = np.minimum(allocations['ast'][:, i], team_fg-player_fg)
@@ -91,6 +106,11 @@ def simulate_nba(players, teams, config, rng, *, adjustment=None, environment=No
                     **{c: float(allocations[c][:, i].mean()) for c in CHANNELS}},
                 efficiency_projection={name: fit[1] for name, fit in posteriors[identity].items()},
                 limitations='Regulation-only; historical role scenarios. Rebounds/assists/defense use box-score pools, not tracking chances. No injury, lineup or opponent adjustment.')
+            if rotation is not None:
+                result.diagnostics[identity]['opportunity_projection']['on_court_possessions'] = float(
+                    (regulation_possessions * minutes[:, i] / 48).mean())
+            if context is not None:
+                result.diagnostics[identity]['lineup_evidence'] = context.evidence[identity]
         result.audit[team] = dict(minutes_total=minutes.sum(axis=1), other_minutes=budget-minutes.sum(axis=1),
                                   pools=pools, allocations=allocations, makes=makes)
     return result

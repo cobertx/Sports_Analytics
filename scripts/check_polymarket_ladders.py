@@ -13,9 +13,9 @@ from check_polymarket import market,components
 from check_exchange_updates import apply_patch,normalized,expand_sections
 from sports_analytics.polymarket_labels import selection
 from sports_analytics.kalshi_labels import selection_rows
-from sports_analytics.kalshi_view import market_sections,comparison_rows
-from sports_analytics.exchange_render import render
-from sports_analytics.prompt_history import exchange_target
+from app.sections.exchanges.kalshi_view import market_sections,comparison_rows
+from app.sections.exchanges.exchange_render import render
+from app.sections.markets.prompt_history import exchange_target
 
 
 class PolymarketLadderChecks(TestCase):
@@ -101,13 +101,13 @@ class PolymarketLadderChecks(TestCase):
 
     def test_discovery_and_quote_refreshes_preserve_active_categories_and_loaded_selections(self):
         _,callbacks=self.f.app()
-        with patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='polymarket-list-timer')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='polymarket-list-timer')):
             partial=dict(self.game,events=[self.game['events'][0]],categories=['Game Lines'])
             result=callbacks['polymarket_game'](dict(sport='NBA',games=[partial]),
                 '#nba-polymarket-game-'+self.game['id'],'NBA',self.game,'Player Props')
             self.assertTrue(all(value is no_update for value in result))
         empty=dict(self.snapshot,rows=[],updating=True,fetched_at=None)
-        with (patch('sports_analytics.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='polymarket-quote-timer')),
+        with (patch('app.sections.exchanges.kalshi_callbacks.ctx',SimpleNamespace(triggered_id='polymarket-quote-timer')),
               patch.object(self.f.service,'quotes',return_value=empty)):
             result=callbacks['polymarket_quotes']('polymarket','NBA',self.game,'Game Lines','live',1,0,5,
                 None,None,None,self.snapshot)[0]

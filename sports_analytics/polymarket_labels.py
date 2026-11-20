@@ -32,7 +32,7 @@ def market_section(kind, question, category):
 
 def selection(row, side, snapshot=None):
     """Return label/group/line while preserving the provider's actual side order."""
-    from .kalshi_view import team_identity, matchup
+    from app.sections.exchanges.kalshi_view import team_identity, matchup
     snapshot = snapshot or {}
     sport = snapshot.get('sport', '')
     kind = str(row.get('sports_market_type') or '').lower()
@@ -84,7 +84,7 @@ def selection(row, side, snapshot=None):
         if direction_name and line is not None:
             name = subject(title, kind)
             context = name+' ' if name else ''
-            from .prompt_history import POLY_STATS
+            from app.sections.markets.prompt_history import POLY_STATS
             from .kalshi_labels import stat_label
             stat=stat_label(POLY_STATS[kind]) if kind in POLY_STATS else ''
             return f'{context}{direction_name} {line:g}'+(' '+stat if stat else ''), context+direction_name, line

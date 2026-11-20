@@ -38,13 +38,16 @@ def check_layout():
     names = {path.name for path in ROOT.iterdir()}
     require("models" in names and "Models" not in names, "Model directory must be named exactly models (lowercase).")
     require("requirements" in names, "Requirements belong under requirements/.")
+    for launcher in ("app.py", "index.py"):
+        require((ROOT / "app" / launcher).is_file(), f"Missing app/{launcher}.")
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     files = config["tool"]["setuptools"]["dynamic"]["dependencies"]["file"]
     require(files == ["requirements/requirements.txt"], "Package dependency path is outdated.")
     for name in ("requirements.txt", "requirements-docs.txt", "requirements-logos.txt"):
         require((ROOT / "requirements" / name).is_file(), f"Missing requirements/{name}")
-    require("models*" in config["tool"]["setuptools"]["packages"]["find"]["include"],
-            "Package discovery must include lowercase models.")
+    packages = config["tool"]["setuptools"]["packages"]["find"]["include"]
+    require("models*" in packages, "Package discovery must include lowercase models.")
+    require({"app", "app.*"}.issubset(packages), "Package discovery must include the dashboard and its sections.")
 
 
 def main():
@@ -53,7 +56,7 @@ def main():
     args = parser.parse_args()
     check_layout()
     if args.layout_only:
-        print("Passed: Git paths, lowercase models/ and requirements/ layout.")
+        print("Passed: Git paths and app/, models/, and requirements/ layout.")
         return
     modules = [
         "models.Game_Outcome.PPP.PPP", "models.Game_Outcome.PPP.NBA_PPP",
@@ -68,33 +71,33 @@ def main():
         "sports_analytics.opponent_adjusted_service",
         "models.Player_Stats.Pace_Game_Environment", "models.Player_Stats.Pace_Game_Environment.backtesting",
         "sports_analytics.pace_game_environment_service",
-        "sports_analytics.parlay", "sports_analytics.parlay_view",
+        "sports_analytics.parlay", "app.sections.parlay.parlay_view",
         "sports_analytics.ncaaf_model_data", "sports_analytics.ncaaf_forecast_service",
         "models.Game_Outcome.PPP.NCAAF_PPP", "models.Game_Outcome.EPA.NCAAF_EPA", "models.Game_Outcome.ELO.NCAAF_ELO",
-        "sports_analytics.dashboard", "sports_analytics.nfl_markets", "sports_analytics.nba_markets",
-        "sports_analytics.filtered_results", "sports_analytics.filtered_results_view",
+        "app.dashboard", "sports_analytics.nfl_markets", "sports_analytics.nba_markets",
+        "sports_analytics.filtered_results", "app.sections.markets.filtered_results_view",
         "sports_analytics.nba_espn",
-        "sports_analytics.market_summary", "sports_analytics.market_summary_view", "sports_analytics.market_summary_callbacks",
-        "sports_analytics.market_structure", "sports_analytics.market_structure_link", "sports_analytics.market_structure_view",
-        "sports_analytics.backtesting_view",
-        "sports_analytics.backtesting_summary",
-        "sports_analytics.performance_summary",
-        "sports_analytics.information", "sports_analytics.information_view",
-        "sports_analytics.game_information", "sports_analytics.game_information_view",
-        "sports_analytics.pnl", "sports_analytics.pnl_view",
+        "sports_analytics.market_summary", "app.sections.market_summary.market_summary_view", "app.sections.market_summary.market_summary_callbacks",
+        "sports_analytics.market_structure", "app.sections.market_structure.market_structure_link", "app.sections.market_structure.market_structure_view",
+        "app.sections.backtesting.backtesting_view",
+        "app.sections.backtesting.backtesting_summary",
+        "app.sections.backtesting.performance_summary",
+        "sports_analytics.information", "app.sections.information.information_view",
+        "sports_analytics.game_information", "app.sections.information.game_information_view",
+        "sports_analytics.pnl", "app.sections.pnl.pnl_view",
         "sports_analytics.cache_refresh",
         "sports_analytics.page_cache",
-        "sports_analytics.historical_view",
-        "sports_analytics.backtesting_service", "sports_analytics.backtesting_results",
+        "app.sections.historical.historical_view",
+        "sports_analytics.backtesting_service", "app.sections.backtesting.backtesting_results",
         "sports_analytics.backtest_process", "sports_analytics.backtest_worker",
-        "sports_analytics.backtesting_monitor",
+        "app.sections.backtesting.backtesting_monitor",
         "sports_analytics.ncaaf_markets", "sports_analytics.whp_service",
     ]
     with patch("requests.sessions.Session.request", side_effect=RuntimeError("CI must not make external requests")) as requests:
         for name in modules:
             importlib.import_module(name)
-        from sports_analytics.dashboard import create_app
-        from sports_analytics.market_view import NBA_LOGO_DIRECTORY, NFL_LOGO_DIRECTORY, NCAAF_LOGO_DIRECTORY, logo_badge
+        from app.dashboard import create_app
+        from app.sections.markets.market_view import NBA_LOGO_DIRECTORY, NFL_LOGO_DIRECTORY, NCAAF_LOGO_DIRECTORY, logo_badge
         from models.Player_Stats.Weighted_Historical_Performance import WeightedHistoricalPerformance
         from models.Player_Stats.Usage_Opportunity import UsageOpportunityForecast
         from models.Player_Stats.Usage_Opportunity.efficiency_model import beta_posterior
@@ -117,16 +120,16 @@ def main():
         require(abs(american_from_decimal(decimal_odds(-110)**2)-264.4628099173554)<1e-8,
                 'Parlay decimal-odds multiplication failed.')
         app = create_app()
-        from sports_analytics.historical_view import historical_route,statistics_kind,navigation as historical_navigation
+        from app.sections.historical.historical_view import historical_route,statistics_kind,navigation as historical_navigation
         require(historical_route('#historical-player')=='player' and historical_route('#historical-team')=='team' and
                 historical_route('#historical-player-extra') is None,'Historical page routes failed.')
         require(len(historical_navigation('NBA','team'))==2 and len(historical_navigation('NFL','player'))==2 and
                 len(historical_navigation('NCAAF','player'))==1 and statistics_kind('NCAAF','player')=='team',
                 'Historical team/player page availability failed.')
-        from sports_analytics.backtesting_view import available_models,model_config,backtesting_route,find_model
+        from app.sections.backtesting.backtesting_view import available_models,model_config,backtesting_route,find_model
         from sports_analytics.backtesting_service import (diagnostics,default_evaluation_games,season_phases,estimation_history,
             default_lookback,parse_lookback,PREDICTIVE_Z)
-        from sports_analytics.backtesting_results import figure,error_distribution,error_summary,per_game_axis
+        from app.sections.backtesting.backtesting_results import figure,error_distribution,error_summary,per_game_axis
         import pandas as pd
         import numpy as np
         require([default_evaluation_games(s) for s in ['NBA','NFL','NCAAF']]==[1000,250,1000] and
@@ -172,7 +175,7 @@ def main():
                 label,_=default_lookback(sport,model.group,model.key)
                 require(label.endswith('(Model Default)') and parse_lookback(label,sport,model.group,model.key) is None,
                         f'Backtesting model-default lookback failed: {sport} {model.key}')
-        from sports_analytics.navigation import forecast_methods as college_methods
+        from app.shell.navigation import forecast_methods as college_methods
         options,method=college_methods('#ncaaf-game-123','EPA')
         require(method=='EPA' and {r['value'] for r in options}=={'PPP','EPA','ELO'} and
                 not any(r.get('disabled') for r in options),'College game-outcome methods must be enabled.')
@@ -185,6 +188,15 @@ def main():
         with app.server.test_client() as client:
             for route in ("/", "/_dash-layout", "/_dash-dependencies"):
                 require(client.get(route).status_code == 200, f"Dashboard route failed: {route}")
+            homepage = client.get("/").get_data(as_text=True)
+            assets_directory = ROOT / "app" / "assets"
+            for path in assets_directory.rglob("*"):
+                if not path.is_file() or path.suffix not in {".css", ".js", ".ico", ".png"}:
+                    continue
+                url = "/assets/" + path.relative_to(assets_directory).as_posix()
+                require(client.get(url).status_code == 200, f"Dashboard asset route failed: {url}")
+                if path.suffix in {".css", ".js"}:
+                    require(url in homepage, f"Dashboard asset is missing from the homepage: {url}")
             layout_json=json.dumps(client.get('/_dash-layout').get_json())
             require(all(f'"id": "{name}"' in layout_json for name in
                 ['backtest-lookback-note','backtest-available','backtest-progress','backtest-progress-label','backtest-poll']),
@@ -198,7 +210,7 @@ def main():
                 'Sport sidebar page links must exist in the stable layout.')
             for sport, directory, count in (("NBA", NBA_LOGO_DIRECTORY, 30), ("NFL", NFL_LOGO_DIRECTORY, 32),
                                             ("NCAAF", NCAAF_LOGO_DIRECTORY, 100)):
-                require(directory.parent.parent == ROOT / "images", f"{sport} logo path must use images/.")
+                require(directory.parent.parent == ROOT / "app" / "images", f"{sport} logo path must use app/images/.")
                 paths = list(directory.glob("*.png"))
                 require(len(paths) >= count, f"Expected at least {count} {sport} team logos.")
                 for path in paths:
@@ -207,7 +219,7 @@ def main():
                     require(response.status_code == 200 and response.data.startswith(b"\x89PNG\r\n\x1a\n"),
                             f"Logo route failed: {sport} {path.name}")
         requests.assert_not_called()
-    print(f"Passed: project layout, {len(modules)} imports, WHP math, Dash routes and NBA/NFL/NCAAF logos. No external requests.")
+    print(f"Passed: project layout, {len(modules)} imports, WHP math, Dash routes, assets, and league logos. No external requests.")
 
 
 if __name__ == "__main__":

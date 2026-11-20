@@ -14,10 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from dash.exceptions import PreventUpdate
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.data import DataSourceError
 from sports_analytics.kalshi import BASE, KalshiService, category, price, contract
-from sports_analytics import kalshi_view as view
+from app.sections.exchanges import kalshi_view as view
 
 GAME = 'KXNFLGAME-26OCT25PITNO'
 SPREAD = 'KXNFLSPREAD-26OCT25PITNO'
@@ -169,7 +169,7 @@ class KalshiChecks(TestCase):
         self.assertIsNone(view.route('#nba-kalshi-game-' + GAME))
         with self.assertRaises(PreventUpdate): cb['kalshi_games']('historical', 'NFL', 7, 0, 0)
         with self.assertRaises(PreventUpdate): cb['kalshi_quotes']('historical', 'NFL', self.game, 'Game Lines', 'live', 0, 0, 5)
-        with patch('sports_analytics.kalshi_callbacks.ctx', SimpleNamespace(triggered_id='kalshi-quote-timer')):
+        with patch('app.sections.exchanges.kalshi_callbacks.ctx', SimpleNamespace(triggered_id='kalshi-quote-timer')):
             with self.assertRaises(PreventUpdate): cb['kalshi_quotes']('kalshi', 'NFL', self.game, 'Game Lines', 'live', 0, 0, 0)
             with self.assertRaises(PreventUpdate): cb['kalshi_quotes']('kalshi', 'NFL', self.game, 'Game Lines', 'saved.json', 0, 0, 5)
         self.client.json.assert_not_called()
@@ -177,7 +177,7 @@ class KalshiChecks(TestCase):
         self.assertEqual((live[-2], live[-1]), (False, 2000))
         self.assertTrue(cb['kalshi_visibility']('market', 'NFL', view.href('NFL', GAME), 5, 'live', self.game)[-2])
         with app.server.test_client() as client:
-            for url in ['/', '/_dash-layout', '/_dash-dependencies', '/assets/kalshi.css']:
+            for url in ['/', '/_dash-layout', '/_dash-dependencies', '/assets/css/kalshi.css']:
                 with client.get(url) as response: self.assertEqual(response.status_code, 200)
 
     def test_price_polls_preserve_open_rules_and_clear_wrong_game_tables(self):

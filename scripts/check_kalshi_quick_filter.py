@@ -117,7 +117,7 @@ class QuickLifecycleChecks(TestCase):
         scan=self.submit();self.ready();response=self.display(scan)
         self.assert_terminal(response,'complete')
         self.assertIn('timestamp unavailable',str(response));self.assertIn('No qualifying markets',str(response))
-        with patch('sports_analytics.kalshi_analysis_callbacks.results',side_effect=ValueError('display fixture')):
+        with patch('app.sections.exchanges.kalshi_analysis_callbacks.results',side_effect=ValueError('display fixture')):
             response=self.display(scan)
         self.assert_terminal(response,'error');self.assertIn('display fixture',str(response))
 

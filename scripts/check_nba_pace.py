@@ -16,13 +16,13 @@ from models.Game_Outcome.Adjusted_Offensive_Defensive_Efficiency import NBAAdjus
 from models.Game_Outcome.Pace_Possession import NBAPaceConfig, NBAPaceForecast, NBAPaceModel
 from models.Game_Outcome.Pace_Possession.NBA_PACE import simulate
 from sports_analytics.backtesting_service import BacktestingService, evaluated_records
-from sports_analytics.backtesting_view import find_model
+from app.sections.backtesting.backtesting_view import find_model
 from sports_analytics.comparison import selected_methods as comparison_methods
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.kalshi_analysis import quick_calculate
-from sports_analytics.mispricing import rank_markets, selected_methods
+from app.sections.markets.mispricing import rank_markets, selected_methods
 from sports_analytics.nba_model_data import aggregate_team_games, with_player_minutes
-from sports_analytics.quick_methods import choices, game_methods, game_options, prompt_key, scope
+from app.sections.markets.quick_methods import choices, game_methods, game_options, prompt_key, scope
 from sports_analytics.summary_filtering import calculate_filter
 
 

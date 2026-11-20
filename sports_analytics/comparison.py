@@ -9,7 +9,7 @@ import time
 from uuid import uuid4
 
 from .backtesting_service import diagnostics, evaluated_records, evaluation_bounds, parse_lookback
-from .backtesting_view import CATALOG, GROUPS
+from app.sections.backtesting.backtesting_view import CATALOG, GROUPS
 from models.Player_Stats.Weighted_Historical_Performance.historical_data import atomic_json
 
 
@@ -18,7 +18,7 @@ def methods(group,sport=None):
 
 
 def page_route(tab,location_hash,sport):
-    from .research_view import route
+    from app.sections.research.research_view import route
     selected=route(location_hash)
     return dict(sport=sport,group=selected[0]) if tab=='RESEARCH' and selected and selected[1]=='comparison' and sport in {'NBA','NFL','NCAAF'} else None
 

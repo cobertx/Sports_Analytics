@@ -11,7 +11,7 @@ def player_market(row, sport):
 
 
 def stat_label(stat):
-    from .market_view import MARKET_NAMES
+    from app.sections.markets.market_view import MARKET_NAMES
     return MARKET_NAMES.get('player_'+stat+'_alternate',MARKET_NAMES.get('player_'+stat,('',stat.replace('_',' ').title())))[1]
 
 
@@ -38,7 +38,7 @@ def selection(row, side, snapshot=None):
     # Ranges and scalar payoffs cannot be represented as two spread/total bets.
     strike = threshold(row) if row.get('cap_strike') is None and row.get('market_type') in {None, 'binary'} else None
     if family.endswith('SPREAD') and strike:
-        from .kalshi_view import matchup, team_identity
+        from app.sections.exchanges.kalshi_view import matchup, team_identity
         match = re.search(r'^(.+?)\s+(?:wins?|win)\s+by\b', yes, re.I) or re.search(
             r'^(.+?)\s+(?:wins?|win)\s+by\b', title, re.I)
         game = snapshot.get('game')
@@ -57,7 +57,7 @@ def selection(row, side, snapshot=None):
         if yes.casefold() != 'yes' and no.casefold() not in {'', 'no', yes.casefold()}:
             label = yes if side == 'yes' else no
             return label, label, 0
-        from .kalshi_view import matchup, team_identity
+        from app.sections.exchanges.kalshi_view import matchup, team_identity
         game = snapshot.get('game')
         teams = matchup(game) if game else None
         if teams:

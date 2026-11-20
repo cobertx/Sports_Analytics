@@ -10,11 +10,11 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from dash import no_update
 from models.Game_Outcome.PPP.PPP import MarketProbability
-from sports_analytics import quick_methods as qm
+from app.sections.markets import quick_methods as qm
 from scripts.callback_fixtures import wire_value
 from sports_analytics.data import DataSourceError
 from sports_analytics.kalshi_analysis import FILTER,prompt_targets
-from sports_analytics.mispricing import FILTER_CATEGORY
+from app.sections.markets.mispricing import FILTER_CATEGORY
 import check_mispricing as fanduel
 import check_kalshi_analysis as kalshi
 
@@ -202,10 +202,10 @@ class PromptMethodChecks(TestCase):
 
     def test_closed_prompt_editor_does_not_load_or_erase_current_choices(self):
         f=self.fixture(fanduel.MispricingChecks)
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-quick-prompts-panel')):
+        with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-quick-prompts-panel')):
             self.assertIs(f.cb['quick_prompt_methods'](False,'#nfl-game-123','saved',FILTER_CATEGORY,'market'),no_update)
         f.markets.history.assert_not_called()
-        with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-quick-prompts-panel')):
+        with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-quick-prompts-panel')):
             rendered=f.cb['quick_prompt_methods'](True,'#nfl-game-123',f.saved['pulled_at'],FILTER_CATEGORY,'market')
         ids=[c.id for c in fanduel.components(rendered) if c.__class__.__name__=='Dropdown']
         self.assertTrue(ids);self.assertTrue(all(i['scope']==qm.scope('market','NFL','123') for i in ids))

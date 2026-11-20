@@ -1,7 +1,7 @@
 /* Real client renderer and accordion events; no browser, HTTP or model calls. */
 const fs=require('node:fs');
 const path=require('node:path');
-const source=fs.readFileSync(path.join(__dirname,'../sports_analytics/assets/player_distribution.js'),'utf8');
+const source=fs.readFileSync(path.join(__dirname,'../app/assets/js/player_distribution.js'),'utf8');
 let checks=0;
 const check=(ok,label)=>{if(!ok)throw new Error(label);checks++;};
 const writes=[],events={},noUpdate={};

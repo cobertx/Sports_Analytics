@@ -12,10 +12,10 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dash.exceptions import PreventUpdate
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.dashboard import create_app
+from app.dashboard import create_app
 from sports_analytics.in_game_data import InGameService, nba_shot, nfl_play, valid_game, charting_fields
-from sports_analytics import in_game_view as view
-from sports_analytics import nfl_in_game as nfl
+from app.sections.in_game import in_game_view as view
+from app.sections.in_game import nfl_in_game as nfl
 from sports_analytics.service import DataService
 
 
@@ -312,7 +312,7 @@ class InGameChecks(TestCase):
         with patch('requests.sessions.Session.request', side_effect=AssertionError('No network')):
             app = create_app(in_game_service=self.service)
             client = app.server.test_client()
-            for route in ['/', '/_dash-layout', '/_dash-dependencies', '/assets/in_game.css']:
+            for route in ['/', '/_dash-layout', '/_dash-dependencies', '/assets/css/in_game.css']:
                 with client.get(route) as response:
                     self.assertEqual(response.status_code, 200)
         callbacks = callback_functions(app)
@@ -323,7 +323,7 @@ class InGameChecks(TestCase):
         self.assertEqual(callbacks['in_game_visibility']('in-game', 'NCAAF')[1], {'display': 'none'})
         self.assertEqual(callbacks['in_game_supported_page']('NCAAF', 'in-game'), 'historical')
         with self.assertRaises(PreventUpdate): callbacks['in_game_supported_page']('NBA', 'in-game')
-        with patch('sports_analytics.in_game_callbacks.ctx', SimpleNamespace(triggered_id=None)):
+        with patch('app.sections.in_game.in_game_callbacks.ctx', SimpleNamespace(triggered_id=None)):
             with self.assertRaises(PreventUpdate):
                 callbacks['in_game_catalog']('historical', 'NBA', 2025, 'regular', 0, None)
             with self.assertRaises(PreventUpdate):
@@ -340,7 +340,7 @@ class InGameChecks(TestCase):
         self.assertEqual(callbacks['in_game_player_options'](data, view.ALL, view.ALL, 'NO:2')[-1], 'NO:2')
         self.assertEqual(callbacks['in_game_player_options'](data, view.ALL, view.ALL, view.ALL)[-1], view.ALL)
         clicked = dict(type='in-game-drive-button', drive='NO:2')
-        with patch('sports_analytics.in_game_callbacks.ctx', SimpleNamespace(triggered_id=clicked, triggered=[dict(value=1)])):
+        with patch('app.sections.in_game.in_game_callbacks.ctx', SimpleNamespace(triggered_id=clicked, triggered=[dict(value=1)])):
             self.assertEqual(callbacks['in_game_choose_drive']([0, 1], data, view.ALL), 'NO:2')
             with self.assertRaises(PreventUpdate): callbacks['in_game_choose_drive']([0, 1], data, 'ARI')
         key, meta = next((key, item) for key, item in app.callback_map.items()

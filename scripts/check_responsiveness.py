@@ -18,7 +18,7 @@ from dash import dcc
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from models.Game_Outcome.PPP.PPP import PPPConfig,PPPForecast
 from sports_analytics.data import DataSourceError
-from sports_analytics.loading import MESSAGES,indicator
+from app.shell.loading import MESSAGES,indicator
 from sports_analytics.nba_model_data import NbaModelData,aggregate_team_games
 from sports_analytics.ppp_service import PPPMarketService
 from sports_analytics.page_cache import forecast_revision
@@ -173,7 +173,7 @@ class ResponsivenessChecks(TestCase):
     def finish_view(self,fixture,category='Game',criteria=None,player_method='WHP',previous=None):
         history=previous
         for _ in range(200):
-            with patch('sports_analytics.dashboard.ctx',SimpleNamespace(triggered_id='market-category' if history is None else 'market-model-poll')):
+            with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-category' if history is None else 'market-model-poll')):
                 result=fixture.cb['show_saved_markets'](category,fixture.saved['pulled_at'],'#nfl-game-123',criteria,'PPP',player_method,history,'market',0)
             if result[1] is not None and isinstance(result[1],dict):history=result[1]
             if history and not history.get('pending'):return result
@@ -182,7 +182,7 @@ class ResponsivenessChecks(TestCase):
 
     def test_filter_thresholds_and_unrelated_methods_do_not_refit_warm_game_forecasts(self):
         fixture=self.fixture()
-        with patch('sports_analytics.dashboard.market_sections',return_value='same view'):
+        with patch('app.sections.markets.callbacks.market_sections',return_value='same view'):
             self.finish_view(fixture)
             before=fixture.game_services['PPP'].forecast.call_count
             self.finish_view(fixture,criteria=dict(probability=.8,edge=.1),player_method='PGE')
@@ -193,7 +193,7 @@ class ResponsivenessChecks(TestCase):
 
     def test_joint_player_forecast_is_shared_across_categories_and_displayed_category_is_current(self):
         fixture=self.fixture()
-        with patch('sports_analytics.dashboard.market_sections',return_value='same view'):
+        with patch('app.sections.markets.callbacks.market_sections',return_value='same view'):
             self.finish_view(fixture,'Passing',player_method='UO')
             result=self.finish_view(fixture,'Receiving',player_method='UO')
             self.assertEqual(fixture.player_services['UO'].forecast.call_count,1)
@@ -208,7 +208,7 @@ class ResponsivenessChecks(TestCase):
         source=fixture.player_services['UO']
         source.repository=SimpleNamespace(root=root,data=SimpleNamespace(path=self.root/'sports.sqlite3'))
         before=forecast_revision(source,'NFL')
-        with patch('sports_analytics.dashboard.market_sections',return_value='same view'):
+        with patch('app.sections.markets.callbacks.market_sections',return_value='same view'):
             self.finish_view(fixture,'Passing',player_method='UO')
             history.write_text('pts\n25\n',encoding='utf-8')
             self.assertNotEqual(forecast_revision(source,'NFL'),before)
@@ -229,7 +229,7 @@ class ResponsivenessChecks(TestCase):
             (root/'imports/nfl.csv').write_text('pts\n20\n',encoding='utf-8')
             return forecast
         source.forecast.side_effect=prepare
-        with patch('sports_analytics.dashboard.market_sections',return_value='same view'):
+        with patch('app.sections.markets.callbacks.market_sections',return_value='same view'):
             self.finish_view(fixture,'Passing',player_method='UO')
         self.assertEqual(source.forecast.call_count,1)
 
@@ -248,30 +248,28 @@ class ResponsivenessChecks(TestCase):
             self.assertTrue(any(any(getattr(child,'id',None)==identity for child in components(loader.children)) for loader in loaders),identity)
         identifiers=[node.id for node in nodes if isinstance(getattr(node,'id',None),str)]
         self.assertEqual(len(identifiers),len(set(identifiers)))
-        for identity in ['load-status','trend','information-status','game-information-content','kalshi-quote-status','polymarket-quote-status']:
+        for identity in ['historical','information-status','game-information-content','kalshi-quote-status','polymarket-quote-status']:
             self.assertIn(identity+'-loading',identifiers)
             callback=fixture.app.callback_map[identity+'-loading.display']
             self.assertNotIn('callback',callback,'Background feedback must not require another HTTP request')
         with fixture.app.server.test_client() as client:
             self.assertEqual(client.get('/_dash-layout').status_code,200)
-            self.assertEqual(client.get('/assets/loading.css').status_code,200)
+            self.assertEqual(client.get('/assets/css/loading.css').status_code,200)
         self.assertIn('kalshi-quick-status',identifiers)
         self.assertNotIn('kalshi-quick-status',MESSAGES)
-        css=(Path(__file__).resolve().parents[1]/'sports_analytics/assets/loading.css').read_text(encoding='utf-8')
+        css=(Path(__file__).resolve().parents[1]/'app/assets/css/loading.css').read_text(encoding='utf-8')
         # Dash uses parent_className twice: wrapper -> content -> actual child.
         # A descendant :last-child rule also disables the entire content child.
         self.assertNotIn('.action-loading > div:last-child { pointer-events: none;',css)
         self.assertIn('.action-loading > div:has(> .action-loading-overlay) { pointer-events: none;',css)
         self.assertNotIn('action-loading-overlay',indicator('Inline market progress').className)
         indexed={node.id:node for node in nodes if isinstance(getattr(node,'id',None),str)}
-        self.assertEqual(indexed['trend-loading'].target_components,{'trend':'figure'})
-        self.assertEqual(indexed['game-log-loading'].target_components,{'game-log':'data'})
-        self.assertEqual(indexed['dataset-summary-loading'].target_components,{'dataset-summary':'children'})
-        self.assertIn('historical performance',str(indexed['trend-loading'].custom_spinner))
-        for loader in loaders:
-            children=list(components(loader.children))
-            ids={getattr(child,'id',None) for child in children if isinstance(getattr(child,'id',None),str)}
-            self.assertFalse({'dataset-summary','trend','game-log'}<=ids,'Dataset loading must not cover the entire historical results area')
+        historical=[node for node in components(indexed['historical-page']) if isinstance(node,dcc.Loading)]
+        self.assertEqual([loader.id for loader in historical], ['historical-loading'])
+        self.assertEqual(historical[0].target_components, {'load-status':'children','ncaaf-history-status':'children',
+                                                          'entity':'options','player-team':'options',
+                                                          'metric-group':'options','metric':'options',
+                                                          'trend':'figure','career-trend':'figure'})
         self.assertEqual(indexed['dashboard-main'].tabIndex,-1)
         self.assertIn('skip-navigation',indexed)
 

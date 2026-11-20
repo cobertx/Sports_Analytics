@@ -14,8 +14,8 @@ from models.Player_Stats.Weighted_Historical_Performance.core import WHPForecast
 from models.Player_Stats.Usage_Opportunity.distributions import UsageOpportunityForecast
 from models.Player_Stats.Opponent_Adjusted_Matchup.distributions import MatchupForecast
 from models.Player_Stats.Pace_Game_Environment.distributions import PaceForecast
-from sports_analytics.player_distribution import distribution
-from sports_analytics.market_view import market_sections
+from app.sections.markets.player_distribution import distribution
+from app.sections.markets.market_view import market_sections
 from scripts.check_mispricing import components
 from scripts import check_mispricing as mispricing_fixtures
 
