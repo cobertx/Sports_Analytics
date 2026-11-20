@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import pandas as pd
 
+from models.Player_Stats.backtest_eligibility import STANDALONE_WORKLOAD
 from .backtesting import walk_forward_backtest
 from .core import WHPConfig, WeightedHistoricalPerformance
 from .historical_data import PlayerHistoryRepository
@@ -25,7 +26,7 @@ def main():
     parser.add_argument("--signed", action="store_true", help="Allow negative net football yardage")
     parser.add_argument("--opportunity", type=float, help="Known pregame workload projection; use with --beta below 1")
     parser.add_argument("--beta", type=float, default=1)
-    parser.add_argument("--backtest", action="store_true")
+    parser.add_argument("--backtest", action="store_true", help=f"Replay eligible appearances. {STANDALONE_WORKLOAD}")
     parser.add_argument("--evaluation-start", help="Start of untouched test interval, with timezone")
     args = parser.parse_args()
     if args.prepare:

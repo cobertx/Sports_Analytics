@@ -10,6 +10,7 @@ from sports_analytics.nfl_markets import NflMarketService
 from .config import UsageOpportunityConfig
 from .historical_data import UsageHistoryRepository
 from .prediction_service import UsageOpportunityMarketService
+from models.Player_Stats.backtest_eligibility import STANDALONE_WORKLOAD
 from .backtesting import walk_forward_backtest
 
 
@@ -23,7 +24,7 @@ def main(argv=None):
     parser.add_argument('--snapshot', type=Path, help='Saved market CSV or canonical snapshot JSON')
     parser.add_argument('--simulations', type=int, default=12000)
     parser.add_argument('--backtest-snapshots', type=Path, help='JSON list of canonical pregame snapshots')
-    parser.add_argument('--actuals', type=Path, help='CSV: game_id,subject,market,value')
+    parser.add_argument('--actuals', type=Path, help=f'CSV: game_id,subject,market,value. {STANDALONE_WORKLOAD}')
     args = parser.parse_args(argv)
     load_dotenv(Path(__file__).resolve().parents[3]/'.env')
     try:

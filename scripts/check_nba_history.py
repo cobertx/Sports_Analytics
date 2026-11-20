@@ -15,6 +15,7 @@ import pandas as pd
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts.callback_fixtures import callback_functions,wire_value
 from sports_analytics.data import DataSourceError,Query,fetch
+from sports_analytics.historical_links import history_href
 from sports_analytics.nba_espn import load,identities,IDENTITIES
 from sports_analytics.service import DataService
 from app.dashboard import create_app
@@ -174,6 +175,16 @@ class PromptLandingChecks(TestCase):
         network=patch('requests.sessions.Session.request',side_effect=AssertionError('Offline fixture only'))
         network.start();self.addCleanup(network.stop)
 
+    def post(self, client, name, values, trigger):
+        key,meta=next((key,m) for key,m in self.app.callback_map.items()
+                      if m.get('callback') and m['callback'].__wrapped__.__name__==name)
+        response=client.post('/_dash-update-component',json=dict(output=key,
+            outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
+            inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
+            state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=[trigger]))
+        self.assertEqual(response.status_code,200,response.get_data(as_text=True))
+        return response.get_json()['response']
+
     def test_link_loads_its_season_and_player_scope_before_old_controls_settle(self):
         with patch('app.sections.historical.callbacks.ctx',SimpleNamespace(triggered_id='workspace-page')), \
              patch('sports_analytics.service.fetch',return_value=self.source) as request:
@@ -225,21 +236,33 @@ class PromptLandingChecks(TestCase):
         status=self.cb['historical_market_status'](None,None,None,self.href,'Source is offline.')
         self.assertIn('could not be loaded',status);self.assertNotIn('Loading historical data',status)
 
+    def test_cached_cavaliers_scoring_link_releases_team_chart(self):
+        query=Query('NBA',SEASON,'team')
+        source=load(query,client_for(boxes().rename(columns={'home_away':'team_home_away'})))
+        with patch('sports_analytics.service.fetch',return_value=source):
+            self.service.load(query)
+        href=history_href('NBA','team','Cleveland Cavaliers','',dict(commence_time=f'{SEASON}-10-24T23:00:00Z'))
+        values={'load':1,'refresh':0,'sport':'NBA','season':SEASON,'entity-type':'team','season-type':'regular',
+                'workspace-page':'historical','market-url':href,'player-team':None,'entity':'1610612739','metric':'pts','window':5}
+        with self.app.server.test_client() as client:
+            loaded=self.post(client,'load_data',values,'load.n_clicks')
+            self.assertIn('Cached',loaded['load-status']['children'])
+            values['dataset']=loaded['dataset']['data']
+            rendered=self.post(client,'analyze',values,'entity.value')
+        scope=rendered['trend']['figure']['layout']['meta']['analysis_scope']
+        self.assertIsNone(scope['team'])
+        self.assertEqual((scope['route'],scope['entity'],scope['metric']),(href,'1610612739','pts'))
+        self.assertEqual([row['pts'] for row in rendered['game-log']['data']],[106])
+
     def test_dash_http_navigation_uses_url_scope_and_current_season_cache(self):
         values={'load':0,'refresh':0,'historical-cache-poll':0,'sport':'NBA','season':SEASON-1,'entity-type':'team','season-type':'postseason',
                 'college-team':None,'week':5,'workspace-page':'historical','dataset':None,'market-url':self.href}
-        key,meta=next((key,m) for key,m in self.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__=='load_data')
         with patch('sports_analytics.service.fetch',return_value=self.source) as request,self.app.server.test_client() as client:
-            payload=dict(output=key,
-                outputs=[dict(id=o.component_id,property=o.component_property) for o in meta['output']],
-                inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
-                state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],changedPropIds=['market-url.hash'])
-            initial=client.post('/_dash-update-component',json=payload)
-            self.assertTrue(initial.get_json()['response']['historical-cache-pending']['data'])
+            initial=self.post(client,'load_data',values,'market-url.hash')
+            self.assertTrue(initial['historical-cache-pending']['data'])
             self.service._refresh.tasks.join()
-            response=client.post('/_dash-update-component',json=payload)
-        self.assertEqual(response.status_code,200,response.get_data(as_text=True))
-        dataset=response.get_json()['response']['dataset']['data']
+            response=self.post(client,'load_data',values,'market-url.hash')
+        dataset=response['dataset']['data']
         self.assertEqual((dataset['season'],dataset['kind']),(SEASON,'player'))
         request.assert_called_once_with(Query('NBA',SEASON,'player'))
 

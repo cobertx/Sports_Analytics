@@ -1,4 +1,4 @@
-"""Persistent bottom-left overview of active app backtests."""
+"""Sidebar overview of active app backtests."""
 from dash import dcc,html
 from app.sections.backtesting.backtesting_view import find_model,model_name
 from sports_analytics.backtesting_service import default_evaluation_games
@@ -7,16 +7,19 @@ from sports_analytics.backtesting_service import default_evaluation_games
 def layout():
     return html.Aside([
         dcc.Store(id='backtest-monitor-jobs',data=[]),
-        dcc.Store(id='backtest-monitor-collapsed',data=False,storage_type='session'),
         dcc.Interval(id='backtest-monitor-timer',interval=1000),
-        html.Button([html.Span('Backtests',className='backtest-monitor-heading'),
-            html.Span('0',id='backtest-monitor-count',className='backtest-monitor-count'),
-            html.Span('⌄',className='backtest-monitor-chevron',**{'aria-hidden':'true'})],
-            id='backtest-monitor-toggle',n_clicks=0,className='backtest-monitor-toggle',
-            **{'aria-expanded':'true','aria-controls':'backtest-monitor-body','aria-label':'Minimize backtesting processes'}),
-        html.Div(html.P('No backtests running.',className='backtest-monitor-empty'),
-            id='backtest-monitor-body',className='backtest-monitor-body'),
-    ],id='backtest-monitor',className='backtest-monitor',**{'aria-label':'Ongoing backtesting processes'})
+        html.Details([
+            html.Summary([
+                html.Span('Backtests',className='backtest-monitor-heading'),
+                html.Span('0',id='backtest-monitor-count',className='backtest-monitor-count'),
+                html.Span('⌄',className='backtest-monitor-chevron',**{'aria-hidden':'true'}),
+            ],id='backtest-monitor-toggle',className='backtest-monitor-toggle',disable_n_clicks=True,
+              **{'aria-controls':'backtest-monitor-body'}),
+            html.Div(html.P('No backtests running.',className='backtest-monitor-empty'),
+                     id='backtest-monitor-body',className='backtest-monitor-body'),
+        ],id='backtest-monitor-disclosure',open=True,disable_n_clicks=True),
+    ],id='backtest-monitor',className='backtest-monitor',disable_n_clicks=True,
+      **{'aria-label':'Ongoing backtesting processes'})
 
 
 def contents(jobs):

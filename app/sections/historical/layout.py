@@ -10,14 +10,14 @@ from app.components.controls import kpi
 
 
 def layout():
+    current_year = date.today().year
+    seasons = [{"label": f"{year}-{year + 1}", "value": year} for year in range(current_year, 1998, -1)]
     return html.Div([
         html.Section([
             html.Div([html.Div("BUILD YOUR DATASET", className="eyebrow"),
                       html.H2("Historical scope")], className="dataset-builder-heading"),
             html.Div([
-                field("Season starting year", dcc.Dropdown(id="season", options=list(range(date.today().year, 1998, -1)),
-                                                           value=date.today().year - 1, clearable=False),
-                      "NBA: 2024 means 2024–25. Football: 2024 means the 2024 season."),
+                field("Season", dcc.Dropdown(id="season", options=seasons, value=current_year - 1, clearable=False)),
                 field("Season phase", dcc.Dropdown(id="season-type", options=[{"label": "Regular season", "value": "regular"},
                                                                               {"label": "Postseason", "value": "postseason"}],
                                                    value="regular", clearable=False)),

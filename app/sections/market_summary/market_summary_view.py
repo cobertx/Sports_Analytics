@@ -7,6 +7,7 @@ from dash import dcc,html
 from sports_analytics.display_time import format_eastern
 from app.sections.markets.market_view import logo_badge,market_provider_heading,probability_text
 from app.sections.markets.mispricing import GAME_METHODS,PLAYER_METHODS,QUICK_DEFAULT_PROBABILITY,QUICK_DEFAULT_EDGE
+from app.sections.markets import quick_visibility
 from app.sections.markets.prompt_history import button as history_button
 from app.sections.market_structure.market_structure_link import button as structure_button
 from sports_analytics.market_summary import PROVIDERS
@@ -32,7 +33,7 @@ def provider_logo(provider):
 
 def quick_controls():
     return html.Section([
-        dcc.Store(id='summary-quick-request'),dcc.Store(id='summary-quick-completed'),
+        dcc.Store(id='summary-quick-request'),dcc.Store(id='summary-quick-completed'),dcc.Store(id='summary-quick-progress-state'),
         dcc.Interval(id='summary-quick-poll',interval=1000,n_intervals=0,disabled=True),
         html.H3(QUICK),html.P('Choose methods and thresholds, then run Quick Filtering. Each quote must pass both thresholds '
             'under every selected method for its market type. Qualifying game lines also appear in the probability charts.',
@@ -50,8 +51,7 @@ def quick_controls():
                 value=QUICK_DEFAULT_EDGE,min=-100,max=100,step='any')),
             html.Button('Run Quick Filtering',id='summary-quick-run',n_clicks=0,className='apply-criteria-button'),
         ],className='criteria-controls'),
-        html.Div(id='summary-quick-status',role='status',className='criteria-status'),
-        html.Div(id='summary-quick-results'),
+        quick_visibility.feedback('summary','summary-quick-results'),
     ],id='summary-quick-panel',className='quick-filter-section',style={'display':'none'})
 
 

@@ -15,12 +15,13 @@ import numpy as np
 import plotly.graph_objects as go
 
 from app.sections.backtesting.backtesting_view import SPORTS,GROUPS,PERFORMANCE_ROUTE,available_models,model_config,model_name,summary_href
-from sports_analytics.backtesting_service import evaluation_bounds,current_player_cohort
+from sports_analytics.backtesting_service import default_evaluation_games,evaluation_bounds,current_player_cohort,parse_lookback
 from app.sections.backtesting.backtesting_results import field,figure,range_accuracy,valid_prediction_interval
 from sports_analytics.comparison import Comparisons,compare_reports
 from sports_analytics.data import DataSourceError
 from sports_analytics.display_time import eastern_datetime,format_eastern
 from sports_analytics.history_freshness import active_season
+from sports_analytics.research_config import configured,default_config
 from models.Player_Stats.Weighted_Historical_Performance.markets import NBA,FOOTBALL
 from models.Player_Stats.Usage_Opportunity.markets import market_spec
 
@@ -99,30 +100,75 @@ class PerformanceSummaries(Comparisons):
         attempted=report.get('attempted',len(report['records'])+len(report.get('skipped',[])))
         return attempted>=context.get('limit',0)
 
+    def matching_jobs(self,context,request,models):
+        """Find matching work started outside this Performance Summary."""
+        sport,group=context['sport'],context['group']
+        player=group=='player-stats'
+        keys={model.key for model in models}
+        for job in self.backtesting.active_jobs():
+            params=job['parameters']
+            key=params.get('key')
+            if key not in keys or params.get('sport')!=sport or params.get('group')!=group:continue
+            team_filter=params.get('team_filter')
+            entity=params.get('entity','__all__')
+            if player and entity!='__all__':continue
+            if not player and team_filter:entity=team_filter
+            team=(team_filter or '__all__') if player else entity
+            playoffs=params.get('include_playoffs',False)
+            if not isinstance(playoffs,bool):continue
+            try:
+                limit=params.get('limit')
+                scope=settings(context,params.get('market') if player else 'margin',team,
+                    default_evaluation_games(sport,entity) if limit is None else limit,
+                    params.get('start'),params.get('end'),'include' if playoffs else 'exclude',
+                    params.get('line') if player else None)
+                scope['lookback']=parse_lookback(params.get('lookback'),sport,group,key)
+                if scope!=request:continue
+                if params.get('config_overrides') is not None:
+                    defaults=default_config(sport,group,key)
+                    if configured(defaults,params['config_overrides'])!=defaults:continue
+            except (ValueError,TypeError):continue
+            yield key,dict(state='running',job_id=job['id'],percent=job['percent'],message=job['message'])
+
     def ensure(self,context,request,team):
         evaluation_bounds(request['start'],request['end'],self.backtesting.now())
         with self.lock:
             models=available_models(context['sport'],context['group'])
-            # Repeated clicks and revisits join the same in-flight simulations.
-            for previous in self.history(context):
-                if previous.get('settings')==request:
-                    previous=self.refresh(context,previous['id'])
-                    if any(e['state'] in {'queued','running'} for e in previous['entries'].values()):return previous
-                    reports=self.reports(previous)
-                    if (set(previous['entries'])=={m.key for m in models}
-                            and all(e['state'] in {'completed','unsupported'} for e in previous['entries'].values())
-                            and all(m.key in reports and reports[m.key]['records'] and current_player_cohort(reports[m.key]) and self.full_team_request(reports[m.key]) and
-                                    reports[m.key].get('config')==model_config(m,context['sport'])
-                                    for m in models if previous['entries'][m.key]['state']=='completed')):
-                        return previous
+            previous=active=None
+            running={}
+            pending_states={'queued','running'}
+            for saved in self.history(context):
+                if saved.get('settings')!=request:continue
+                manifest=(self.refresh(context,saved['id']) if any(
+                    entry['state'] in pending_states for entry in saved['entries'].values()) else saved)
+                if manifest is None:continue
+                if previous is None:previous=manifest
+                for key,entry in manifest['entries'].items():
+                    if entry['state'] in pending_states and entry.get('job_id'):
+                        if active is None:active=manifest
+                        running.setdefault(key,entry)
+            for key,entry in self.matching_jobs(context,request,models):
+                running.setdefault(key,entry)
+
+            # An active summary can gain reports from independent backtests or
+            # need another method started on a repeat click.
+            reference=active or previous
+            known=reference['entries'] if reference else {}
             entries={}
             for model in models:
                 if context['group']=='player-stats' and model.key!='whp' and market_spec(context['sport'],request['market']) is None:
                     entries[model.key]=dict(state='unsupported',message='This method does not support the selected statistic.')
                     continue
                 report=self.matching(context,model,request)
-                entries[model.key]=(dict(state='completed',run_id=report['run_id'],reused=True) if report else dict(state='queued'))
-            manifest=self.new(context,entries,request,'performance')
+                if report:
+                    entry=known.get(model.key,{})
+                    entries[model.key]=(entry if entry.get('state')=='completed' and entry.get('run_id')==report['run_id']
+                                        else dict(state='completed',run_id=report['run_id'],reused=True))
+                else:
+                    entries[model.key]=running.get(model.key,dict(state='queued'))
+
+            if reference and entries==known:return reference
+            manifest=(self.save({**active,'entries':entries}) if active else self.new(context,entries,request,'performance'))
             for key,entry in manifest['entries'].items():
                 if entry['state']!='queued':continue
                 try:
@@ -131,7 +177,7 @@ class PerformanceSummaries(Comparisons):
                     entry.update(state='running',job_id=job)
                 except (ValueError,OSError,RuntimeError) as exc:entry.update(state='failed',message=str(exc))
                 self.save(manifest)
-            if self.watch and any(e['state']=='running' for e in entries.values()):
+            if self.watch and not active and any(e['state']=='running' for e in entries.values()):
                 threading.Thread(target=self.follow,args=(dict(context),manifest['id']),daemon=True,
                                  name='performance-'+manifest['id'][:8]).start()
             return manifest
@@ -433,9 +479,11 @@ def register(app,backtesting):
             if manifest.get('source')!='latest-saved':pages[page]=manifest['id']
             running=sum(e['state'] in {'queued','running'} for e in manifest['entries'].values())
             complete=sum(e['state']=='completed' for e in manifest['entries'].values())
+            reused=sum(e['state']=='completed' and e.get('reused',False) for e in manifest['entries'].values())
             status=(f'Latest saved backtests · {complete} models · Newest completed {format_eastern(manifest["created_at"])}.'
                     if manifest.get('source')=='latest-saved' else
-                    f'{complete} models completed · {running} running.' +
+                    f'{complete} models completed'+(f' ({reused} loaded from saved runs)' if reused else '')+
+                    f' · {running} running.' +
                     (' Jobs continue while you visit another page.' if running else ''))
             if ctx.triggered_id=='performance-poll' and current==manifest:raise PreventUpdate
             request=manifest['settings']

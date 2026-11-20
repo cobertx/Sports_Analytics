@@ -85,14 +85,17 @@ class ConcurrencyChecks(TestCase):
         self.assertIn('Calculating PGE: away @ home',messages[-1]['message'])
         self.assertFalse(any(t.name=='backtest-heartbeat' for t in threading.enumerate()))
 
-    def test_failed_joint_forecast_runs_once_per_game_and_preserves_skip_rows(self):
+    def test_failed_joint_forecast_keeps_full_player_pool_and_only_skips_eligible_rows(self):
         from models.Player_Stats.Weighted_Historical_Performance.markets import stat_spec
         from sports_analytics.research_config import player_config
         with tempfile.TemporaryDirectory() as directory,simulated_player_inputs():
             backend=BacktestingService(root=directory)
             frame=backend.player_inputs('NBA').assign(value=lambda f:f.pts)
             ids=frame.drop_duplicates('game_id',keep='last').tail(2).game_id
-            games=[row for _,row in frame[frame.game_id.isin(ids)].sort_values(['event_date','game_id','entity_id']).iterrows()]
+            bench=frame.entity_id.iloc[0]
+            frame.loc[frame.entity_id.eq(bench),'min']=2.
+            targets=frame[frame.game_id.isin(ids)&frame.entity_id.ne(bench)]
+            games=[row for _,row in targets.sort_values(['event_date','game_id','entity_id']).iterrows()]
             fake=Mock(repository=Mock(root=Path(directory)),forecast=Mock(side_effect=ValueError('Insufficient league history')))
             fake.repository.load.return_value=(frame.copy(),backend.game_inputs('NBA','ppp')[0])
             result=dict(run_id='a'*64,config=asdict(player_config('NBA','oam')),
@@ -100,6 +103,9 @@ class ConcurrencyChecks(TestCase):
             with patch.object(backend,'player_service',return_value=fake):
                 backend._players(result,'NBA','oam',frame,frame,games,stat_spec('NBA','player_points'),'player_points',None)
             self.assertEqual(fake.forecast.call_count,2)
+            name=frame.loc[frame.entity_id.eq(bench),'entity_name'].iloc[0]
+            for call in fake.forecast.call_args_list:
+                self.assertIn(name,{row['subject'] for row in call.args[0]['rows']})
             self.assertEqual(len(result['skipped']),len(games))
             self.assertTrue(all('Insufficient league history' in row['reason'] for row in result['skipped']))
 

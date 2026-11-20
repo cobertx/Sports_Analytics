@@ -186,6 +186,7 @@ class AsyncScanChecks(TestCase):
         self.assertTrue(history['pending']);self.assertLess(len(json.dumps(history)),3000)
         progress=reply['response']['mispricing-results']['children']
         self.assertEqual(progress['props']['children'][1]['type'],'Progress')
+        self.assertEqual(json.loads(progress['props']['data-quick-scope']),[location,selection])
         self.assertNotIn('snapshot',history);values['mispricing-forecast-history']=history
         values['mispricing-request']={**request,'sequence':2}
         duplicate=post(f.app,'quick_filter_markets',values,'mispricing-request.data')
@@ -202,8 +203,17 @@ class AsyncScanChecks(TestCase):
         self.assertIn('Click Quick Filtering',str(stale));self.assertNotIn('Top 3 by edge',str(stale))
         release.set();f.app._filter_jobs.tasks.queue.tasks.join()
         values['market-url']=location
+        finishing=post(f.app,'quick_filter_markets',values,'market-quick-poll.n_intervals')
+        self.assertIn('2 of 2 forecast methods finished',str(finishing))
+        self.assertNotIn('Top 3 by edge',str(finishing))
+        values['mispricing-forecast-history']=finishing['response']['mispricing-forecast-history']['data']
+        self.assertEqual(values['mispricing-forecast-history']['progress'],80)
+        self.assertTrue(values['mispricing-forecast-history']['pending'])
         finished=post(f.app,'quick_filter_markets',values,'market-quick-poll.n_intervals')
         self.assertIn('Top 3 by edge',str(finished))
+        self.assertIn('Filtering complete',str(finished))
+        result=finished['response']['mispricing-results']['children']['props']
+        self.assertEqual(json.loads(result['data-quick-scope']),[location,selection])
         self.assertFalse(finished['response']['mispricing-forecast-history']['data'].get('pending',False))
         self.assertEqual(finished['response']['mispricing-forecast-history']['data']['filter_key']['sequence'],2)
         values['mispricing-request']=filter_context(location,selection,['PPP'],['WHP'],criteria_values(80,5))
@@ -224,15 +234,14 @@ class AsyncScanChecks(TestCase):
             if not release.wait(4):raise AssertionError('Quotes were not released')
             return deepcopy(f.snapshot)
         f.exchange.all_quotes.side_effect=slow
-        start=perf_counter();scan,_=f.cb['kalshi_quick_scan'](1,0,-100,['PPP'],['WHP'],f.game,FILTER,'live','kalshi',view.href('NFL',f.game['id']))
+        start=perf_counter();scan,_=f.cb['kalshi_quick_scan'](kalshi_fixtures.quick_request(),0,-100,['PPP'],['WHP'],f.game)
         self.assertLess(perf_counter()-start,1);self.assertTrue(entered.wait(1))
         self.assertNotIn('snapshot',scan);self.assertNotIn('ranked',scan);self.assertLess(len(json.dumps(scan)),3000)
         values={'kalshi-quick-scan':scan,'kalshi-context':f.game,'kalshi-quick-game-methods':['PPP'],
             'kalshi-quick-player-methods':['WHP'],'kalshi-quick-probability':1,'kalshi-quick-edge':-100,
             'kalshi-snapshot':'live','kalshi-category':FILTER,'workspace-page':'kalshi'}
         changed=post(f.app,'kalshi_quick_results',values,'kalshi-quick-probability.value')
-        self.assertFalse(changed['sideUpdate']['kalshi-quick-filter']['disabled'])
-        self.assertTrue(changed['sideUpdate']['kalshi-quick-poll']['disabled'])
+        self.assertEqual(changed['sideUpdate']['kalshi-quick-state']['data']['status'],'changed')
         release.set();completed=finish_filter(f.app,scan)
         self.assertIn('ranked',completed);self.assertTrue(completed['ranked']['matches'])
 

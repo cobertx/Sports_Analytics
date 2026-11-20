@@ -1,20 +1,28 @@
-"""NFL prompt cohorts, zero outcomes, shared model inputs and saved summaries."""
+"""Player workload and position cohorts, zero outcomes and saved summaries."""
 from copy import deepcopy
 import json
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 from unittest import TestCase,main
 from unittest.mock import patch
 
 import pandas as pd
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from sports_analytics.backtesting_service import BacktestingService,NFL_PLAYER_COHORT,player_backtest_rows,player_position_rows
+from sports_analytics.backtesting_service import (
+    BacktestingService,NFL_PLAYER_COHORT,PLAYER_COHORTS,nfl_workload,player_backtest_rows,player_position_rows,
+)
 from app.sections.backtesting.backtesting_view import available_models,model_config
 from sports_analytics.data import DataSourceError
 from app.sections.backtesting.performance_summary import PerformanceSummaries,settings
 from models.Player_Stats.Weighted_Historical_Performance.markets import FOOTBALL
+from models.Player_Stats.Weighted_Historical_Performance.backtesting import walk_forward_backtest as whp_replay
+from models.Player_Stats.Weighted_Historical_Performance.core import WHPConfig
+from models.Player_Stats.Usage_Opportunity.backtesting import walk_forward_backtest as uo_replay
+from models.Player_Stats.Opponent_Adjusted_Matchup.backtesting import walk_forward_backtest as oam_replay
+from models.Player_Stats.Pace_Game_Environment.backtesting import walk_forward_backtest as pge_replay
 
 
 def player_history():
@@ -76,8 +84,6 @@ class NFLBacktestRoleChecks(TestCase):
                 actual=player_position_rows(self.frame,'NFL',market)
                 self.assertEqual(set(actual.entity_id),expected[family])
                 pd.testing.assert_frame_equal(actual,player_position_rows(self.frame,'NFL',market+'_alternate'))
-        self.assertEqual(len(player_backtest_rows(self.frame,'NBA','player_points')),len(self.frame))
-        self.assertEqual(len(player_backtest_rows(self.frame,'NCAAF','player_rush_yds')),len(self.frame))
 
     def test_aliases_and_position_changes_are_checked_per_appearance(self):
         positions=[' quarterback ','Running Back','fullback','Halfback','TB','WR','Tight End','QB/WR',pd.NA,'ATH']
@@ -221,6 +227,22 @@ class NFLBacktestRoleChecks(TestCase):
         chi=player_backtest_rows(target[target.team.eq('CHI')],'NFL','player_rush_yds',history=history)
         self.assertEqual(set(chi.entity_id),expected)
 
+    def test_saved_snap_counts_exclude_inactive_and_emergency_appearances(self):
+        frame=self.frame[self.frame.entity_id.isin(['QB','RB'])].copy()
+        frame['game_id']='2025_'+frame.game_id
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)
+            pd.DataFrame([
+                dict(game_id='2025_19',team='CHI',player='QB',offense_snaps=0),
+                dict(game_id='2025_19',team='CHI',player='RB',offense_snaps=9),
+                dict(game_id='2025_18',team='CHI',player='RB',offense_snaps=10),
+            ]).to_csv(path/'snap_counts_2025.csv',index=False)
+            loaded=nfl_workload(frame,path)
+        result=player_backtest_rows(loaded,'NFL','player_rush_yds',limit=1)
+        self.assertEqual(set(result.game_id),{'2025_18'})
+        self.assertEqual(set(result.entity_id),{'QB','RB'})
+        self.assertNotIn('offense_snaps',frame)
+
     def test_performance_summaries_rerun_legacy_cohorts_but_preserve_archives(self):
         result=self.backend.run('NFL','player-stats','whp','__all__','player_rush_yds',limit=2)
         context=dict(sport='NFL',group='player-stats')
@@ -250,6 +272,75 @@ class NFLBacktestRoleChecks(TestCase):
         self.assertNotEqual(fresh['id'],previous['id'])
         self.assertEqual(start.call_count,4)
         self.assertTrue(all(entry['state']=='running' for entry in fresh['entries'].values()))
+
+
+class PlayerAppearanceChecks(TestCase):
+    def setUp(self):
+        temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
+        self.backend=BacktestingService(root=temporary.name,now=lambda:pd.Timestamp('2026-01-01',tz='UTC'))
+        patcher=patch('sports_analytics.backtesting_service.source_revisions',return_value=[])
+        patcher.start();self.addCleanup(patcher.stop)
+
+    def check_models(self,sport,market,frame,expected_latest,count):
+        self.backend.player_inputs=lambda sport:frame
+        def evaluate(result,sport,method,history,selected,games,spec,market,line,progress):
+            self.assertEqual(len(history),len(frame))
+            self.assertEqual(len(selected),len(frame))
+            for game in games:
+                result['records'].append(dict(game_id=game.game_id,date=game.event_date.isoformat(),
+                    label=game.entity_name,actual=game.value,predicted=0.,lower=0.,upper=1.,interval_level=.8))
+        with patch.object(self.backend,'_players',side_effect=evaluate):
+            for model in available_models(sport,'player-stats'):
+                with self.subTest(sport=sport,model=model.key):
+                    self.assertEqual(self.backend.available_games(sport,'player-stats',model.key,'__all__',market),count)
+                    result=self.backend.run(sport,'player-stats',model.key,market=market,limit=1)
+                    self.assertEqual(result['context']['player_cohort'],PLAYER_COHORTS[sport])
+                    self.assertEqual([(r['game_id'],r['label'],r['actual']) for r in result['records']],expected_latest)
+
+    def test_nba_rotation_minutes_apply_to_every_model_before_the_game_limit(self):
+        regular=player_history().query("entity_id == 'RB'").assign(entity_id='regular',entity_name='Regular',pts=0,min=10.)
+        regular.loc[regular.game_id.eq('19'),'min']=9.99
+        frame=pd.concat([
+            regular,regular.assign(entity_id='bench',entity_name='Bench',min=2.,pts=12),
+            regular.assign(entity_id='unknown',entity_name='Unknown',min=pd.NA),
+            regular.assign(entity_id='inactive',entity_name='Inactive',min=0.),
+            regular.assign(entity_id='dnp',entity_name='DNP',min=25.,did_not_play=True),
+        ],ignore_index=True)
+        self.check_models('NBA','player_points',frame,[('18','Regular',0)],19)
+        self.assertEqual(self.backend.available_games('NBA','player-stats','whp','bench','player_points'),0)
+        with self.assertRaisesRegex(DataSourceError,'10 recorded minutes'):
+            self.backend.run('NBA','player-stats','whp','inactive','player_points')
+        replay=whp_replay(regular.assign(value=regular.pts),WHPConfig.for_sport('NBA'))
+        self.assertEqual(replay['records'][-1]['game_id'],'18')
+        self.assertEqual(replay['records'][-1]['actual'],0)
+
+    def test_college_workload_applies_to_every_model_and_keeps_zero_outcomes(self):
+        regular=player_history().query("entity_id == 'RB'").drop(columns='targets')
+        regular.loc[regular.game_id.eq('19'),'participation_status']='DNP'
+        regular.loc[regular.game_id.eq('18'),'receiving_yards']=0
+        frame=pd.concat([
+            regular,
+            regular.assign(entity_id='reserve',entity_name='Reserve',receptions=1,receiving_yards=20),
+            regular.assign(entity_id='-123',entity_name='Team',receptions=7),
+        ],ignore_index=True)
+        self.check_models('NCAAF','player_reception_yds',frame,[('18','RB',0)],18)
+        self.assertEqual(self.backend.available_games('NCAAF','player-stats','whp','reserve','player_reception_yds'),0)
+
+    def test_archived_quotes_share_the_same_participation_filter(self):
+        market='player_points'
+        actuals=pd.DataFrame(dict(game_id='game',subject=['Regular','Bench','DNP'],
+                                  market=market,value=[0,1,0],min=[10,2,0]))
+        quotes=[dict(subject=subject,market_key=market,line=2.5,selection='Over',odds=-110) for subject in actuals.subject]
+        snapshots=[dict(sport='NBA',game_id='game',pulled_at='2025-01-01T00:00:00Z',
+                        commence_time='2025-01-01T01:00:00Z',rows=quotes)]
+        fitted=SimpleNamespace(mean=2,quantile=lambda probability:2,diagnostics={'opportunity_projection':{}})
+        price=SimpleNamespace(win=.4,loss=.6,push=0.,probability=.4)
+        forecast=SimpleNamespace(forecasts={(subject,market):fitted for subject in actuals.subject},
+                                 selection=lambda row:price)
+        service=SimpleNamespace(forecast=lambda snapshot:forecast)
+        for replay in [uo_replay,oam_replay,pge_replay]:
+            result=replay(service,snapshots,actuals)
+            self.assertEqual([(r['subject'],r['actual']) for r in result['records']],[('Regular',0)])
 
 
 if __name__=='__main__':main()

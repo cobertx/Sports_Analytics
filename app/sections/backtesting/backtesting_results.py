@@ -5,7 +5,9 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from app.components.presentation import chart_style, table_cell, table_header
-from sports_analytics.backtesting_service import diagnostics,PREDICTIVE_INTERVAL,evaluated_records
+from sports_analytics.backtesting_service import (
+    diagnostics,PREDICTIVE_INTERVAL,evaluated_records,current_player_cohort,player_backtest_criteria,
+)
 from sports_analytics.display_time import format_eastern,EASTERN
 
 
@@ -328,6 +330,9 @@ def render(result,target='margin'):
                'Regular season + postseason' if context['include_playoffs'] else 'Regular season only')
             + f' · Estimation history: {str(context["lookback"])+" prior games maximum per team/player" if context.get("lookback") is not None else "model defaults"}. '
             + 'Run again to apply changed filters.',className='backtest-applied'),
+        *([html.P(player_backtest_criteria(context['sport'],context['market']) if current_player_cohort(result) else
+                'This saved run used earlier player eligibility rules. Run again to apply the current workload criteria.',
+                className='backtest-status')] if not game else []),
         html.Div(cards,className='backtest-kpis'),
         html.P('Event metrics evaluate the home winner.' if game else
             ('Event metrics evaluate Over '+str(context['line'])+'.' if context['line'] is not None else 'Event metrics require an optional reference line.'),

@@ -36,6 +36,7 @@ from app.shell.loading import configure as configure_loading, register as regist
 from app.shell.progressive_loading import configure as configure_progressive, register as register_progressive
 from app.sections.markets.player_distribution import register as register_player_distribution
 from app.sections.markets.prop_probability import register as register_prop_probability
+from app.sections.markets.quick_visibility import register as register_quick_visibility
 from sports_analytics.service import DataService
 from sports_analytics.schedule import ScheduleService
 from sports_analytics.odds_api import OddsApiService
@@ -208,58 +209,62 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                 dcc.Tab(label='P&L History',value='PNL',className='sport-tab',selected_className='sport-tab selected'),
             ], className="sport-tabs"),
             html.Div([
-                html.Nav([
-                    html.Details([
-                        html.Summary('Historical Data',id='historical-page-link',className='active'),
-                        html.Div([
-                            html.Div(id='historical-navigation'),
-                            html.A('Visualized In-Game Data',id='in-game-page-link',href='#nba-in-game-data',
-                                   className='sport-page-link'),
-                        ],className='sidebar-subpages'),
-                    ],id='historical-menu',open=False,className='sidebar-group'),
-                    html.Details([
-                        html.Summary('Market Data'),
-                        html.Div([
-                            html.A('FanDuel',id='market-page-link',href='#nba-games',className='sport-page-link'),
-                            html.A('DraftKings',id='draftkings-page-link',href='#nba-draftkings-market',className='sport-page-link'),
-                            html.A('Kalshi',id='kalshi-page-link',href='#nba-kalshi-market',className='sport-page-link'),
-                            html.A('Polymarket',id='polymarket-page-link',href='#nba-polymarket-market',className='sport-page-link'),
-                            html.A('Market Summary',id='market-summary-page-link',href='#nba-market-summary',className='sport-page-link'),
-                            html.A('Filtered Results',id='filtered-results-page-link',href='#nba-filtered-results',className='sport-page-link'),
-                        ],className='sidebar-subpages'),
-                    ],id='market-data-navigation',open=False,className='sidebar-group'),
-                    html.Details([
-                        html.Summary('Backtesting',id='backtesting-page-link'),
-                        html.Div(id='backtesting-navigation',className='sidebar-subpages'),
-                    ],id='backtesting-menu',open=False,className='sidebar-group'),
-                    html.Div(research_view.navigation(),id='research-navigation',style={'display':'none'}),
-                    information_navigation(),
-                ], className="page-toolbar", **{"aria-label": "Sport pages"}),
+                html.Aside([
+                    html.Nav([
+                        html.Details([
+                            html.Summary('Historical Data',id='historical-page-link',className='active'),
+                            html.Div([
+                                html.Div(id='historical-navigation'),
+                                html.A('Visualized In-Game Data',id='in-game-page-link',href='#nba-in-game-data',
+                                       className='sport-page-link'),
+                            ],className='sidebar-subpages'),
+                        ],id='historical-menu',open=False,className='sidebar-group'),
+                        html.Details([
+                            html.Summary('Market Data'),
+                            html.Div([
+                                html.A('FanDuel',id='market-page-link',href='#nba-games',className='sport-page-link'),
+                                html.A('DraftKings',id='draftkings-page-link',href='#nba-draftkings-market',className='sport-page-link'),
+                                html.A('Kalshi',id='kalshi-page-link',href='#nba-kalshi-market',className='sport-page-link'),
+                                html.A('Polymarket',id='polymarket-page-link',href='#nba-polymarket-market',className='sport-page-link'),
+                                html.A('Market Summary',id='market-summary-page-link',href='#nba-market-summary',className='sport-page-link'),
+                                html.A('Filtered Results',id='filtered-results-page-link',href='#nba-filtered-results',className='sport-page-link'),
+                            ],className='sidebar-subpages'),
+                        ],id='market-data-navigation',open=False,className='sidebar-group'),
+                        html.Details([
+                            html.Summary('Backtesting',id='backtesting-page-link'),
+                            html.Div(id='backtesting-navigation',className='sidebar-subpages'),
+                        ],id='backtesting-menu',open=False,className='sidebar-group'),
+                        html.Div(research_view.navigation(),id='research-navigation',style={'display':'none'}),
+                        information_navigation(),
+                    ], className="page-toolbar", **{"aria-label": "Sport pages"}),
+                    html.Div([game_data_monitor.layout(app.get_asset_url), backtesting_monitor_layout()],
+                             id='dashboard-monitors', className='dashboard-monitors'),
+                ], className='dashboard-sidebar', **{'aria-label':'Dashboard sidebar'}),
                 html.Div([
-                    html.P(id='navigation-feedback',className='navigation-feedback',role='status',**{'aria-live':'polite'}),
-                    html.P(id='market-return-status',className='market-return-status chart-note',role='status'),
-                    html.Div([html.Span(indicator('Loading the selected market…'),className='market-transition-loading'),
-                              html.Span('This game is unavailable in the loaded catalog. Return to the market’s game list and refresh.',
-                                        className='market-transition-unavailable')],
-                             id='market-transition-status',role='status',className='market-transition-status'),
-                    historical_layout(),
-                    market_layout(),
-                    backtesting_layout(),
-                    in_game_layout(),
-                    kalshi_layout(),
-                    polymarket_view.layout(),
-                    market_summary_layout(),
-                    filtered_results_layout(),
-                    information_layout(),
+                    html.Div([
+                        html.P(id='navigation-feedback',className='navigation-feedback',role='status',**{'aria-live':'polite'}),
+                        html.P(id='market-return-status',className='market-return-status chart-note',role='status'),
+                        html.Div([html.Span(indicator('Loading the selected market…'),className='market-transition-loading'),
+                                  html.Span('This game is unavailable in the loaded catalog. Return to the market’s game list and refresh.',
+                                            className='market-transition-unavailable')],
+                                 id='market-transition-status',role='status',className='market-transition-status'),
+                        historical_layout(),
+                        market_layout(),
+                        backtesting_layout(),
+                        in_game_layout(),
+                        kalshi_layout(),
+                        polymarket_view.layout(),
+                        market_summary_layout(),
+                        filtered_results_layout(),
+                        information_layout(),
+                    ], id="sport-pages"),
+                    odds_layout(),
+                    pnl_layout(),
                 ], className="page-content"),
-            ], id="sport-pages", className="page-shell"),
-            odds_layout(),
-            pnl_layout(),
+            ], className="page-shell"),
             html.Footer("NBA / NFL / NCAAF · Displayed times in EDT (UTC−4)")
         ],id='dashboard-main',tabIndex=-1,**{'aria-label':'Sports analytics content'}),
         slip_layout(),
-        html.Div([game_data_monitor.layout(app.get_asset_url), backtesting_monitor_layout()],
-                 id='dashboard-monitors', className='dashboard-monitors'),
         structure_layout(),
     ], id='app-shell',className="app-shell")
     app.layout=configure_loading(configure_progressive(app.layout))
@@ -267,6 +272,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     register_loading(app)
     register_player_distribution(app)
     register_prop_probability(app)
+    register_quick_visibility(app)
     register_progressive(app)
 
     register_shell(app,Output("historical-page", "style"), Output("market-page", "style"),

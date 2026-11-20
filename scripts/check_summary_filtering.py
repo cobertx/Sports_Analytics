@@ -108,8 +108,9 @@ class SummaryFilteringChecks(TestCase):
         quotes.append({**quotes[1],'line':205.5,'odds':-500})
         request=f.cb['summary_quick_submit'](1,['PPP'],['WHP','UO'],50,0,f.data,'123',QUICK,'market-summary','NFL')
         f.app._summary_quick_jobs.queue.tasks.join()
-        results,_,done=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',1,None)
+        results,_,done,_=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',1,None)
         self.assertEqual(done['status'],'complete')
+        self.assertEqual(json.loads(getattr(results,'data-quick-scope')),['#nfl-market-summary','123'])
         rows=fixtures.native_dom(results).find('tr')
         selection=next(json.loads(row.attrs['data-prop-chart']) for row in rows if 'data-prop-chart' in row.attrs)
         self.assertEqual(selection['job'],request['job'])
@@ -178,6 +179,8 @@ class SummaryFilteringChecks(TestCase):
             report(47,'1 of 2 forecast methods completed')
             advanced.set()
             if not release.wait(5):raise AssertionError('Filter never released')
+            report(80,'2 of 2 forecast methods finished')
+            report(85,'Applying thresholds and ranking selections')
             return dict(matches=[],evaluated=0,unavailable=0,errors=[])
         with patch('app.sections.market_summary.summary_filter_callbacks.calculate_filter',side_effect=blocked) as fit:
             start=perf_counter();request=f.cb['summary_quick_submit'](1,['PPP'],['WHP'],50,0,f.data,'123',QUICK,'market-summary','NFL')
@@ -192,8 +195,14 @@ class SummaryFilteringChecks(TestCase):
             self.assertEqual(next_stage[0].children[1].value,47)
             with self.assertRaises(PreventUpdate):f.cb['summary_quick_results'](request,f.data,'Game Lines','123','market-summary','NFL',4,None)
             self.assertEqual(fit.call_count,1);release.set();f.app._summary_quick_jobs.queue.tasks.join()
-            done=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',5,None)
+            finishing=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',5,None,None,next_stage[3])
+            self.assertIs(finishing[2],no_update)
+            self.assertEqual(finishing[0].children[1].value,80)
+            self.assertIn('2 of 2 forecast methods finished',str(finishing[0]))
+            done=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',6,None,None,finishing[3])
             self.assertEqual(done[2]['status'],'complete')
+            self.assertIn('0 evaluated · 0 unavailable',str(done[0]))
+            self.assertEqual(fit.call_count,1)
 
     def test_first_history_refresh_recalculates_once_then_rejects_later_changes(self):
         f=self.fixture();state={'revision':0}

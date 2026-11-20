@@ -202,8 +202,8 @@ def main():
                 ['backtest-lookback-note','backtest-available','backtest-progress','backtest-progress-label','backtest-poll']),
                 'Backtesting defaults/availability/progress components must exist in the stable layout.')
             require(all(f'"id": "{name}"' in layout_json for name in
-                ['backtest-monitor','backtest-monitor-toggle','backtest-monitor-body','backtest-monitor-timer',
-                 'backtest-monitor-jobs','backtest-monitor-collapsed']),
+                ['backtest-monitor','backtest-monitor-disclosure','backtest-monitor-toggle','backtest-monitor-body',
+                 'backtest-monitor-timer','backtest-monitor-jobs']),
                 'Global backtest monitor must remain mounted across pages.')
             require(all(f'"id": "{name}"' in layout_json for name in
                 ['historical-navigation','historical-page-link','market-page-link','backtesting-page-link']),

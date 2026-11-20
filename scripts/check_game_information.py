@@ -163,7 +163,6 @@ class GameInformationChecks(TestCase):
             self.assertEqual(cb['show_saved_markets'](ADDITIONAL_INFORMATION,None,f'#{sport.lower()}-game-123',None,'PPP','WHP',None,'market'),([],no_update))
             market.history.assert_not_called()
         self.assertEqual(cb['snapshot_categories'](None,'#ncaaf-game-123',None)[:2],([],None))
-        self.assertEqual(cb['mispricing_visibility'](ADDITIONAL_INFORMATION),({'display':'none'},{'display':'none'}))
         with app.server.test_client() as client:
             self.assertEqual(client.get('/_dash-layout').status_code,200)
             self.assertEqual(client.get('/_dash-dependencies').status_code,200)

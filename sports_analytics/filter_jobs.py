@@ -5,8 +5,13 @@ from copy import deepcopy
 from hashlib import sha256
 import json
 from threading import Lock
+from time import monotonic
 
 from .page_cache import PageTasks
+
+
+FORECASTS_FINISHED = 80
+WAITING = {'percent':0, 'message':'Waiting for a calculation worker'}
 
 
 def request_key(value):
@@ -24,11 +29,15 @@ class QuickScanTasks(PageTasks):
         with self.lock:
             if self.queue.pending(key):
                 return self.peek(key), True, None
-            progress = {'percent':0, 'message':'Waiting for a calculation worker'}
+            started = monotonic()
+            progress = dict(WAITING, started=started)
 
             def report(percent, message):
                 with self.lock:
-                    progress.update(percent=max(progress['percent'],percent),message=message)
+                    if percent >= progress['percent']:
+                        progress.update(percent=percent,message=message)
+                    if percent == FORECASTS_FINISHED:
+                        progress['forecast_checkpoint'] = message
 
             result, pending, error = self.read(key, lambda:work(report), refresh=refresh, force=force)
             if pending:
@@ -41,12 +50,16 @@ class QuickScanTasks(PageTasks):
 
     def progress(self, key):
         with self.lock:
-            return dict(self.progress_records.get(key, {'percent':0, 'message':'Waiting for a calculation worker'}))
+            progress = dict(self.progress_records.get(key, WAITING))
+        started = progress.pop('started', None)
+        if started is not None:
+            progress['elapsed'] = int(monotonic() - started)
+        return progress
 
 
 def forecast_progress(report, completed, total):
     if report and total:
-        report(15 + 65*completed//total, f'{completed} of {total} forecast methods completed')
+        report(15 + (FORECASTS_FINISHED - 15)*completed//total, f'{completed} of {total} forecast methods finished')
 
 
 class FilterJobs:

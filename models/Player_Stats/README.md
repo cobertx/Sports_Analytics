@@ -47,5 +47,19 @@ playing. It is available for NBA forecasts, backtests, and research.
 NBA rotations, opportunity shares, and shooting on timestamped lineup scenarios
 and archived injuries. It includes the NBA forecast and walk-forward workflows.
 
+Player backtests evaluate NBA appearances with at least 10 recorded minutes.
+Dashboard football backtests use workloads from up to three prior completed
+team games. NFL uses position-specific contributor rankings. College football
+uses market-specific averages of at least five pass attempts, three carries,
+two targets (or receptions when targets are unavailable), or three combined
+carries and receiving opportunities for scoring props. Recorded offensive snap
+counts must reach 10 when available. Eligible appearances can still have zero
+for the evaluated statistic.
+
+Standalone replay CSVs need `min` for NBA. For football, provide `offense_snaps`
+or the observed `attempts`, `carries`, `targets` and `receptions` available in
+the box score. Standalone football replay uses 10 offensive snaps when recorded,
+otherwise at least five pass attempts, three carries, or two targets or receptions.
+
 Team/game outcome strategies are organized separately under
 [Game_Outcome](../Game_Outcome/README.md).

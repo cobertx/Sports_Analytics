@@ -3,6 +3,7 @@ import math
 import numpy as np
 import pandas as pd
 from models.replay import replay_scope
+from models.Player_Stats.backtest_eligibility import snapshot_workload_rows
 from models.Player_Stats.Usage_Opportunity.calibration import diagnostics as base_diagnostics
 from models.Player_Stats.Usage_Opportunity.markets import prop_key
 
@@ -39,9 +40,11 @@ def walk_forward_backtest(service,snapshots,actuals):
     actuals['market']=actuals.market.str.removesuffix('_alternate')
     actuals['value']=pd.to_numeric(actuals.value,errors='raise')
     if actuals.duplicated(['game_id','subject','market']).any():raise ValueError('Actual outcomes must have unique identities.')
+    snapshots=sorted(snapshots,key=lambda s:pd.Timestamp(s['pulled_at']))
+    actuals=snapshot_workload_rows(actuals,snapshots)
     lookup=actuals.set_index(['game_id','subject','market']).value.to_dict()
     records,unavailable=[],[]
-    for snapshot in sorted(snapshots,key=lambda s:pd.Timestamp(s['pulled_at'])):
+    for snapshot in snapshots:
         pulled,start=pd.Timestamp(snapshot['pulled_at']),pd.Timestamp(snapshot['commence_time'])
         if pd.isna(pulled) or pd.isna(start) or pulled.tzinfo is None or start.tzinfo is None or pulled>=start:
             raise ValueError('Historical replay requires genuinely pregame timestamped market quotes.')

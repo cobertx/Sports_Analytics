@@ -3,15 +3,15 @@
 .app-shell > header { min-height: 60px; padding: 10px 3%; gap: var(--space-3); background: var(--panel); }
 .app-shell .brand-mark { width: 36px; height: 36px; border-radius: var(--radius); font-size: 17px; }
 .app-shell .brand-name { font-size: 15px; font-weight: 650; letter-spacing: -.2px; }
-.app-shell > main { max-width: 1600px; padding: var(--space-6) 3% 20px; }
+.app-shell > main { max-width: 1600px; padding: var(--space-6) 3% calc(20px + var(--parlay-space,0px)); }
 .app-shell h1 { font-size: 26px; line-height: 1.25; margin: var(--space-1) 0 var(--space-2); letter-spacing: -.5px; }
 .app-shell h2 { line-height: 1.4; }
 .app-shell .eyebrow { font-size: 12px; letter-spacing: .07em; }
 .app-shell .sport-tabs { margin-bottom: 20px; overflow-x: auto; }
 .app-shell .sport-tabs > div { flex-wrap: nowrap; min-width: max-content; }
 .app-shell .sport-tab { padding: var(--space-3) var(--space-4) !important; white-space: nowrap; }
-.app-shell .page-shell { grid-template-columns: 196px minmax(0, 1fr); gap: var(--space-6); }
-.app-shell .page-toolbar { top: 16px; font-size: 13px; }
+.app-shell .page-shell { grid-template-columns: clamp(224px,22vw,296px) minmax(0,1fr); gap: var(--space-6); }
+.app-shell .page-toolbar { font-size: 13px; }
 .app-shell .sport-page-link { min-height: 38px; padding: 9px var(--space-3); line-height: 1.45; }
 .app-shell .backtesting-model-link { font-size: 12px; padding: var(--space-2); }
 .app-shell .page-toolbar a[aria-current='page'] { border-left: 2px solid var(--accent); }
@@ -152,7 +152,6 @@
 .app-shell .parlay-footer { background: var(--panel); }
 .app-shell :is(.parlay-market-name,.parlay-leg-source,.parlay-metric-label,.parlay-footnote,.parlay-notice) { font-size: 12px; color: var(--muted); }
 .app-shell .parlay-market-odds { color: var(--probability); }
-.app-shell :is(.backtest-monitor,.game-data-monitor) { box-shadow: var(--shadow-floating); }
 .app-shell .backtest-job-heading { font-size: 12px; }
 .app-shell .backtest-job progress { accent-color: var(--accent); }
 
@@ -182,18 +181,17 @@
 .app-shell footer { color: var(--muted); font-size: 12px; margin-top: var(--space-6); padding-top: var(--space-4); }
 
 @media (min-width: 768px) and (max-width: 1099px) {
-  .app-shell .page-shell { grid-template-columns: 168px minmax(0, 1fr); gap: var(--space-4); }
+  .app-shell .page-shell { gap: var(--space-4); }
   .app-shell :is(.research-parameters,.backtest-controls,.in-game-filters) { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .app-shell .game-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 767px) {
-  .app-shell > main { padding: var(--space-4) var(--space-3) 20px; }
+  .app-shell > main { padding: var(--space-4) var(--space-3) calc(20px + var(--parlay-space,0px)); }
   .app-shell > header { padding: 10px var(--space-3); }
   .app-shell h1 { font-size: 24px; }
   .app-shell .page-shell { grid-template-columns: minmax(0,1fr); gap: var(--space-4); }
-  .app-shell .page-toolbar,
-  .app-shell:is(.market-screen,.workspace-screen-historical,.workspace-screen-backtesting,.workspace-screen-in-game,.workspace-screen-information) #sport-pages {
-    display: flex !important; flex-wrap: wrap; position: static; gap: var(--space-2);
+  .app-shell .page-toolbar {
+    display: flex; flex-wrap: wrap; gap: var(--space-2);
   }
   .app-shell .page-toolbar > * { grid-row: auto !important; grid-column: auto !important; min-width: 0; flex: 1 1 145px; }
   .app-shell .page-toolbar > #research-navigation { flex-basis: 100%; }
@@ -214,8 +212,6 @@
   .app-shell .matchup-banner { gap: var(--space-3); }
   .app-shell .matchup-team { max-width: 34%; }
   .app-shell :is(.matchup-team strong,.matchup-start strong) { font-size: 14px; }
-  .app-shell .backtest-monitor { width: min(300px,calc(100vw - 12px)); }
-  .app-shell .backtest-monitor.is-collapsed { width: 190px; }
   .app-shell .radio-group label { min-height: 44px; display: flex; align-items: center; }
   .app-shell .market-history-link { display: inline-flex; align-items: center; padding-block: 6px; }
 }

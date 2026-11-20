@@ -134,6 +134,11 @@ def register(app, service, career_service, career_tasks, ncaaf_model_data, backt
     app.clientside_callback("function(page,job,sport){return page!=='historical'||!['NBA','NFL'].includes(sport)||!job?.pending;}",
         Output('career-poll','disabled'),Input('workspace-page','value'),Input('career-job','data'),Input('sport','value'))
 
+    app.clientside_callback('''function(sport, options) {
+        if (!['NBA', 'NFL', 'NCAAF'].includes(sport)) return window.dash_clientside.no_update;
+        return options.map(({value}) => ({label: sport === 'NBA' ? `${value}-${value + 1}` : String(value), value}));
+    }''', Output('season','options'), Input('sport','value'), State('season','options'))
+
     app.clientside_callback('function(figure,...args){return window.dash_clientside.market_transition.history_state(figure,null,...args);}',
         Output('historical-render-scope','data'),Input('trend','figure'),
         Input('dataset','data'),Input('entity','value'),Input('metric','value'),Input('window','value'),
@@ -438,24 +443,30 @@ def register(app, service, career_service, career_tasks, ncaaf_model_data, backt
                  kpi("BACKTEST MAE", "—", "Mean absolute error on past games")]
         if not supported_dataset(dataset):
             return rendered(empty_figure(), blank, [], [])
-        frame = historical_frame(dataset)
+        try:
+            frame = historical_frame(dataset)
+        except DataSourceError as exc:
+            return rendered(empty_figure(str(exc)), blank, [], [])
         try:trigger=ctx.triggered_id
         except MissingCallbackContextException:trigger=None
         if matches_dataset(target,dataset) and trigger in {'dataset','market-url','entity','nav-historical'}:
             resolved=target_entity(frame,target)
             if trigger!='entity' or entity==resolved:
-                entity=resolved;team=ALL_TEAMS
+                entity=resolved
+                if dataset['kind']=='player':team=ALL_TEAMS
                 own=frame[frame.entity_id.eq(entity)]
                 metric=target_metric(target,relevant_metrics(own,dataset['sport'],dataset['kind']),own)
-        if entity is None or metric is None:
-            return rendered(empty_figure(),blank,[],[])
+        if entity is None:
+            return rendered(empty_figure('Choose a team or player to see recorded games'), blank, [], [])
+        if metric is None:
+            return rendered(empty_figure('Choose an available statistic for this selection'), blank, [], [])
         frame = filter_team(frame, dataset["kind"], team)
         if metric not in frame:
-            return rendered(empty_figure(), blank, [], [])
+            return rendered(empty_figure('This statistic is unavailable in the loaded data'), blank, [], [])
         selected = frame[frame["entity_id"] == entity]
         if not matches_dataset(target,dataset) or target_entity(frame,target)!=entity:target=None
         if selected.empty or metric not in relevant_metrics(selected, dataset["sport"], dataset["kind"]):
-            return rendered(empty_figure(), blank, [], [])
+            return rendered(empty_figure('No recorded games for this selection and statistic'), blank, [], [])
         season_history = bool(target and (target['market'] or target.get('season')))
         scoped_history = prior_history(selected,target)
         history, prediction, mae, evaluated = rolling_baseline(scoped_history, metric, window)

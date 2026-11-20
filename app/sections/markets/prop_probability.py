@@ -11,6 +11,7 @@ from dash.exceptions import PreventUpdate
 import plotly.graph_objects as go
 
 from app.components.presentation import chart_style
+from app.sections.markets.quick_visibility import slot
 
 
 SOURCE_STYLES = {
@@ -67,9 +68,11 @@ def outlet(view):
     data = {'data-selection': None}
     if view == 'kalshi':
         data['data-model-revision'] = None
+    attributes = {'data-prop-chart-result': view}
+    result_panel = slot('summary', result, **attributes) if view == 'summary' else html.Div(id=result, **attributes)
     return html.Div([
         html.Div(id=request, style={'display': 'none'}, **data),
-        html.Div(id=result, **{'data-prop-chart-result': view}),
+        result_panel,
     ])
 
 

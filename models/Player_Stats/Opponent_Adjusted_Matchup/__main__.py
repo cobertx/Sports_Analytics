@@ -12,6 +12,7 @@ from models.Player_Stats.Usage_Opportunity import UsageOpportunityMarketService
 from .config import MatchupConfig
 from .historical_data import MatchupHistoryRepository,atomic_json
 from .prediction_service import OpponentAdjustedMarketService
+from models.Player_Stats.backtest_eligibility import STANDALONE_WORKLOAD
 from .backtesting import walk_forward_backtest
 from .model_comparison import compare_models
 
@@ -27,7 +28,7 @@ def main(argv=None):
     parser.add_argument('--scenarios',type=Path,help='Optional pregame relative lineup scenarios JSON')
     parser.add_argument('--simulations',type=int,default=12000)
     parser.add_argument('--backtest-snapshots',type=Path)
-    parser.add_argument('--actuals',type=Path,help='CSV: game_id,subject,market,value')
+    parser.add_argument('--actuals',type=Path,help=f'CSV: game_id,subject,market,value. {STANDALONE_WORKLOAD}')
     parser.add_argument('--compare',action='store_true',help='Compare WHP, UO and OAM on supplied historical snapshots')
     parser.add_argument('--output',type=Path,help='Write JSON report instead of printing it')
     args=parser.parse_args(argv)

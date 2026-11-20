@@ -6,6 +6,9 @@ const guards={};
 let historyRoute=null,historyHydrated=false,historyManual=false,historySelection=null;
 const plain = 'app-shell';
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+// Retained team results can still carry the player-team value from older renders.
+const sameHistoryScope=(actual,expected)=>!!actual&&Object.keys(expected).every(key=>
+  (key==='team'&&expected.kind==='team') || actual[key]===expected[key]);
 window.dash_clientside = Object.assign({},window.dash_clientside,{
   market_transition: {
     shell: function(hash,sport,page) {
@@ -62,7 +65,7 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
     career_guard: function(figure,dataset,entity,metric,hash,sport,kind) {
       if(window.location.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;
       const expected={route:hash||'',sport:dataset?.sport??null,kind:dataset?.kind??null,phase:dataset?.phase??null,entity:entity??null,metric:metric??null};
-      const ready=same(figure?.layout?.meta?.career_scope,expected)&&!figure?.layout?.meta?.pending&&
+      const ready=sameHistoryScope(figure?.layout?.meta?.career_scope,expected)&&!figure?.layout?.meta?.pending&&
         (!dataset||dataset.sport===sport&&dataset.kind===kind);
       return 'panel chart-panel career-panel'+(ready?'':' career-view-pending');
     },
@@ -74,20 +77,21 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
       const selection=[entity,metric,windowSize,team,sport,kind,season,phase,week,sourceTeam];
       if(historyManual&&historySelection&&!same(selection,historySelection)){historyHydrated=true;historyManual=false;}
       historySelection=selection;
-      const d=dataset||{},requested={v:2,route:hash||'',key:d.key??null,revision:d.revision||d.fetched_at||null,
+      const d=dataset||{},source=(d.team||'').trim(),requested={v:2,route:hash||'',key:d.key??null,revision:d.revision||d.fetched_at||null,
         sport:d.sport??null,kind:d.kind??null,season:d.season??null,phase:d.phase??null,
-        week:d.week??null,source_team:d.team||'',entity:entity??null,metric:metric??null,window:windowSize??null,team:team??null};
+        week:d.week??null,source_team:source,entity:entity??null,metric:metric??null,window:windowSize??null,
+        team:d.kind==='player'?team??null:null};
       const rendered=figure?.layout?.meta?.analysis_scope,old=figure?.layout?.meta?.navigation_scope;
       const linked=new URLSearchParams((hash||'').split('?')[1]||'').has('name');
       const compatible=!!dataset&&d.sport===sport&&d.kind===kind&&Number(d.season)===Number(season)&&d.phase===phase&&
-        (sport==='NBA'||(d.week??null)===(week??null))&&(sport!=='NCAAF'||kind!=='team'||(d.team||'')===(sourceTeam||''));
-      const matched=compatible&&same(rendered,requested);
+        (sport==='NBA'||(d.week??null)===(week??null))&&(sport!=='NCAAF'||kind!=='team'||source===(sourceTeam||'').trim());
+      const matched=compatible&&sameHistoryScope(rendered,requested);
       if(matched&&(!linked||figure?.layout?.meta?.link_ready))historyHydrated=true;
       const empty=!dataset&&!pending&&(rendered?.route===(hash||'')||old?.route===(hash||''));
       const ready=empty||matched&&(!linked||historyHydrated);
       const expectedCareer={route:hash||'',sport:d.sport??null,kind:d.kind??null,phase:d.phase??null,
         entity:entity??null,metric:metric??null};
-      const value={v:2,route:hash,sport,kind,ready,career_ready:empty||same(career?.layout?.meta?.career_scope,expectedCareer),
+      const value={v:2,route:hash,sport,kind,ready,career_ready:empty||sameHistoryScope(career?.layout?.meta?.career_scope,expectedCareer),
         updating:ready&&!!pending,requested};
       return same(value,previous)?window.dash_clientside.no_update:value;
     },

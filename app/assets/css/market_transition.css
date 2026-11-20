@@ -76,6 +76,7 @@
 .workspace-screen-pnl #pnl-page { display: block !important; }
 .workspace-screen-odds #odds-api-page { display: block !important; }
 .workspace-screen-pnl #sport-pages,.workspace-screen-odds #sport-pages { display: none !important; }
+.workspace-screen:is(.workspace-screen-pnl,.workspace-screen-odds) .page-toolbar { display: none !important; }
 /* Keep the scope controls and status usable while replacing another player's
    results. A late response can never display that player's charts or table. */
 .historical-skeleton { display: none; padding: 16px 0; min-height: 440px; }
@@ -92,6 +93,11 @@
 .app-shell:is(.market-screen,.workspace-screen) .page-toolbar .sport-page-link[aria-current="page"] { background: var(--selected); color: var(--accent); font-weight: 650; }
 .skip-navigation { position: fixed; left: 12px; top: -100px; z-index: 100; padding: 12px; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--text); }
 .skip-navigation:focus { top: 12px; }
+.quick-result-slot > :not([data-quick-visible]),
+.quick-result-slot.criteria-status:not(:has(> [data-quick-visible])),
+.quick-filter-feedback:has(.quick-filter-output > [data-quick-visible]) > .quick-filter-placeholder { display: none; }
+.quick-filter-feedback:has(#kalshi-starting-quick-progress[data-quick-visible]:not([hidden])) > :is(.criteria-status,.quick-filter-output,.quick-filter-placeholder),
+.quick-filter-feedback:has(.kalshi-quick-submission[data-quick-visible]) > :is(.quick-filter-output,.quick-filter-placeholder) { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .page-toolbar .sport-page-link { transition: none; }
 }

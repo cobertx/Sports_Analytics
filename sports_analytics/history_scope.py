@@ -3,12 +3,13 @@
 
 def analysis_scope(dataset, entity, metric, window, team, route):
     dataset = dataset or {}
+    kind = dataset.get('kind')
     return dict(v=2, route=route or '', key=dataset.get('key'),
                 revision=dataset.get('revision') or dataset.get('fetched_at'),
-                sport=dataset.get('sport'), kind=dataset.get('kind'),
+                sport=dataset.get('sport'), kind=kind,
                 season=dataset.get('season'), phase=dataset.get('phase'),
-                week=dataset.get('week'), source_team=dataset.get('team') or '',
-                entity=entity, metric=metric, window=window, team=team)
+                week=dataset.get('week'), source_team=(dataset.get('team') or '').strip(),
+                entity=entity, metric=metric, window=window, team=team if kind=='player' else None)
 
 
 def career_scope(dataset, entity, metric, route):

@@ -19,9 +19,9 @@ from app.sections.markets.market_navigation import market_game_id, market_game_s
 from app.shell.navigation import scoped_callback
 from app.sections.markets.mispricing import (
     ALL_PROBABILITIES, FILTER_CATEGORY, consensus_rankings, criteria_values, filter_context,
-    quick_progress, rank_markets, results as mispricing_results, run_forecasts, selected_methods,
+    quick_finish_progress, quick_progress, rank_markets, results as mispricing_results, run_forecasts, selected_methods,
 )
-from app.sections.markets import quick_methods
+from app.sections.markets import quick_methods, quick_visibility
 from sports_analytics.display_time import format_eastern
 from sports_analytics.availability_adjustment import note as availability_note
 from sports_analytics.game_information import ADDITIONAL_INFORMATION
@@ -196,12 +196,13 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
             request={**filter_context(location_hash,selection,methods,player_methods,criteria),'sequence':clicks}
             if overrides:request['prompt_methods']=overrides
             return request, ''
-        except ValueError as exc:return no_update,str(exc)
+        except ValueError as exc:return no_update,quick_visibility.status(str(exc),location_hash,selection)
 
-    @app.callback(Output('mispricing-filter-panel','style'),Output('market-quote-content','style'),Input('market-category','value'))
-    def mispricing_visibility(category):
-        selected=category==FILTER_CATEGORY
-        return {'display':'block' if selected else 'none'},{'display':'none' if selected or category==ADDITIONAL_INFORMATION else 'block'}
+    app.clientside_callback("""function(category){
+        const filtering=category==='Mispricing';
+        return [{display:filtering?'block':'none'},
+                {display:filtering||category==='Additional Information'?'none':'block'}];
+    }""",Output('mispricing-filter-panel','style'),Output('market-quote-content','style'),Input('market-category','value'))
 
     @scoped_callback(app,'market',Output("player-forecast-method", "options"), Output("player-forecast-method", "value"),
                   Input("market-url", "hash"), State("player-forecast-method", "value"),State('market-return','data'))
@@ -330,7 +331,8 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                   Input(prompt_fields,'value'),State(prompt_fields,'id'),Input('market-quick-poll','n_intervals'),prevent_initial_call=True)
     def quick_filter_markets(request,category,location_hash,selection,methods,player_methods,probability,edge,previous_history,page=None,prompt_values=None,prompt_ids=None,_quick_tick=None):
         if (page is not None and page!='market') or not market_game_id(location_hash):raise PreventUpdate
-        prompt=html.P('Click Quick Filtering to show the top three selections and all remaining matches.',className='saved-market-empty')
+        def in_scope(content):return quick_visibility.scoped(content,location_hash,selection)
+        prompt=in_scope(html.P(quick_visibility.PROMPTS['market'],className='saved-market-empty'))
         def changed_selection():
             if page is None:return prompt,no_update
             previous=previous_history if previous_history and previous_history.get('context')==[location_hash,selection] else {}
@@ -352,17 +354,30 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         if (page is not None and ctx.triggered_id in {'market-url','nav-market'} and previous_history
                 and previous_history.get('context')==[location_hash,selection] and previous_history.get('filter_key')==request):
             return no_update,no_update
+
+        def pending_view(history,progress):
+            update=no_update if history is previous_history and history.get('progress')==progress['percent'] else dict(
+                history,progress=progress['percent'])
+            return in_scope(quick_progress(progress,'market')),update
+
+        def completed_view(job,result):
+            if (previous_history and previous_history.get('pending') and previous_history.get('job')==job
+                    and previous_history.get('filter_key')==request):
+                checkpoint=quick_finish_progress(filter_jobs.tasks,job,previous_history.get('progress'))
+                if checkpoint:return pending_view(previous_history,checkpoint)
+            return result[0],{**result[1],'filter_key':request}
+
         if page is not None and ctx.triggered_id=='market-quick-poll' and previous_history and previous_history.get('filter_key')==request:
             job=previous_history.get('job')
             if job:
                 state=filter_jobs.tasks.queue.state(job)
-                if state['pending']:return quick_progress(filter_jobs.tasks,job,'market'),no_update
-                if state['error']:return html.P(state['error'],className='mispricing-error'),dict(previous_history,pending=False)
+                if state['pending']:return pending_view(previous_history,filter_jobs.tasks.progress(job))
+                if state['error']:return in_scope(html.P(state['error'],className='mispricing-error')),dict(previous_history,pending=False)
                 result=filter_jobs.tasks.peek(job)
-                if result is not None:return result[0],{**result[1],'filter_key':request}
-                return html.P('This result expired. Run Quick Filtering again.',className='mispricing-error'),dict(previous_history,pending=False)
+                if result is not None:return completed_view(job,result)
+                return in_scope(html.P('This result expired. Run Quick Filtering again.',className='mispricing-error')),dict(previous_history,pending=False)
         snapshot=saved_snapshot(location_hash,selection)
-        if not snapshot:return html.P('That saved snapshot is unavailable. Choose a snapshot and run Quick Filtering again.',className='saved-market-empty'),no_update
+        if not snapshot:return in_scope(html.P('That saved snapshot is unavailable. Choose a snapshot and run Quick Filtering again.',className='saved-market-empty')),no_update
         snapshot={**snapshot,'sport':market_game_sport(location_hash)}
         def calculate_filter(report=None):
             if report:report(5,'Preparing saved quotes and forecast methods')
@@ -395,8 +410,8 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                 filtered_results_service.save(snapshot,ranked,criteria,request=request)
             except (DataSourceError,OSError,ValueError) as exc:
                 errors.append('Quick Filtering completed, but its report was not saved: '+str(exc))
-            return mispricing_results(snapshot,ranked,criteria,errors,
-                player_forecasts={method:forecasts[method][0] for method in chosen_players}),history
+            return in_scope(mispricing_results(snapshot,ranked,criteria,errors,
+                player_forecasts={method:forecasts[method][0] for method in chosen_players})),history
         if page is None:return calculate_filter()
         environment=forecast_environment(snapshot['sport'])
         snapshot_keys={game:forecast_snapshot_key(snapshot,game) for game in (False,True)}
@@ -405,9 +420,10 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         job=request_key([{key:value for key,value in request.items() if key!='sequence'},identities])
         explicit=ctx.triggered_id=='mispricing-request'
         result,pending,error=filter_jobs.tasks.scan(job,calculate_filter,refresh=explicit,force=explicit)
-        if result is not None and not pending and not error:return result[0],{**result[1],'filter_key':request}
+        if result is not None and not pending and not error:return completed_view(job,result)
         history=dict(context=[location_hash,selection],filter_key=request,pending=pending,job=job)
-        return (html.P(error,className='mispricing-error') if error else quick_progress(filter_jobs.tasks,job,'market')),history
+        if error:return in_scope(html.P(error,className='mispricing-error')),history
+        return pending_view(history,filter_jobs.tasks.progress(job))
 
     app.clientside_callback("""function(page,category,history,location,selection){
         const pending=page==='market'&&category==='Mispricing'&&history?.pending&&

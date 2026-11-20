@@ -9,12 +9,12 @@ from app.components.presentation import signed_state
 from models.season_weights import POLICY_VERSION
 
 from app.sections.markets.market_view import MARKET_NAMES, _line_values, criteria_match, player_probability_chart, probability_text, selection_text
-from app.sections.markets import prop_probability
+from app.sections.markets import prop_probability, quick_visibility
 from app.sections.markets.prompt_history import button as history_button
 from app.sections.market_structure.market_structure_link import button as structure_button
 from app.sections.markets.quick_methods import GAME_METHODS,PLAYER_METHODS,game_methods as supported_game_methods,game_options,player_methods as supported_player_methods
 from app.sections.markets.lazy_markets import markets as lazy_markets
-from sports_analytics.filter_jobs import forecast_progress
+from sports_analytics.filter_jobs import FORECASTS_FINISHED, forecast_progress
 
 
 FILTER_CATEGORY = 'Mispricing'
@@ -28,6 +28,8 @@ _college_preparation=Lock()
 def quick_controls(prefix, result_id):
     def field(label, control):
         return html.Div([html.Label(label, htmlFor=control.id), control], className='field')
+    starting = quick_progress(dict(percent=None,message='Submitting Quick Filtering…'),'kalshi-starting',
+                              hidden=True,**{'data-quick-scope':None}) if prefix=='kalshi' else None
     return html.Section([
         dcc.Interval(id=prefix+'-quick-poll',interval=500,disabled=True),
         html.H3('Quick Filtering'),
@@ -58,8 +60,7 @@ def quick_controls(prefix, result_id):
                 value=QUICK_DEFAULT_EDGE, min=-100, max=100, step='any')),
             html.Button('Quick Filtering', id=prefix+'-quick-filter', n_clicks=0, className='apply-criteria-button quick-filter-button'),
         ], className='criteria-controls'),
-        html.Div(id=prefix+'-quick-status', className='criteria-status', role='status'),
-        html.Div(id=result_id),
+        quick_visibility.feedback(prefix,result_id,starting=starting),
     ], className='quick-filter-section')
 
 
@@ -71,15 +72,29 @@ def selected_methods(game_methods, player_methods, sport=None):
     return validate(game_methods, supported_game_methods(sport)), validate(player_methods, supported_player_methods(sport))
 
 
-def quick_progress(tasks, key, prefix):
-    progress=tasks.progress(key)
+def quick_progress(progress, prefix, **props):
     percent=progress['percent']
+    message=[html.Span(progress['message'],role='status')]
+    if percent is not None and percent < FORECASTS_FINISHED and progress.get('elapsed',0) >= 2:
+        message.append(html.Span(f" · {progress['elapsed']}s elapsed",**{'aria-hidden':'true'}))
     return html.Div([
-        html.Div([html.Strong('Quick Filtering'),html.Span(f'{percent}%',className='backtest-job-percent')],
+        html.Div([html.Strong('Quick Filtering'),html.Span(f'{percent}%',className='backtest-job-percent') if percent is not None else None],
                  className='backtest-job-heading'),
         html.Progress(value=percent,max=100,**{'aria-label':'Quick Filtering calculation'}),
-        html.Small(progress['message'],className='backtest-job-message',role='status'),
-    ],id=prefix+'-quick-progress',className='quick-filter-progress')
+        html.Small(message,className='backtest-job-message'),
+    ],id=prefix+'-quick-progress',className='quick-filter-progress',**props)
+
+
+def quick_finish_progress(tasks, key, displayed):
+    """Surface a missed forecast checkpoint before displaying a verified result."""
+    if displayed is None or displayed >= FORECASTS_FINISHED:
+        return None
+    progress=tasks.progress(key)
+    if progress.get('forecast_checkpoint'):
+        return dict(percent=FORECASTS_FINISHED,message=progress['forecast_checkpoint']+'. Loading filtered results.')
+    if progress['percent'] > displayed:
+        return dict(percent=progress['percent'],message='Filtering finished. Loading results.')
+    return None
 
 
 def run_forecasts(tasks, sport, report=None):
@@ -201,7 +216,7 @@ def results(snapshot, ranked, criteria, errors=(), *, player_forecasts=None):
 
     return html.Div([
         html.Div([
-            html.Strong(f"{len(matches)} qualifying selections across this game's saved markets."),
+            html.Strong(f"Filtering complete. {len(matches)} qualifying selections across this game's saved markets."),
             html.Span(f" Estimated probability > {criteria['probability']*100:g}% and edge > {criteria['edge']*100:g} percentage points. "
                       f"{ranked['evaluated']} quotes evaluated; {ranked['unavailable']} unavailable quotes excluded."
                       +(f" {ranked['excluded']} quotes skipped by prompt selection." if ranked.get('excluded') else '')),

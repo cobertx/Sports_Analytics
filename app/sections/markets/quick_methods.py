@@ -99,7 +99,7 @@ def controls(prefix,rows,current_scope):
     ],className='field quick-prompt-method') for key,prompt in prompts.items()],className='quick-prompt-grid')
 
 
-def choices(values,identities,current_scope):
+def choices(values,identities,current_scope,*,ignore_stale=False):
     if values is None and identities is None:return {}
     if not isinstance(values,list) or not isinstance(identities,list) or len(values)!=len(identities):
         raise ValueError('Wait for the prompt method choices to finish loading.')
@@ -108,6 +108,7 @@ def choices(values,identities,current_scope):
     games=game_methods(sport)
     for value,identity in zip(values,identities):
         if identity.get('scope')!=current_scope:
+            if ignore_stale:continue
             raise ValueError('Prompt choices belong to another game. Wait for this game to finish loading.')
         key=identity['prompt']
         try:kind,subject=json.loads(key)

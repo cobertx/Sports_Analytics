@@ -153,7 +153,7 @@ class ReplayChecks(TestCase):
         self.assertTrue(all(len(g)==2 for g in games))
 
     def test_player_team_scope_and_single_player_limits_use_latest_appearances(self):
-        frame=team_history().rename(columns={'team':'entity_name'}).assign(season_type='regular')
+        frame=team_history().rename(columns={'team':'entity_name'}).assign(season_type='regular',min=30.)
         frame['entity_id']=frame.entity_name;frame['team']=frame.entity_name.map(dict(A='TARGET',B='TARGET',C='OTHER',D='OTHER'))
         frame['pts']=frame.points
         # The target team's final games precede the newest unrelated league games.
@@ -508,7 +508,7 @@ class ReplayChecks(TestCase):
                 self.assertEqual(polled[4], 25)
             with app.server.test_client() as client:
                 with client.get('/assets/css/backtesting_monitor.css') as response:
-                    self.assertIn('left: 0;', response.get_data(as_text=True))
+                    self.assertIn('.dashboard-sidebar { position: sticky;', response.get_data(as_text=True))
 
     def test_object_array_keys_use_contents(self):
         first = np.array(['30.0', None], dtype=object)

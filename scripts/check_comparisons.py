@@ -145,7 +145,7 @@ class ComparisonChecks(TestCase):
         self.assertEqual(result['common'],1)
         self.assertEqual(result['summary'][0]['mae'],4)
         self.assertIn('Player B',result['records']['whp'][0]['label'])
-        for field,value in [('market','player_assists'),('line',None)]:
+        for field,value in [('market','player_assists'),('line',None),('player_cohort','nba-rotation-minutes-v1')]:
             changed=deepcopy(reports);changed['uo']['context'][field]=value
             with self.assertRaises(ValueError):compare_reports(context,changed)
         duplicate=deepcopy(reports);duplicate['uo']['records']*=2

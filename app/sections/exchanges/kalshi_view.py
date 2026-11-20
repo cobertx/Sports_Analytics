@@ -16,7 +16,7 @@ from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
 from app.sections.markets.mispricing import quick_controls
 from sports_analytics.kalshi_analysis import FILTER, implied, adapter
-from app.sections.markets import prop_probability
+from app.sections.markets import prop_probability, quick_visibility
 from app.sections.markets.market_view import probability_text
 from models.Game_Outcome.PPP.PPP import fair_american_odds
 from app.sections.markets.prompt_history import button as history_button
@@ -142,7 +142,7 @@ def layout(provider='Kalshi'):
         dcc.Store(id=f'{prefix}-games'), dcc.Store(id=f'{prefix}-context'), dcc.Store(id=f'{prefix}-quotes'),
         dcc.Store(id=f'{prefix}-rules-signature'),
         *([dcc.Store(id='kalshi-models'),dcc.Store(id='kalshi-applied-criteria'),
-           dcc.Store(id='kalshi-filter-quotes'), dcc.Store(id='kalshi-quick-scan'),
+           dcc.Store(id='kalshi-filter-quotes'), dcc.Store(id='kalshi-quick-request'),dcc.Store(id='kalshi-quick-scan'),
            dcc.Store(id='kalshi-quick-state')] if not polymarket else []),
         dcc.Interval(id=f'{prefix}-list-timer', interval=60000, disabled=True),
         dcc.Interval(id=f'{prefix}-quote-timer', interval=5000, disabled=True),
@@ -278,8 +278,9 @@ def filter_panel():
             field('Edge (percentage points)',dcc.Input(id='kalshi-edge-threshold',type='number',value=5,min=-100,max=100,step='any')),
             html.Button('Apply Criteria',id='kalshi-apply-criteria',n_clicks=0,className='apply-criteria-button'),
         ],className='criteria-controls'),
-        html.Div(id='kalshi-criteria-status',className='criteria-status',role='status'),
-        dcc.Loading(html.Div(id='kalshi-filter-results'),delay_show=500,overlay_style={'visibility':'visible'},color='#57dbc4'),
+        quick_visibility.slot('kalshi','kalshi-criteria-status',class_name='criteria-status',role='status'),
+        dcc.Loading(quick_visibility.slot('kalshi','kalshi-filter-results'),delay_show=500,
+                    overlay_style={'visibility':'visible'},color='#57dbc4'),
         quick_controls('kalshi', 'kalshi-quick-results'),
     ],id='kalshi-filter-panel',className='panel market-criteria',style={'display':'none'})
 

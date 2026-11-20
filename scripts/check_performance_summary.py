@@ -16,7 +16,7 @@ from dash.exceptions import PreventUpdate
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from scripts.callback_fixtures import callback_functions,wire_value
-from sports_analytics.backtesting_service import BacktestingService,NFL_PLAYER_COHORT,PREDICTIVE_Z
+from sports_analytics.backtesting_service import BacktestingService,PLAYER_COHORTS,PREDICTIVE_Z
 from app.sections.backtesting.backtesting_view import GROUPS,available_models,model_config,navigation,page,PERFORMANCE_ROUTE,summary_route
 from app.dashboard import create_app
 from sports_analytics.data import DataSourceError
@@ -50,7 +50,7 @@ class PerformanceSummaryChecks(TestCase):
         report=saved_game_report(identity)
         if created:report['created_at']=created
         report['context'].update(**context,model=key,**request)
-        if context==dict(sport='NFL',group='player-stats'):report['context']['player_cohort']=NFL_PLAYER_COHORT
+        if context['group']=='player-stats':report['context']['player_cohort']=PLAYER_COHORTS[context['sport']]
         model=next(m for m in available_models(context['sport'],context['group']) if m.key==key)
         report['config']=model_config(model,context['sport']) if config is None else config
         if context['group']=='player-stats':
@@ -349,6 +349,55 @@ class PerformanceSummaryChecks(TestCase):
         completed=self.manager.refresh(self.context,manifest['id'])
         self.assertTrue(all(e['state']=='completed' for e in completed['entries'].values()))
         self.assertEqual(len(self.manager.reports(completed)),len(NBA_GAME_KEYS))
+
+    def test_load_reconciles_saved_and_missing_methods_while_another_is_running(self):
+        previous=self.manager.new(self.context,{
+            'ppp':dict(state='failed',message='Previous fit failed'),
+            'epa':dict(state='running',job_id='active-epa'),
+            'elo':dict(state='queued'),
+        },self.request,'performance')
+        saved=self.seed('ppp')
+        self.seed('elo',{**self.request,'limit':11})
+        app,_=self.app()
+        values={'performance-load':1,'performance-context':self.context,'performance-poll':0,'performance-market':'margin',
+                'performance-team':'__all__','performance-limit':10,'performance-start':None,'performance-end':None,
+                'performance-playoffs':'exclude','performance-line':None,'performance-state':None,
+                'performance-pages':{'NBA/game-outcome':previous['id']},'performance-tolerance':5,'performance-rendered':None,
+                'performance-basis':'all'}
+        def progress(job):
+            return dict(state='running',percent=25,message='Evaluating') if job else None
+        with patch.object(self.backend,'progress',side_effect=progress),patch.object(
+                self.backend,'start',side_effect=lambda **p:f"new-{p['key']}") as start:
+            result=self.post_callback(app,'performance_load',values,'performance-load.n_clicks')
+            manifest=values['performance-state']
+            self.assertEqual(manifest['id'],previous['id'])
+            self.assertEqual(manifest['entries']['ppp'],dict(state='completed',run_id=saved['run_id'],reused=True))
+            self.assertEqual(manifest['entries']['epa']['job_id'],'active-epa')
+            self.assertEqual({call.kwargs['key'] for call in start.call_args_list},set(NBA_GAME_KEYS)-{'ppp','epa'})
+            self.assertIn('1 loaded from saved runs',result['performance-status']['children'])
+            table=self.post_callback(app,'performance_results',values,'performance-state.data')
+            self.assertIn(saved['run_id'],str(table))
+            self.assertIn('Running',str(table))
+            self.assertIn('100.0%',str(table))
+            self.post_callback(app,'performance_load',values,'performance-load.n_clicks')
+            self.assertEqual(start.call_count,len(NBA_GAME_KEYS)-2)
+
+    def test_load_joins_an_independent_backtest_with_the_same_inputs(self):
+        self.seed('ppp')
+        epa=next(model for model in available_models('NBA','game-outcome') if model.key=='epa')
+        parameters=dict(**self.context,key='epa',entity='__all__',limit=10,lookback='Model Default',
+                        market='winner',config_overrides=model_config(epa,'NBA'))
+        running=[
+            dict(id='matching-epa',percent=35,message='Evaluating',parameters=parameters),
+            dict(id='different-elo',percent=20,message='Evaluating',parameters=dict(parameters,key='elo',limit=11)),
+        ]
+        with patch.object(self.backend,'active_jobs',return_value=running),patch.object(
+                self.backend,'start',side_effect=lambda **p:f"new-{p['key']}") as start:
+            manifest=self.manager.ensure(self.context,self.request,'__all__')
+        self.assertTrue(manifest['entries']['ppp']['reused'])
+        self.assertEqual(manifest['entries']['epa']['job_id'],'matching-epa')
+        self.assertEqual(manifest['entries']['epa']['percent'],35)
+        self.assertEqual({call.kwargs['key'] for call in start.call_args_list},set(NBA_GAME_KEYS)-{'ppp','epa'})
 
     def test_scope_defaults_and_reference_lines_must_match_before_reuse(self):
         original=self.seed('ppp')

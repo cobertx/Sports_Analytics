@@ -2,6 +2,7 @@
 import math
 import pandas as pd
 from models.replay import replay_scope
+from models.Player_Stats.backtest_eligibility import snapshot_workload_rows
 from .calibration import diagnostics
 from .errors import UsageOpportunityError
 from .markets import prop_key
@@ -22,9 +23,11 @@ def walk_forward_backtest(service, snapshots, actuals):
     actuals['market'] = actuals.market.str.removesuffix('_alternate')
     if actuals.duplicated(['game_id', 'subject', 'market']).any():
         raise UsageOpportunityError('Actuals must have unique player/game/market identities.')
+    snapshots = sorted(snapshots, key=lambda s: s['pulled_at'])
+    actuals = snapshot_workload_rows(actuals, snapshots)
     outcomes = actuals.set_index(['game_id', 'subject', 'market']).value.to_dict()
     records, unavailable = [], []
-    for snapshot in sorted(snapshots, key=lambda s: s['pulled_at']):
+    for snapshot in snapshots:
         pulled, start = pd.Timestamp(snapshot['pulled_at']), pd.Timestamp(snapshot['commence_time'])
         if pulled.tzinfo is None or start.tzinfo is None or pulled >= start:
             raise UsageOpportunityError('Backtesting requires contemporaneous pregame timestamps and quotes.')

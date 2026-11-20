@@ -28,8 +28,8 @@ class QuickLifecycleChecks(TestCase):
     def submit(self,click=1,**changes):
         values=dict(probability=0,edge=-100,methods=['PPP'],players=['WHP'],selected='live')
         values.update(changes)
-        scan,_=self.f.cb['kalshi_quick_scan'](click,values['probability'],values['edge'],values['methods'],values['players'],
-            self.f.game,FILTER,values['selected'],'kalshi',fixtures.view.href('NFL',self.f.game['id']))
+        scan,_=self.f.cb['kalshi_quick_scan'](fixtures.quick_request(click,values['selected']),
+            values['probability'],values['edge'],values['methods'],values['players'],self.f.game)
         return json.loads(json.dumps(scan))
 
     def ready(self):self.f.app._filter_jobs.tasks.queue.tasks.join()
@@ -45,9 +45,41 @@ class QuickLifecycleChecks(TestCase):
     def assert_terminal(self,response,status):
         updates=response['sideUpdate']
         self.assertEqual(updates['kalshi-quick-state']['data']['status'],status)
-        self.assertTrue(updates['kalshi-quick-poll']['disabled'])
-        self.assertFalse(updates['kalshi-quick-filter']['disabled'])
-        self.assertNotIn('calculating in the background',updates['kalshi-quick-status']['children'])
+        self.assertNotIn('calculating in the background',str(updates['kalshi-quick-status']['children']))
+
+    def test_click_queues_the_visible_game_when_context_is_stale_and_acknowledges_progress(self):
+        entered,release=Event(),Event();self.addCleanup(release.set)
+        def quotes(game,**kwargs):
+            self.assertEqual(game,self.f.game)
+            entered.set()
+            if not release.wait(5):raise AssertionError('Quote fixture was not released')
+            return self.f.snapshot
+        self.f.exchange.all_quotes.side_effect=quotes
+        stale=dict(self.f.game,id='KXNFLGAME-PREVIOUS')
+        values={'kalshi-quick-request':fixtures.quick_request(),'kalshi-quick-probability':0,'kalshi-quick-edge':-100,
+                'kalshi-quick-game-methods':['PPP'],'kalshi-quick-player-methods':['WHP'],'kalshi-context':stale,
+                'kalshi-games':dict(sport='NFL',games=[self.f.game])}
+        output=post(self.f.app,'kalshi_quick_scan',values,'kalshi-quick-request.data')['response']
+        self.assertTrue(entered.wait(1))
+        self.assertIn('kalshi-submitted-quick-progress',str(output['kalshi-quick-status']))
+        scan=output['kalshi-quick-scan']['data']
+        self.assertEqual(scan['scope'][:3],['NFL',self.f.game['id'],'live'])
+        for _ in range(2):
+            pending=self.display(scan,**{'kalshi-context':stale,'kalshi-snapshot':None,
+                                        'kalshi-quick-request':fixtures.quick_request()})
+            self.assertIn('Loading market quotes',str(pending['response']))
+            self.assertEqual(pending['sideUpdate']['kalshi-quick-state']['data']['status'],'pending')
+        release.set();self.ready()
+        self.assert_terminal(self.display(scan,**{'kalshi-context':stale}),'complete')
+        self.f.exchange.all_quotes.assert_called_once()
+
+    def test_missing_game_returns_a_scoped_error_instead_of_dropping_the_click(self):
+        values={'kalshi-quick-request':fixtures.quick_request(),'kalshi-quick-probability':0,'kalshi-quick-edge':-100,
+                'kalshi-quick-game-methods':['PPP'],'kalshi-quick-player-methods':['WHP']}
+        output=post(self.f.app,'kalshi_quick_scan',values,'kalshi-quick-request.data')['response']
+        self.assertIn('still loading',output['kalshi-quick-scan']['data']['error'])
+        self.assertIn('still loading',str(output['kalshi-quick-status']))
+        self.f.exchange.all_quotes.assert_not_called()
 
     def test_pending_job_survives_availability_revision_and_discovery_metadata_updates(self):
         entered,release=Event(),Event();self.addCleanup(release.set)
@@ -68,7 +100,13 @@ class QuickLifecycleChecks(TestCase):
         response=self.display(scan,**{'kalshi-context':changed})
         self.assertEqual(response['sideUpdate']['kalshi-quick-state']['data']['status'],'pending')
         release.set();self.ready()
-        response=self.display(scan,**{'kalshi-context':changed})
+        pending=response['sideUpdate']['kalshi-quick-state']['data']
+        finishing=self.display(scan,**{'kalshi-context':changed,'kalshi-quick-state':pending})
+        checkpoint=finishing['sideUpdate']['kalshi-quick-state']['data']
+        self.assertEqual((checkpoint['status'],checkpoint['progress']),('pending',80))
+        self.assertIn('Loading filtered results',str(finishing))
+        self.assertNotIn('Top 3 by edge',str(finishing))
+        response=self.display(scan,**{'kalshi-context':changed,'kalshi-quick-state':checkpoint})
         self.assert_terminal(response,'complete')
         self.assertIn('Top 3 by edge',str(response['response']))
         self.assertNotIn('Click Quick Filtering to compare',str(response['response']))
@@ -79,7 +117,9 @@ class QuickLifecycleChecks(TestCase):
         scan=self.submit();self.ready();self.revision=[999]
         response=self.display(scan)
         self.assert_terminal(response,'complete')
-        self.assertIn('16 evaluated',response['sideUpdate']['kalshi-quick-status']['children'])
+        status=response['sideUpdate']['kalshi-quick-status']['children']['props']
+        self.assertIn('16 evaluated',status['children'])
+        self.assertEqual(json.loads(status['data-quick-scope']),[fixtures.view.href('NFL',self.f.game['id']),'live'])
         legacy=dict(scan);legacy.pop('scope')
         self.assert_terminal(self.display(legacy),'complete')
 
@@ -87,7 +127,8 @@ class QuickLifecycleChecks(TestCase):
         scan=self.submit();self.ready();self.assert_terminal(self.display(scan),'complete')
         self.f.exchange.all_quotes.side_effect=DataSourceError('offline fixture')
         failed=self.submit(2);self.ready()
-        response=self.display(failed);self.assert_terminal(response,'error')
+        pending=dict(job=failed['job'],sequence=failed['sequence'],status='pending',progress=5)
+        response=self.display(failed,**{'kalshi-quick-state':pending});self.assert_terminal(response,'error')
         self.assertIn('offline fixture',str(response));self.assertIn('retry',str(response))
         self.assertNotIn('Top 3 by edge',str(response['response']))
         self.f.exchange.all_quotes.side_effect=None
@@ -97,11 +138,16 @@ class QuickLifecycleChecks(TestCase):
         scan=self.submit();self.ready()
         for changes in [{'kalshi-quick-probability':10},{'kalshi-quick-edge':0},
                         {'kalshi-quick-game-methods':['EPA']},{'kalshi-quick-player-methods':['PGE']},
-                        {'kalshi-context':dict(self.f.game,id='another')},{'kalshi-snapshot':'archive.json'}]:
+                        {'kalshi-snapshot':'archive.json'}]:
             response=self.display(scan,**changes)
             self.assert_terminal(response,'changed')
             self.assertIn('Click Quick Filtering',str(response['response']))
             self.assertNotIn('Top 3 by edge',str(response['response']))
+        another='KXNFLGAME-ANOTHER'
+        response=self.display(scan,**{'kalshi-context':dict(self.f.game,id=another),
+                                     'market-url':fixtures.view.href('NFL',another)})
+        self.assertIn('Click Quick Filtering',str(response['response']))
+        self.assertNotIn('sideUpdate',response)
 
     def test_zero_matches_and_unsupported_contracts_are_completed_results_with_explanations(self):
         scan=self.submit(probability=100);self.ready()
@@ -151,7 +197,12 @@ class QuickLifecycleChecks(TestCase):
         if not node():self.skipTest('Node runtime unavailable')
         meta=next(m for m in self.f.app._callback_list if isinstance(m['output'],str) and
                   'kalshi-quick-poll.disabled' in m['output'] and m.get('clientside_function'))
-        config=dict(inline=self.f.app._inline_scripts,client=meta['clientside_function'])
+        kickoff=next(m for m in self.f.app._callback_list if 'kalshi-quick-request.data' in m['output'])
+        worker=next(m for m in self.f.app._callback_list if 'kalshi-quick-scan.data' in m['output'])
+        indicator='kalshi-starting-quick-progress.hidden'
+        self.assertIs(worker['running']['running'][indicator],False)
+        self.assertIs(worker['running']['runningOff'][indicator],True)
+        config=dict(inline=self.f.app._inline_scripts,client=meta['clientside_function'],kickoff=kickoff['clientside_function'])
         script=Path(__file__).with_name('check_kalshi_quick_lifecycle.js')
         result=subprocess.run([node(),str(script)],input=json.dumps(config),text=True,capture_output=True,check=True)
         self.assertIn('Passed',result.stdout)

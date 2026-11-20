@@ -4,6 +4,7 @@ import math
 import numpy as np
 import pandas as pd
 from models.replay import replay_scope
+from models.Player_Stats.backtest_eligibility import recorded_workload_rows
 from .core import WeightedHistoricalPerformance, eligible_history
 from .errors import WHPError
 
@@ -22,7 +23,7 @@ def walk_forward_backtest(history, config, *, nonnegative=True, count=False, lin
     data = eligible_history(history, last)
     model, records = WeightedHistoricalPerformance(config), []
     start = pd.Timestamp(evaluation_start) if evaluation_start else None
-    for _, game in data.iterrows():
+    for _, game in recorded_workload_rows(data, config.sport).iterrows():
         if start is not None and game["event_date"] < start:
             continue
         try:
@@ -38,7 +39,7 @@ def walk_forward_backtest(history, config, *, nonnegative=True, count=False, lin
                           outcome=int(actual > line if side == "Over" else actual < line))
         records.append(record)
     if not records:
-        raise WHPError("No out-of-sample forecasts available; provide more chronological history.")
+        raise WHPError("No eligible out-of-sample forecasts. Check recorded workload and chronological training history.")
     errors = np.array([r["predicted"] - r["actual"] for r in records])
     metrics = dict(games=len(records), mae=float(np.abs(errors).mean()),
                    rmse=float(np.sqrt(np.mean(errors ** 2))), bias=float(errors.mean()))

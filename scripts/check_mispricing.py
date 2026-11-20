@@ -98,8 +98,8 @@ class MispricingChecks(TestCase):
             self.assertEqual(value,FILTER_CATEGORY)
             self.assertEqual(tabs[-1].label,'Mispricing Filter')
             self.assertIn('Game',[tab.value for tab in tabs])
-        self.assertEqual(self.cb['mispricing_visibility'](FILTER_CATEGORY),({'display':'block'},{'display':'none'}))
-        self.assertEqual(self.cb['mispricing_visibility']('Game'),({'display':'none'},{'display':'block'}))
+        self.assertTrue(any('mispricing-filter-panel.style' in entry['output'] and entry.get('clientside_function')
+                            for entry in self.app._callback_list))
         self.cb['show_saved_markets'](FILTER_CATEGORY,self.saved['pulled_at'],'#nfl-game-123',None,'PPP','WHP',None)
         for service in [*self.game_services.values(),*self.player_services.values()]:service.forecast.assert_not_called()
 
@@ -196,8 +196,9 @@ class MispricingChecks(TestCase):
                     self.assertNotIn('market-applied-criteria',data)
                     values['mispricing-request']=data['mispricing-request']['data']
                 else:
-                    reference=data.get('mispricing-forecast-history',{}).get('data',{})
-                    if reference.get('pending'):
+                    for _ in range(2):
+                        reference=data.get('mispricing-forecast-history',{}).get('data',{})
+                        if not reference.get('pending'):break
                         finish_filter(self.app,reference)
                         values['mispricing-forecast-history']=reference
                         response=client.post('/_dash-update-component',json=dict(output=key,
@@ -273,7 +274,7 @@ class MispricingChecks(TestCase):
         selection=self.saved['pulled_at'];location='#nfl-game-123'
         for methods,players in [([],['WHP']),(['PPP'],[]),(['BAD'],['WHP']),(['PPP'],'WHP')]:
             response=self.cb['request_quick_filter'](1,75,5,methods,players,location,selection)
-            self.assertIs(response[0],no_update);self.assertIn('Select at least one supported',response[1])
+            self.assertIs(response[0],no_update);self.assertIn('Select at least one supported',response[1].children)
         self.game_services['EPA'].forecast.side_effect=DataSourceError('No team history')
         request,_=self.cb['request_quick_filter'](1,75,5,['PPP','EPA'],['WHP'],location,selection)
         rendered,_=self.cb['quick_filter_markets'](request,FILTER_CATEGORY,location,selection,['PPP','EPA'],['WHP'],75,5,None)

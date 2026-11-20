@@ -6,7 +6,7 @@ from flask import abort, send_from_directory
 import pandas as pd
 from sports_analytics.data import DataSourceError, SOURCES
 from app.sections.backtesting.backtesting_view import backtesting_route, find_model, page as backtesting_page
-from sports_analytics.backtesting_service import default_evaluation_games, default_lookback, export_filename, nfl_backtest_criteria
+from sports_analytics.backtesting_service import default_evaluation_games, default_lookback, export_filename, player_backtest_criteria
 from app.sections.backtesting.backtesting_results import render as render_backtesting_results, empty as empty_backtesting_results
 from app.sections.backtesting.backtesting_results import evaluated_records
 from app.sections.backtesting.backtesting_monitor import contents as backtesting_monitor_contents
@@ -96,8 +96,7 @@ def register(app, backtesting_service):
             extra=dict(team_filter=context.get('team_filter')) if context.get('workspace')=='research' else {}
             count=backtesting_service.available_games(context['sport'],context['group'],context['model'],entity,
                 market,start,end,playoffs=='include',**extra)
-            note=(' '+nfl_backtest_criteria(market)
-                  if context['sport']=='NFL' and context['group']=='player-stats' else '')
+            note=(' '+player_backtest_criteria(context['sport'],market) if context['group']=='player-stats' else '')
             scope=('all teams' if entity=='__all__' else entity) if context['group']=='game-outcome' else (
                 context.get('team_filter') or ('all players' if entity=='__all__' else 'this player'))
             return (f'{count:,} saved games available for {scope} with these filters. '
@@ -115,21 +114,11 @@ def register(app, backtesting_service):
         if jobs==previous:raise PreventUpdate
         return jobs
 
-    @app.callback(Output('backtest-monitor-collapsed','data'),Input('backtest-monitor-toggle','n_clicks'),
-                  State('backtest-monitor-collapsed','data'),prevent_initial_call=True)
-    def toggle_backtest_monitor(clicks,collapsed):
-        if not clicks:raise PreventUpdate
-        return not bool(collapsed)
-
     @app.callback(Output('backtest-monitor-body','children'),Output('backtest-monitor-count','children'),
-                  Output('backtest-monitor','className'),Output('backtest-monitor-toggle','aria-expanded'),
-                  Output('backtest-monitor-toggle','aria-label'),
-                  Input('backtest-monitor-jobs','data'),Input('backtest-monitor-collapsed','data'))
-    def render_backtest_monitor(jobs,collapsed):
+                  Input('backtest-monitor-jobs','data'))
+    def render_backtest_monitor(jobs):
         jobs=jobs or []
-        return (backtesting_monitor_contents(jobs),str(len(jobs)),
-            'backtest-monitor'+(' is-collapsed' if collapsed else ''),'false' if collapsed else 'true',
-            ('Expand' if collapsed else 'Minimize')+' backtesting processes')
+        return backtesting_monitor_contents(jobs),str(len(jobs))
 
     @app.callback(Output('backtest-history','options'),Output('backtest-history','value'),
                   Output('backtest-history-status','children'),Output('backtest-history-location','children'),

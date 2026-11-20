@@ -164,6 +164,8 @@ class Comparisons:
             lines={r['context'].get('line') for r in reports.values()}
             if len(markets)!=1 or len(lines)!=1:
                 raise ValueError('Player comparisons require the same statistic and reference line in every saved simulation.')
+            if len({r['context'].get('player_cohort') for r in reports.values()})!=1:
+                raise ValueError('Player comparisons require saved simulations with the same player eligibility rules.')
 
 
 def record_identity(record,group):

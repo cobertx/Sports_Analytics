@@ -55,6 +55,14 @@ class NavigationPipelineChecks(TestCase):
     def test_registered_browser_ui_matches_existing_presentations(self):
         if not node():self.skipTest('Node unavailable; no dependencies installed')
         refs=[]
+        for panel, category, display in [
+            ('mispricing-filter-panel','Mispricing',('block','none')),
+            ('mispricing-filter-panel','Game',('none','block')),
+            ('mispricing-filter-panel','Additional Information',('none','none')),
+            ('kalshi-filter-panel','Mispricing Filter',('block','none')),
+            ('kalshi-filter-panel','Game Lines',('none','block')),
+        ]:
+            refs.append(dict(output=panel+'.style',args=[category],expected=[dict(display=value) for value in display]))
         for identity in ('backtest-poll','performance-poll','comparison-poll'):
             for page,sport,expected in [('market','NFL',0),('historical','NBA',0),('backtesting','NBA',-1),('historical','RESEARCH',-1)]:
                 refs.append(dict(output=identity+'.max_intervals',args=[page,sport],expected=expected))

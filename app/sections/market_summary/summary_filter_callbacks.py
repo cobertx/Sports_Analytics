@@ -6,7 +6,8 @@ from dash import Input,Output,State,html,no_update
 from dash.exceptions import PreventUpdate
 
 from app.shell.navigation import scoped_callback
-from app.sections.markets.mispricing import criteria_values,quick_progress,selected_methods
+from app.sections.markets.mispricing import criteria_values,quick_finish_progress,quick_progress,selected_methods
+from app.sections.markets import quick_visibility
 from sports_analytics.filter_jobs import QuickScanTasks,request_key
 from sports_analytics.summary_filtering import calculate_filter
 from sports_analytics.availability import revision as availability_revision
@@ -53,6 +54,7 @@ def register(app,quotes,game_forecast,player_forecast,source_revision):
         State('summary-game','value'),State('summary-category','value'),State('workspace-page','value'),State('sport','value'),prevent_initial_call=True)
     def summary_quick_submit(clicks,methods,players,probability,edge,bundle,selected,category,page,sport):
         if not clicks or page!='market-summary' or category!=view.QUICK:raise PreventUpdate
+        location=quick_visibility.summary_location(bundle,sport)
         bundle=quotes.resolve(bundle)
         token=uuid4().hex
         try:
@@ -82,35 +84,53 @@ def register(app,quotes,game_forecast,player_forecast,source_revision):
             if error:raise ValueError(error)
             return dict(job=key,bundle_id=bundle['id'],game_id=selected,sport=sport,methods=methods,players=players,applied_at=time(),
                 criteria=criteria,policy=POLICY_VERSION,availability=availability_revision(sport),source_revision=source,partial=bool(bundle.get('updating')))
-        except (ValueError,TypeError) as exc:return dict(error=str(exc),token=token)
+        except (ValueError,TypeError) as exc:return dict(error=str(exc),token=token,location=location,game_id=selected)
 
     @scoped_callback(app,'market-summary',Output('summary-quick-results','children'),Output('summary-quick-status','children'),
-        Output('summary-quick-completed','data'),Input('summary-quick-request','data'),Input('summary-quotes','data'),
+        Output('summary-quick-completed','data'),Output('summary-quick-progress-state','data'),
+        Input('summary-quick-request','data'),Input('summary-quotes','data'),
         Input('summary-category','value'),Input('summary-game','value'),Input('workspace-page','value'),Input('sport','value'),
-        Input('summary-quick-poll','n_intervals'),State('summary-quick-completed','data'),Input('history-update-poll','n_intervals'),prevent_initial_call=True)
-    def summary_quick_results(request,bundle,category,selected,page,sport,tick,completed,history_tick=None):
+        Input('summary-quick-poll','n_intervals'),State('summary-quick-completed','data'),Input('history-update-poll','n_intervals'),
+        State('summary-quick-progress-state','data'),prevent_initial_call=True)
+    def summary_quick_results(request,bundle,category,selected,page,sport,tick,completed,history_tick=None,previous=None):
         if page!='market-summary' or category not in {view.QUICK,'Game Lines'}:raise PreventUpdate
         if category=='Game Lines' and (not request or not request.get('job') or not bundle or
                                       request['bundle_id']!=bundle['id']):raise PreventUpdate
-        prompt=html.P('Choose methods and thresholds, then click Run Quick Filtering.',className='saved-market-empty')
-        if not request:return prompt,'',no_update
-        if request.get('error'):return prompt,request['error'],dict(token=request['token'],status='error')
-        if (not bundle or (request['sport'],request['game_id'],request['bundle_id'])!=(sport,selected,bundle['id']) or
-                request['policy']!=POLICY_VERSION):
-            return prompt,'Quotes or historical inputs changed. Run Quick Filtering again to use the current data.',dict(job=request['job'],status='changed')
+        location=quick_visibility.summary_location(bundle,sport)
+        def publish(content,message,event,progress=no_update):
+            return (quick_visibility.scoped(content,location,selected),
+                    quick_visibility.status(message,location,selected),event,progress)
+        prompt=html.P(quick_visibility.PROMPTS['summary'],className='saved-market-empty')
+        if not request:return publish(prompt,'',no_update)
+        if request.get('error'):
+            if (request.get('location'),request.get('game_id'))!=(location,selected):return publish(prompt,'',no_update)
+            return publish(prompt,request['error'],dict(token=request['token'],status='error'))
+        changed=dict(job=request['job'],status='changed')
+        if (request['sport'],request['game_id'])!=(sport,selected):return publish(prompt,'',changed)
+        if not bundle or request['bundle_id']!=bundle['id'] or request['policy']!=POLICY_VERSION:
+            return publish(prompt,'Quotes or historical inputs changed. Run Quick Filtering again to use the current data.',changed)
         bundle=quotes.resolve(bundle)
-        if bundle is None:return prompt,'This quote view expired. Select the game again.',dict(job=request['job'],status='expired')
+        if bundle is None:return publish(prompt,'This quote view expired. Select the game again.',dict(job=request['job'],status='expired'))
+        def pending_view(progress):
+            display=dict(job=request['job'],percent=progress['percent'])
+            return publish(quick_progress(progress,'summary'),'',no_update,no_update if display==previous else display)
+
         state=jobs.queue.state(request['job'])
         if state['pending']:
             if category!='Quick Filtering':raise PreventUpdate
-            return quick_progress(jobs,request['job'],'summary'),'',no_update
+            return pending_view(jobs.progress(request['job']))
         ranked,status=ranked_result(request,sport)
         if status=='changed':
-            return prompt,'Historical inputs changed. Run Quick Filtering again to use the current data.',dict(job=request['job'],status='changed')
+            return publish(prompt,'Historical inputs changed. Run Quick Filtering again to use the current data.',changed)
         event=dict(job=request['job'],status='error' if state['error'] else status)
         if event==completed:raise PreventUpdate
-        if event['status']=='error':return prompt,'Quick Filtering failed. '+(state['error'] or 'This result expired.')+' Click Run Quick Filtering to retry.',event
-        return view.quick_results(bundle,ranked,request['criteria'],request['job']),\
-            ('Partial source coverage. ' if request.get('partial') else '')+f"Quick Filtering completed: {len(ranked['matches'])} qualifying quotes.",event
+        if event['status']=='error':
+            return publish(prompt,'Quick Filtering failed. '+(state['error'] or 'This result expired.')+' Click Run Quick Filtering to retry.',event)
+        if category==view.QUICK and previous and previous.get('job')==request['job']:
+            checkpoint=quick_finish_progress(jobs,request['job'],previous.get('percent'))
+            if checkpoint:return pending_view(checkpoint)
+        return publish(view.quick_results(bundle,ranked,request['criteria'],request['job']),
+            ('Partial source coverage. ' if request.get('partial') else '')+
+            f"Quick Filtering completed: {len(ranked['matches'])} qualifying quotes.",event,None)
 
     return chart_result

@@ -139,7 +139,7 @@ class PromptMethodChecks(TestCase):
         before=sum(s.forecast.call_count for s in [*f.game_services.values(),*f.player_services.values()])
         stale=[dict(pi[0],scope=qm.scope('market','NFL','other'))]
         rejected,status=f.cb['request_quick_filter'](2,75,5,['PPP'],['WHP'],loc,selection,pv,stale)
-        self.assertIs(rejected,no_update);self.assertIn('another game',status)
+        self.assertIs(rejected,no_update);self.assertIn('another game',status.children)
         self.assertEqual(before,sum(s.forecast.call_count for s in [*f.game_services.values(),*f.player_services.values()]))
 
     def test_same_players_different_statistics_have_independent_consensus(self):
@@ -182,8 +182,7 @@ class PromptMethodChecks(TestCase):
         assignments[qm.prompt_key(targets[f.snapshot['rows'][-1]['ticker']])]=['UO','OAM']
         for engine in f.players.values():engine.forecast.return_value=SimpleNamespace(forecasts={},selection=lambda row:MarketProbability(.9,.1,0))
         pv,pi=fields('kalshi','NFL',f.game['id'],assignments)
-        scan,_=quick_scan(f,1,0,-100,['PPP'],['WHP'],f.game,FILTER,'live','kalshi',
-            kalshi.view.href('NFL',f.game['id']),pv,pi)
+        scan,_=quick_scan(f,kalshi.quick_request(),0,-100,['PPP'],['WHP'],f.game,None,pv,pi)
         self.assertEqual(len(scan['ranked']['matches']),20)
         for m in ('UO','OAM','PGE'):f.players[m].forecast.assert_called_once()
         f.engines['EPA'].forecast.assert_called_once();f.engines['PPP'].forecast.assert_not_called()
@@ -196,8 +195,7 @@ class PromptMethodChecks(TestCase):
             scan,f.game,['PPP'],['WHP'],0,-100,'live',FILTER,'kalshi',changed,pi)))
         f.players['OAM'].forecast.side_effect=DataSourceError('Unavailable OAM')
         f.app._filter_jobs.forecasts.clear()
-        failed,_=quick_scan(f,2,0,-100,['PPP'],['WHP'],f.game,FILTER,'live','kalshi',
-            kalshi.view.href('NFL',f.game['id']),pv,pi)
+        failed,_=quick_scan(f,kalshi.quick_request(2),0,-100,['PPP'],['WHP'],f.game,None,pv,pi)
         self.assertEqual(len(failed['ranked']['matches']),18)
 
     def test_closed_prompt_editor_does_not_load_or_erase_current_choices(self):

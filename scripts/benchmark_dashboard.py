@@ -68,6 +68,9 @@ def quick_filter_benchmark():
         assert history['pending']
         release.set();fixture.app._filter_jobs.tasks.queue.tasks.join()
         values['mispricing-forecast-history']=history
+        checkpoint=post(fixture.app,'quick_filter_markets',values,'market-quick-poll.n_intervals')
+        values['mispricing-forecast-history']=checkpoint['response']['mispricing-forecast-history']['data']
+        assert values['mispricing-forecast-history']['progress']==80
         ready=post(fixture.app,'quick_filter_markets',values,'market-quick-poll.n_intervals')
         assert 'Top 3 by edge' in str(ready)
         values['mispricing-request']=filter_context(location,selection,['PPP'],['WHP'],criteria_values(80,5))

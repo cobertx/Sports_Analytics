@@ -13,6 +13,7 @@ from models.Player_Stats.Opponent_Adjusted_Matchup import OpponentAdjustedMarket
 from .config import PaceConfig
 from .historical_data import PaceHistoryRepository,atomic_json
 from .prediction_service import PaceGameEnvironmentMarketService
+from models.Player_Stats.backtest_eligibility import STANDALONE_WORKLOAD
 from .backtesting import walk_forward_backtest
 from .model_comparison import compare_models
 
@@ -27,7 +28,7 @@ def main(argv=None):
     parser.add_argument('--snapshot',type=Path,help='Saved market CSV or canonical snapshot JSON')
     parser.add_argument('--simulations',type=int,default=12000)
     parser.add_argument('--backtest-snapshots',type=Path)
-    parser.add_argument('--actuals',type=Path,help='CSV: game_id,subject,market,value')
+    parser.add_argument('--actuals',type=Path,help=f'CSV: game_id,subject,market,value. {STANDALONE_WORKLOAD}')
     parser.add_argument('--compare',action='store_true',help='Compare WHP, UO, OAM and PGE on supplied historical snapshots')
     parser.add_argument('--output',type=Path,help='Write JSON report instead of printing it')
     args=parser.parse_args(argv)

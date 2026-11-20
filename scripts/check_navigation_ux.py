@@ -33,6 +33,14 @@ class ScopedHistoryChecks(TestCase):
         self.assertEqual(original[0].layout.uirevision,changed[0].layout.uirevision)
         self.assertEqual(original[0].layout.meta['analysis_scope']['revision'],d['revision'])
 
+    def test_expired_history_cache_returns_a_matching_terminal_chart(self):
+        dataset=self.f.load()[0];route='#historical-player'
+        with patch.object(self.f.service,'read',side_effect=DataSourceError('This cached dataset is no longer available. Load the data again.')):
+            figure,_,records,columns=self.f.cb['analyze'](dataset,'001','pts',3,None,route,'historical')
+        self.assertEqual(figure.layout.meta['analysis_scope'],analysis_scope(dataset,'001','pts',3,None,route))
+        self.assertIn('Load the data again',figure.layout.annotations[0].text)
+        self.assertEqual((records,columns),([],[]))
+
     def test_career_results_have_independent_identity_and_keep_actual_values(self):
         d=self.f.load()[0]
         self.f.career.load.return_value=SimpleNamespace(frame=pd.DataFrame(dict(season=[2024,2025],value=[10.,20.],team=['BOS','BOS'])),

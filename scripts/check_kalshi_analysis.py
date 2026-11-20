@@ -37,6 +37,9 @@ def row(family='TOTAL',index=0,**changes):
 
 
 def game():return dict(sport='NFL',id=GAME,title='Pittsburgh at New Orleans',start='2026-10-25T13:30:00Z',events=[GAME,'KXNFLTOTAL-26OCT25PITNO'])
+def quick_request(sequence=1,selected='live',location=None):
+    return dict(sequence=sequence,selection=selected,location=location or view.href('NFL',GAME))
+
 def snapshot():return dict(sport='NFL',game_id=GAME,category='Game Lines',fetched_at=NOW.isoformat(),rows=[row(index=i) for i in range(8)],notices=[],saved=None)
 
 
@@ -241,9 +244,8 @@ class KalshiFilterCallbacks(TestCase):
         for sport in ['NBA','NFL','NCAAF']:
             g=dict(self.game,sport=sport,events=['KX'+sport+'GAME-TEST'])
             self.assertEqual(view.categories(g),['Game Lines',FILTER])
-        visible=self.cb['kalshi_filter_visibility'](FILTER)
-        self.assertEqual(visible,({'display':'block'},{'display':'none'}))
-        self.assertEqual(self.cb['kalshi_filter_visibility']('Game Lines'),({'display':'none'},{'display':'block'}))
+        self.assertTrue(any('kalshi-filter-panel.style' in entry['output'] and entry.get('clientside_function')
+                            for entry in self.app._callback_list))
         quotes=next(c for c in components(self.app.layout) if getattr(c,'id',None)=='kalshi-quote-content')
         self.assertNotIn('Market odds use American format',str(quotes))
         self.assertNotIn('Market implied = ask price',str(quotes))
@@ -274,7 +276,7 @@ class KalshiFilterCallbacks(TestCase):
         self.exchange.saved.return_value=self.snapshot
         scan,criteria,status=self.scan('archive.json')
         self.exchange.all_quotes.assert_not_called();self.exchange.saved.assert_called_once_with(self.game,'Game Lines','archive.json')
-        self.assertIn('saved category only',status)
+        self.assertIn('saved category only',status.children)
         invalid=self.cb['kalshi_scan'](1,0,None,5,self.game,FILTER,'live','kalshi')
         self.assertIs(invalid[0],no_update);self.assertIs(invalid[1],no_update)
         with self.assertRaises(PreventUpdate):self.cb['kalshi_scan'](1,0,75,5,self.game,'Game Lines','live','kalshi')
@@ -326,8 +328,8 @@ class KalshiFilterCallbacks(TestCase):
 
 
     def quick(self,methods=None,players=None,probability=0,edge=-100,selected='live'):
-        scan,status=self.cb['kalshi_quick_scan'](1,probability,edge,methods or ['PPP','EPA','ELO'],players or ['WHP','UO','OAM','PGE'],
-            self.game,FILTER,selected,'kalshi',view.href('NFL',GAME))
+        scan,status=self.cb['kalshi_quick_scan'](quick_request(selected=selected),probability,edge,
+            methods or ['PPP','EPA','ELO'],players or ['WHP','UO','OAM','PGE'],self.game)
         result=finish_filter(self.app,scan)
         return result,result.get('status',status)
 
@@ -368,9 +370,8 @@ class KalshiFilterCallbacks(TestCase):
 
     def test_quick_archive_is_immutable_and_invalid_inputs_do_not_fetch(self):
         for methods,players in [([],['WHP']),(['PPP'],[]),(['INVALID'],['WHP'])]:
-            scan,status=self.cb['kalshi_quick_scan'](1,75,5,methods,players,self.game,FILTER,'live','kalshi',view.href('NFL',GAME))
-            scan=finish_filter(self.app,scan)
-            self.assertIs(scan,no_update);self.assertIn('Select at least one supported',status)
+            scan,status=self.cb['kalshi_quick_scan'](quick_request(),75,5,methods,players,self.game)
+            self.assertNotIn('job',scan);self.assertIn('Select at least one supported',status.children)
         self.exchange.all_quotes.assert_not_called()
         self.exchange.history.side_effect=lambda g,c:['archive.json'] if c=='Game Lines' else []
         self.exchange.saved.return_value=self.snapshot
@@ -380,7 +381,7 @@ class KalshiFilterCallbacks(TestCase):
         self.assertEqual(scan['context'][-3],'archive.json')
 
     def test_http_quick_scan_and_results_keep_independent_outputs(self):
-        values={'kalshi-quick-filter':1,'kalshi-quick-probability':0,'kalshi-quick-edge':-100,
+        values={'kalshi-quick-request':quick_request(),'kalshi-quick-probability':0,'kalshi-quick-edge':-100,
             'kalshi-quick-game-methods':['PPP','EPA'],'kalshi-quick-player-methods':['WHP','PGE'],
             'kalshi-context':self.game,'kalshi-category':FILTER,'kalshi-snapshot':'live','workspace-page':'kalshi',
             'market-url':view.href('NFL',GAME)}
@@ -395,7 +396,7 @@ class KalshiFilterCallbacks(TestCase):
                 response=client.post('/_dash-update-component',json=dict(output=key,outputs=outputs,
                     inputs=[dict(**item,value=wire_value(item,values)) for item in meta['inputs']],
                     state=[dict(**item,value=wire_value(item,values)) for item in meta['state']],
-                    changedPropIds=['kalshi-quick-filter.n_clicks'] if name=='kalshi_quick_scan' else ['kalshi-quick-scan.data']))
+                    changedPropIds=['kalshi-quick-request.data'] if name=='kalshi_quick_scan' else ['kalshi-quick-scan.data']))
                 self.assertEqual(response.status_code,200,response.get_data(as_text=True))
                 data=response.get_json()['response']
                 self.assertNotIn('kalshi-applied-criteria',data);self.assertNotIn('kalshi-models',data)
