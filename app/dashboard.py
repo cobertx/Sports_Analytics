@@ -10,6 +10,7 @@ from app.sections.backtesting.performance_summary import register as register_pe
 from sports_analytics.backtesting_service import BacktestingService
 from app.sections.backtesting.backtesting_monitor import layout as backtesting_monitor_layout
 from app.sections.historical import game_data_monitor
+from app.sections.markets import quick_filter_monitor
 from app.sections.research import research_view
 from app.sections.research.comparison_callbacks import register as register_comparison_callbacks
 from sports_analytics.in_game_data import InGameService
@@ -162,6 +163,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     app = Dash(__name__, assets_folder=str(APP_DIRECTORY / "assets"),
                title="Sports Analytics", update_title=None)
     register_lazy_markets(app)
+    quick_filter_monitor.register(app, filter_jobs.tasks)
     app._filter_jobs=filter_jobs
     app._page_tasks=market_page_tasks
     app._career_tasks=career_tasks
@@ -237,7 +239,8 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                         html.Div(research_view.navigation(),id='research-navigation',style={'display':'none'}),
                         information_navigation(),
                     ], className="page-toolbar", **{"aria-label": "Sport pages"}),
-                    html.Div([game_data_monitor.layout(app.get_asset_url), backtesting_monitor_layout()],
+                    html.Div([game_data_monitor.layout(app.get_asset_url), quick_filter_monitor.layout(),
+                              backtesting_monitor_layout()],
                              id='dashboard-monitors', className='dashboard-monitors'),
                 ], className='dashboard-sidebar', **{'aria-label':'Dashboard sidebar'}),
                 html.Div([
@@ -328,7 +331,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     register_kalshi_callbacks(app,polymarket_service,view=polymarket_view,provider='Polymarket',pages=exchange_pages.get('Polymarket'))
     register_market_summary(app,schedule_service,market_services,kalshi_service,polymarket_service,forecast_game_markets,forecast_player_markets,
                             pages=exchange_pages,tasks=market_page_tasks,source_revision=exchange_source_revision,
-                            draftkings=draftkings_services)
+                            draftkings=draftkings_services,quick_jobs=filter_jobs.tasks)
     register_filtered_results(app,filtered_results_service)
     app._history_updates=history_updater
     game_data_monitor.register(app, GameDataStatus(service, history_updater.root/'data/modeling'))

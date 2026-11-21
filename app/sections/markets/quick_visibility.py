@@ -12,14 +12,16 @@ PROMPTS = {
 }
 
 
-def scoped(content, location, selection):
+def scoped(content, location, selection, sequence=None):
     setattr(content, 'data-quick-scope', json.dumps([location, None if selection is None else str(selection)],
                                                    separators=(',', ':'), ensure_ascii=False))
+    if sequence is not None:
+        setattr(content, 'data-quick-sequence', str(sequence))
     return content
 
 
-def status(message, location, selection):
-    return scoped(html.Span(message), location, selection) if message else ''
+def status(message, location, selection, sequence=None):
+    return scoped(html.Span(message), location, selection, sequence) if message else ''
 
 
 def summary_location(bundle, sport):

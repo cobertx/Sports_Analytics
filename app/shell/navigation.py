@@ -212,12 +212,13 @@ def exchange_visibility(provider,page, sport, location_hash, frequency, selected
     active = page == prefix and sport in {'NBA','NFL','NCAAF'}
     route = view.route(location_hash)
     detail = active and route and route[0] == sport and bool(route[1])
-    frequency = frequency if frequency in {0, 2, 5, 10, 30} else 5
+    default_frequency = default_view.DEFAULT_QUOTE_UPDATE_SECONDS[provider]
+    frequency = frequency if frequency in {0, 2, 5, 10, 30} else default_frequency
     live = active and detail and game and game.get('sport') == sport and selected == 'live' and frequency > 0 and category!=FILTER
     return ({'display': 'grid' if active else 'none'}, {} if sport in {'NBA','NFL','NCAAF'} else {'display': 'none'},
             'sport-page-link' + (' active' if active else ''), view.href(sport),
             {'display': 'none' if detail else 'block'}, {'display': 'block' if detail else 'none'}, view.href(sport),
-            not active, not bool(live), 1000 * (frequency or 5))
+            not active, not bool(live), 1000 * (frequency or default_frequency))
 
 
 

@@ -24,6 +24,55 @@ class QuickScanTasks(PageTasks):
     def __init__(self, capacity=16):
         super().__init__(capacity=capacity)
         self.progress_records = OrderedDict()
+        self.tracked = OrderedDict()
+
+    def track(self, owner, key, scope, request, *, provider, sport, matchup, methods):
+        """Keep each browser's submitted scans discoverable outside the active market."""
+        if not owner:
+            return
+        with self.lock:
+            identity = (owner, key)
+            self.tracked[identity] = dict(scope=scope, request=deepcopy(request), provider=provider,
+                                         sport=sport, matchup=matchup, methods=tuple(methods))
+            self.tracked.move_to_end(identity)
+            while len(self.tracked) > 128:
+                old = next((item for item in self.tracked if not self.queue.pending(item[1])), None)
+                if old is None:
+                    break
+                self.tracked.pop(old)
+
+    def latest(self, owner, scope):
+        if not owner:
+            return None
+        with self.lock:
+            for (browser, key), record in reversed(self.tracked.items()):
+                if browser == owner and record['scope'] == scope:
+                    if self.queue.pending(key) or self.queue.state(key)['error'] or key in self.values:
+                        return deepcopy(record['request'])
+                    return None
+        return None
+
+    def monitored(self, owner):
+        cards = []
+        with self.lock:
+            for (browser, key), record in reversed(self.tracked.items()):
+                if browser != owner:
+                    continue
+                state = self.queue.state(key)
+                if not state['pending'] and not state['error'] and key not in self.values:
+                    continue
+                progress = self.progress(key)
+                status = 'waiting' if not progress['percent'] else 'running'
+                if not state['pending']:
+                    status = 'failed' if state['error'] else 'complete'
+                request = record['request']
+                cards.append(dict(id=key, provider=record['provider'], sport=record['sport'], matchup=record['matchup'],
+                    href=record['scope'][1], status=status, criteria=request['criteria'], methods=list(record['methods']),
+                    percent=100 if status=='complete' else progress['percent'],
+                    message=state['error'] or ('Filtering complete' if status=='complete' else progress['message'])))
+        active = [card for card in cards if card['status'] in {'waiting','running'}]
+        recent = [card for card in cards if card['status'] in {'complete','failed'}]
+        return active + recent[:4], len(active), [[card['id'], card['status']] for card in recent]
 
     def scan(self, key, work, *, refresh=False, force=False):
         with self.lock:

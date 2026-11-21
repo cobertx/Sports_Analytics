@@ -27,14 +27,14 @@ import check_kalshi_analysis as kalshi_fixtures
 from check_kalshi_analysis import FILTER,view
 
 
-def post(app,name,values,trigger):
+def post(app,name,values,trigger,*,client=None):
     key,meta=next((key,meta) for key,meta in app.callback_map.items()
                  if meta.get('callback') and meta['callback'].__wrapped__.__name__==name)
     outputs=meta['output']
     wire=([dict(id=o.component_id,property=o.component_property) for o in outputs] if isinstance(outputs,list)
           else dict(id=outputs.component_id,property=outputs.component_property))
     def value(item):return [] if item['id'].startswith('{') else wire_value(item,values)
-    response=app.server.test_client().post('/_dash-update-component',json=dict(output=key,outputs=wire,
+    response=(client or app.server.test_client()).post('/_dash-update-component',json=dict(output=key,outputs=wire,
         inputs=[dict(**item,value=value(item)) for item in meta['inputs']],
         state=[dict(**item,value=value(item)) for item in meta['state']],changedPropIds=[trigger]))
     if response.status_code not in {200,204}:raise AssertionError(response.get_data(as_text=True))
@@ -164,6 +164,55 @@ class LazyRowChecks(TestCase):
 
 
 class AsyncScanChecks(TestCase):
+    def test_two_game_submissions_publish_sidebar_progress_without_open_results(self):
+        f=self.fixture(fanduel_fixtures.MispricingChecks)
+        games={'123':dict(f.saved,rows=[row for row in f.saved['rows'] if row['group']=='Game'])}
+        games['456']=dict(games['123'],game_id='456',away_team='Cincinnati Bengals')
+        f.markets.history.side_effect=lambda game:[games[str(game)]]
+        entered={game:Event() for game in games}
+        release=Event()
+        self.addCleanup(release.set)
+        def slow(snapshot):
+            entered[str(snapshot['game_id'])].set()
+            if not release.wait(12):
+                raise AssertionError('Forecast fixture was not released')
+            return fanduel_fixtures.GameForecast()
+        f.game_services['PPP'].forecast.side_effect=slow
+        client=f.app.server.test_client()
+        self.assertEqual(client.get('/_dash-layout').status_code,200)
+        calls={'market-category':FILTER_CATEGORY,'market-quick-filter':1,'market-snapshot':f.saved['pulled_at'],
+            'market-quick-game-methods':['PPP'],'market-quick-player-methods':['WHP'],
+            'market-quick-probability':75,'market-quick-edge':5,'workspace-page':'market'}
+        submissions={}
+        for clicks,game in enumerate(games,1):
+            calls.update({'market-url':f'#nfl-game-{game}','market-quick-filter':clicks,
+                          'market-quick-probability':70+clicks*5})
+            response=post(f.app,'request_quick_filter',calls,'market-quick-filter.n_clicks',client=client)['response']
+            submissions[game]=response['mispricing-request']['data']
+            self.assertTrue(entered[game].wait(4))
+        self.assertNotEqual(submissions['123']['job'],submissions['456']['job'])
+        def monitor(tick,previous=None, browser=client):
+            return post(f.app,'poll_quick_monitor',{'quick-monitor-timer':tick,'quick-monitor-state':previous},
+                        'quick-monitor-timer.n_intervals',client=browser)['response']
+        try:
+            running=monitor(1)
+            self.assertEqual(running['quick-monitor-count']['children'],'2')
+            state=running['quick-monitor-state']['data']
+            self.assertEqual([card['criteria']['probability'] for card in state['jobs']],[.8,.75])
+            self.assertTrue(all(0<card['percent']<100 for card in state['jobs']))
+            self.assertEqual(monitor(1,browser=f.app.server.test_client())['quick-monitor-count']['children'],'0')
+        finally:
+            release.set()
+        f.app._filter_jobs.tasks.queue.tasks.join()
+        done=monitor(2,state)
+        self.assertEqual(done['quick-monitor-count']['children'],'0')
+        self.assertTrue(all(card['percent']==100 for card in done['quick-monitor-state']['data']['jobs']))
+        calls.update({'market-url':'#nfl-game-123','mispricing-request':submissions['456']})
+        restored=post(f.app,'quick_filter_markets',calls,'nav-market.data',client=client)['response']
+        self.assertIn('Top 3 by edge',str(restored))
+        self.assertEqual(restored['mispricing-forecast-history']['data']['filter_key'],submissions['123'])
+        self.assertEqual(f.game_services['PPP'].forecast.call_count,2)
+
     def fixture(self,kind=fanduel_fixtures.MispricingChecks):
         fixture=kind();fixture.setUp();self.addCleanup(fixture.doCleanups);return fixture
 

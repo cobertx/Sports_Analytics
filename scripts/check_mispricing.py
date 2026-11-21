@@ -95,11 +95,10 @@ class MispricingChecks(TestCase):
         for sport in ['NBA','NFL','NCAAF']:
             self.saved['sport']=sport
             tabs,value,_=self.cb['snapshot_categories'](self.saved['pulled_at'],f'#{sport.lower()}-game-123',FILTER_CATEGORY)
-            self.assertEqual(value,FILTER_CATEGORY)
+            self.assertIs(value,no_update)
             self.assertEqual(tabs[-1].label,'Mispricing Filter')
+            self.assertIn('market-filter-tab-selected',tabs[-1].selected_className.split())
             self.assertIn('Game',[tab.value for tab in tabs])
-        self.assertTrue(any('mispricing-filter-panel.style' in entry['output'] and entry.get('clientside_function')
-                            for entry in self.app._callback_list))
         self.cb['show_saved_markets'](FILTER_CATEGORY,self.saved['pulled_at'],'#nfl-game-123',None,'PPP','WHP',None)
         for service in [*self.game_services.values(),*self.player_services.values()]:service.forecast.assert_not_called()
 
@@ -116,6 +115,12 @@ class MispricingChecks(TestCase):
         bodies=[c for c in components(rendered) if c.__class__.__name__=='Tbody']
         self.assertEqual([len(body.children) for body in bodies],[3,2])
         self.assertEqual(bodies[1].children[0].children[0].children,4)
+        for body in bodies:
+            for item in body.children:
+                label, actions = item.children[1].children
+                self.assertTrue(label)
+                self.assertEqual(actions.className,'market-line-actions')
+                self.assertEqual([action.children for action in actions.children],['Historical Data','Market Structure'])
         self.assertFalse(any(getattr(c,'className',None)=='market-history-link' for c in components(rendered)))
         exact=rank_markets(snapshot(),GameForecast(),PlayerForecast(),criteria_values(0,40))
         self.assertFalse(exact['matches'])
@@ -208,6 +213,7 @@ class MispricingChecks(TestCase):
                         self.assertEqual(response.status_code,200)
                         data=response.get_json()['response']
                     self.assertIn('Top 3 by edge',str(data));self.assertIn('Remaining qualifying markets',str(data))
+                    self.assertEqual(data['mispricing-results']['children']['props']['data-quick-sequence'],'1')
                     self.assertIn('EPA',str(data));self.assertIn('PGE',str(data))
 
     def test_multiple_methods_require_unanimous_pass_and_keep_market_types_independent(self):

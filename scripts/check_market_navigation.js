@@ -136,6 +136,15 @@ function checkDeferredNavigation(source,transitionSource) {
   change('#historical-player?sport=NFL&name=Player+D');
   change('#nfl-kalshi-market');flush();
   check(links[2].attrs['aria-current']==='page'&&links[0].attrs['aria-current']==='false','Rapid forward navigation leaves only the latest page selected');
+  const returnPanel=element('historical-market-return');
+  returnPanel.firstElementChild={getAttribute:()=> '#nfl-game-456'};
+  nodes[returnPanel.id]=returnPanel;
+  const beforeReturn=scrolls.length;
+  change('#historical-team?sport=NFL&name=Cleveland+Browns&origin=%23nfl-game-123');flush();
+  check(scrolls.length===beforeReturn,'Wait for the return link for the selected game');
+  returnPanel.firstElementChild={getAttribute:()=> '#nfl-game-123'};
+  observer([{target:returnPanel}]);flush();
+  check(scrolls.at(-1)===returnPanel.id,'Open linked history with Back to market and the selection fields visible');
   change('#backtesting-summary-nfl-game-outcome-elo-'+'a'.repeat(64));flush();
   check(links[3].attrs['aria-current']==='page','A saved backtest marks the Backtest Summary link active');
   const overview={id:'',attrs:{href:'#backtesting'},getAttribute(key){return this.attrs[key];},setAttribute(key,value){this.attrs[key]=value;}};

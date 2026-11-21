@@ -22,6 +22,7 @@ from app.sections.markets.market_navigation import remembered_market
 def register(app, service, *, view=None, provider='Kalshi',pages=None):
     view = view or default_view
     prefix = provider.lower()
+    default_frequency = default_view.DEFAULT_QUOTE_UPDATE_SECONDS[provider]
     pages=pages or (QuotePages(service) if getattr(service,'background',False) is True else None)
     polling = {}
     polling_lock = Lock()
@@ -40,13 +41,14 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
     app.clientside_callback("""function(page,sport,hash,frequency,selected,game,category,saved){
         const prefix='"""+prefix+"""',supported=['NBA','NFL','NCAAF'].includes(sport),active=page===prefix&&supported,
             route=window.dash_clientside.market_transition.route(hash),detail=active&&route&&route.provider===prefix&&route.sport===sport&&!!route.game;
-        frequency=[0,2,5,10,30].includes(frequency)?frequency:5;
+        const defaultFrequency="""+str(default_frequency)+""";
+        frequency=[0,2,5,10,30].includes(frequency)?frequency:defaultFrequency;
         const live=active&&detail&&game&&game.sport===sport&&selected==='live'&&frequency>0&&category!=='Mispricing Filter',
             href='#'+sport.toLowerCase()+'-'+prefix+'-market', entry=saved?.v===2?saved.entries?.[prefix+':'+sport]:null,
             remembered=entry&&window.dash_clientside.market_transition.route(entry.route);
         return [{display:active?'grid':'none'},supported?{}:{display:'none'},'sport-page-link'+(active?' active':''),
             remembered?.provider===prefix&&remembered.sport===sport?entry.route:href,
-            {display:detail?'none':'block'},{display:detail?'block':'none'},href,!active,!live,1000*(frequency||5)];
+            {display:detail?'none':'block'},{display:detail?'block':'none'},href,!active,!live,1000*(frequency||defaultFrequency)];
     }""",
         Output(f'{prefix}-page', 'style'), Output(f'{prefix}-page-link', 'style'),
                   Output(f'{prefix}-page-link', 'className'), Output(f'{prefix}-page-link', 'href'),
@@ -108,7 +110,9 @@ def register(app, service, *, view=None, provider='Kalshi',pages=None):
         if restored in choices and (not previous or previous.get('id')!=route[1] or ctx.triggered_id in {'market-url',f'nav-{prefix}'}):selection=restored
         return (game if game != previous else no_update, view.game_header(game),
                 no_update if previous and choices==view.categories(previous) else
-                [dcc.Tab(label=c, value=c, className='market-category-tab', selected_className='market-category-tab selected') for c in choices],
+                [dcc.Tab(label=c, value=c, className='market-category-tab',
+                         selected_className='market-category-tab selected'+(' market-filter-tab-selected' if c==FILTER else ''))
+                 for c in choices],
                 no_update if selection==selected else selection)
 
     def history_options(game, category):

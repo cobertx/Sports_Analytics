@@ -24,6 +24,8 @@ from app.sections.market_structure.market_structure_link import line_actions
 from sports_analytics.kalshi_labels import selection, selection_rows, player_market
 from sports_analytics.kalshi_analysis import player_subject
 
+DEFAULT_QUOTE_UPDATE_SECONDS = {'Kalshi': 30, 'Polymarket': 5}
+
 MULTIWORD_MASCOTS = {'Crimson Tide', 'Sun Devils', 'Red Wolves', 'Black Knights', 'Golden Bears',
     'Blue Devils', 'Yellow Jackets', 'Fighting Illini', "Ragin' Cajuns", 'Golden Gophers',
     'Wolf Pack', 'Tar Heels', 'Mean Green', 'Fighting Irish', 'Nittany Lions', 'Scarlet Knights',
@@ -120,6 +122,7 @@ def field(label, control):
 def layout(provider='Kalshi'):
     prefix = provider.lower()
     polymarket = provider == 'Polymarket'
+    default_frequency = DEFAULT_QUOTE_UPDATE_SECONDS[provider]
     sides = ('Outcome 1', 'Outcome 2') if polymarket else ('Yes', 'No')
     cents = Format(precision=2, scheme=Scheme.fixed, symbol=Symbol.yes, symbol_suffix='¢', symbol_prefix='')
     count = Format(precision=2, scheme=Scheme.fixed, group=True)
@@ -144,7 +147,7 @@ def layout(provider='Kalshi'):
            dcc.Store(id='kalshi-filter-quotes'), dcc.Store(id='kalshi-quick-request'),dcc.Store(id='kalshi-quick-scan'),
            dcc.Store(id='kalshi-quick-state')] if not polymarket else []),
         dcc.Interval(id=f'{prefix}-list-timer', interval=60000, disabled=True),
-        dcc.Interval(id=f'{prefix}-quote-timer', interval=5000, disabled=True),
+        dcc.Interval(id=f'{prefix}-quote-timer', interval=1000*default_frequency, disabled=True),
         dcc.Store(id=f'{prefix}-cache-state'),dcc.Interval(id=f'{prefix}-cache-poll',interval=1500,disabled=True),
         market_provider_heading(provider, 'https://polymarket.com/sports' if polymarket else 'https://kalshi.com/sports'),
         html.Div([
@@ -164,7 +167,8 @@ def layout(provider='Kalshi'):
                 field('View', dcc.Dropdown(id=f'{prefix}-snapshot', options=[dict(label='Live quotes', value='live')], value='live', clearable=False)),
                 field('Quote updates', dcc.Dropdown(id=f'{prefix}-frequency', options=[dict(label='Every 2 seconds', value=2),
                     dict(label='Every 5 seconds', value=5), dict(label='Every 10 seconds', value=10),
-                    dict(label='Every 30 seconds', value=30), dict(label='Paused', value=0)], value=5, clearable=False)),
+                    dict(label='Every 30 seconds', value=30), dict(label='Paused', value=0)],
+                    value=default_frequency, clearable=False)),
             ], className='kalshi-detail-controls'),
             dcc.Tabs(id=f'{prefix}-category', value='Game Lines', children=[], mobile_breakpoint=0, className='market-category-tabs'),
             filter_panel() if not polymarket else None,
@@ -193,8 +197,8 @@ def layout(provider='Kalshi'):
             html.P([f'This page uses {provider}’s ', html.A('public market-data REST API',
                 href='https://docs.polymarket.com/market-data/discover-markets' if polymarket else DOCS, target='_blank', rel='noopener noreferrer'),
                 f'. No {provider} account, key or The Odds API credits are used to read these endpoints. '
-                'The default 5-second interval is polling, not a continuous stream. You can select 2 seconds, '
-                'pause updates or save a snapshot. Polling stops when you leave the Kalshi page or view a saved snapshot.']),
+                f'Live quotes refresh every {default_frequency} seconds by default. You can choose a different interval, '
+                'pause updates or save a snapshot. Polling stops when you leave the market page or view a saved snapshot.']),
             html.P(['Polymarket discovery uses Gamma; quotes use public batched CLOB order books. '
                     'Gamma reference probabilities are not substituted for missing order-book prices. For streaming data, see ',
                     html.A('real-time data',href='https://docs.polymarket.com/market-data/realtime-data',target='_blank',rel='noopener noreferrer')]) if polymarket else
@@ -281,7 +285,7 @@ def filter_panel():
         dcc.Loading(quick_visibility.slot('kalshi','kalshi-filter-results'),delay_show=500,
                     overlay_style={'visibility':'visible'},color='#57dbc4'),
         quick_controls('kalshi', 'kalshi-quick-results'),
-    ],id='kalshi-filter-panel',className='panel market-criteria',style={'display':'none'})
+    ],id='kalshi-filter-panel',className='panel market-criteria')
 
 
 def market_groups(snapshot):

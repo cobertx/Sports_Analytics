@@ -1,9 +1,17 @@
 /* Remember a saved game before a history link leaves it, then reopen its market. */
 (() => {
+  function historyLanding(hash) {
+    const [page, query] = hash.split('?');
+    if (!query || !['#historical-team', '#historical-player'].includes(page)) return null;
+    const origin = new URLSearchParams(query).get('origin');
+    if (origin) return {hash, id: 'historical-market-return', origin};
+    return page === '#historical-player' ? {hash, id: 'historical-performance-panel'} : null;
+  }
+
   let entries = {};
   let pending = null;
   let restoredElement = null;
-  let historyPending = /^#historical-player\?/.test(location.hash) ? location.hash : null;
+  let historyPending = historyLanding(location.hash);
   let pendingFocus = null;
   let scheduled = false;
   let navigationPending = true;
@@ -45,9 +53,10 @@
         pendingFocus = null;
       }
     }
-    if (historyPending === location.hash) {
-      const element = document.getElementById('historical-performance-panel');
-      if (element?.getClientRects().length && !element.closest('[data-dash-is-loading="true"]')) {
+    if (historyPending?.hash === location.hash) {
+      const element = document.getElementById(historyPending.id);
+      const current = !historyPending.origin || element?.firstElementChild?.getAttribute('href') === historyPending.origin;
+      if (current && element?.getClientRects().length && !element.closest('[data-dash-is-loading="true"]')) {
         element.scrollIntoView({block: 'start', behavior: 'instant'});
         historyPending = null;
       }
@@ -202,7 +211,7 @@
       }
     }
     restoredElement = null;
-    historyPending = /^#historical-player\?/.test(location.hash) ? location.hash : null;
+    historyPending = historyLanding(location.hash);
     pendingFocus = window.dash_clientside?.market_transition?.destination(location.hash) ? location.hash : null;
     navigationPending = true;
     schedule();
@@ -214,7 +223,7 @@
     // Coalesce Plotly/Dash mutation bursts; do no layout reads for unrelated
     // updates once restoration has finished.
     const root=pending&&document.getElementById(roots[routeFor(pending.route)?.provider]);
-    const relevant=!records.length||records.some(record=>['app-shell','historical-results','career-panel','market-page','kalshi-page','polymarket-page'].includes(record.target.id)||record.target.closest?.('.page-toolbar')||
+    const relevant=!records.length||records.some(record=>['app-shell','historical-results','historical-market-return','career-panel','market-page','kalshi-page','polymarket-page'].includes(record.target.id)||record.target.closest?.('.page-toolbar')||
       !record.target.closest?.('.dash-graph,.js-plotly-plot')&&root?.contains?.(record.target));
     const sidebarLinksChanged = records.some(record => record.type === 'childList' && record.target.closest?.('.page-toolbar'));
     if (sidebarLinksChanged || ((pending||historyPending||pendingFocus||navigationPending)&&relevant)) schedule();

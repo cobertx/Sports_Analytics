@@ -18,7 +18,7 @@ from sports_analytics.kalshi_labels import selection,selection_rows
 from app.sections.market_structure.market_structure_link import line_actions
 from sports_analytics.filter_jobs import FilterJobs,request_key
 from app.sections.markets.lazy_markets import markets as lazy_markets
-from app.sections.markets import prop_probability, quick_visibility
+from app.sections.markets import prop_probability, quick_filter_monitor, quick_visibility
 
 
 def results(snapshot, ranked, criteria, models):
@@ -40,7 +40,8 @@ def results(snapshot, ranked, criteria, models):
         label,action=prop_probability.row_action(label,key,view,methods=methods)
         return html.Tr([
             html.Td(rank),html.Td([label,*line_actions(snapshot,row,'Kalshi',side,
-                surface='quick-filter' if consensus else 'apply-criteria',grouped=row.get('category')=='Game Lines')]),
+                surface='quick-filter' if consensus else 'apply-criteria',
+                grouped=consensus or row.get('category')=='Game Lines')]),
             html.Td(row['category']),html.Td(method_details(item)),html.Td(odds_text(item['implied'])),
             html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),
             html.Td(f"{100*item['edge']:+.2f}",className='mispricing-edge',**{'data-sign':signed_state(item['edge'])}),
@@ -104,11 +105,6 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
             return quick_methods.controls('kalshi',targets.values(),quick_methods.scope('kalshi',game['sport'],game['id']))
         except (DataSourceError,OSError,ValueError,TypeError) as exc:
             return html.P(str(exc),className='mispricing-error')
-
-    app.clientside_callback("""function(category){
-        const filtering=category==='Mispricing Filter';
-        return [{display:filtering?'block':'none'},{display:filtering?'none':'block'}];
-    }""",Output('kalshi-filter-panel','style'),Output('kalshi-quote-content','style'),Input('kalshi-category','value'))
 
     @scoped_callback(app,'kalshi',Output('kalshi-models','data'),Input('kalshi-quotes','data'),Input('kalshi-filter-quotes','data'),Input('kalshi-context','data'),
                   Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),Input('kalshi-snapshot','value'),
@@ -319,7 +315,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
         clicks,location_hash,selected=request['sequence'],request['location'],request['selection']
         target=route(location_hash)
         def submission(content):
-            return quick_visibility.scoped(html.Div(content,className='kalshi-quick-submission'),location_hash,selected)
+            return quick_visibility.scoped(html.Div(content,className='kalshi-quick-submission'),location_hash,selected,clicks)
 
         try:
             if not target or not target[1]:raise ValueError('Choose a Kalshi game to start Quick Filtering.')
@@ -349,9 +345,12 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
             key=request_key([context,criteria,overrides])
             _,_,error=jobs.tasks.scan(key,calculate_scan,refresh=True,force=True)
             if error:raise DataSourceError(error)
-            return dict(context=context,scope=quick_scope(game,selected,methods,player_methods),
-                        criteria=criteria,prompt_methods=overrides,job=key,sequence=clicks), submission(
-                            quick_progress(jobs.tasks.progress(key),'kalshi-submitted'))
+            scan = dict(context=context,scope=quick_scope(game,selected,methods,player_methods),
+                        criteria=criteria,prompt_methods=overrides,job=key,sequence=clicks)
+            jobs.tasks.track(quick_filter_monitor.owner(),key,('kalshi',location_hash,selected),scan,
+                             provider='Kalshi',sport=sport,matchup=game.get('title') or game_id,
+                             methods=[*methods,*player_methods])
+            return scan, submission(quick_progress(jobs.tasks.progress(key),'kalshi-submitted'))
 
         except (DataSourceError,OSError,ValueError,TypeError) as exc:
             return dict(request,error=str(exc)),submission(str(exc))
@@ -362,21 +361,30 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
                   Input('kalshi-category','value'),Input('workspace-page','value'),
                   Input(prompt_fields,'value'),State(prompt_fields,'id'),Input('kalshi-quick-poll','n_intervals'),
                   State('kalshi-quick-state','data'),State('kalshi-quick-request','data'),
-                  Input('market-url','hash'),prevent_initial_call=True)
-    def kalshi_quick_results(scan,game,methods,player_methods,probability,edge,selected,category,page,prompt_values=None,prompt_ids=None,_tick=None,previous=None,request=None,location_hash=None):
+                  Input('market-url','hash'),Input('quick-monitor-completions','data'),prevent_initial_call=True)
+    def kalshi_quick_results(scan,game,methods,player_methods,probability,edge,selected,category,page,prompt_values=None,prompt_ids=None,_tick=None,previous=None,request=None,location_hash=None,_completed=None):
         if page!='kalshi' or category!=FILTER:raise PreventUpdate
         selected=selected if selected is not None else 'live'
         location=location_hash if location_hash is not None else href(game['sport'],game['id']) if game else None
         target=route(location)
-        def in_scope(content):return quick_visibility.scoped(content,location,selected)
+        submitted = (request or {}).get('location')==location and (request or {}).get('selection')==selected
+        restored = None
+        if target and not submitted and (scan or {}).get('scope',[])[:3]!=[target[0],target[1],selected]:
+            restored = jobs.tasks.latest(quick_filter_monitor.owner(),('kalshi',location,selected))
+            if restored:
+                scan = restored
+        if _completed is not None and set(ctx.triggered_prop_ids)=={'quick-monitor-completions.data'} and (
+                not restored or not any(key==restored['job'] for key,_ in (_completed or []))):
+            raise PreventUpdate
+        sequence=(scan or {}).get('sequence')
+        def in_scope(content):return quick_visibility.scoped(content,location,selected,sequence)
         prompt=in_scope(html.P(quick_visibility.PROMPTS['kalshi'],className='saved-market-empty'))
         scope=(scan or {}).get('scope')
         if scope is None and scan and scan.get('context'):
             context=scan['context']
             scope=[context[0],str(context[1]),*context[8:11]]
         if scan and scan.get('error'):return prompt
-        if request and request.get('location')==location and request.get('selection')==selected and (
-                not scan or scan.get('sequence')!=request.get('sequence')):
+        if submitted and (not scan or scan.get('sequence')!=request.get('sequence')):
             raise PreventUpdate
         def state(status,message,progress=None):
             if not scan or not scan.get('job'):return
@@ -384,19 +392,21 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
             if progress is not None:record['progress']=progress
             set_props('kalshi-quick-state',{'data':record})
             scan_location=href(scope[0],scope[1]) if scope else None
-            set_props('kalshi-quick-status',{'children':quick_visibility.status(message,scan_location,scope[2] if scope else None)})
+            set_props('kalshi-quick-status',{'children':quick_visibility.status(message,scan_location,scope[2] if scope else None,sequence)})
         def changed_selection(message='Quick Filtering settings changed. Click Quick Filtering to apply the current selections.'):
             state('changed' if scan else 'idle',message if scan else '')
             return prompt
         if not scan or not target or not target[1] or not scope or tuple(scope[:2])!=target:return prompt
         sport,game_id=target
-        try:
-            methods,player_methods=selected_methods(methods,player_methods,sport)
-            criteria=criteria_values(probability,edge)
-            overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope('kalshi',sport,game_id),ignore_stale=True)
-        except ValueError as exc:return changed_selection(str(exc))
-        if (scope!=[sport,game_id,selected,methods,player_methods]
-                or scan['criteria']!=criteria or scan.get('prompt_methods',{})!=overrides):return changed_selection()
+        criteria = scan['criteria']
+        if not restored:
+            try:
+                methods,player_methods=selected_methods(methods,player_methods,sport)
+                criteria=criteria_values(probability,edge)
+                overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope('kalshi',sport,game_id),ignore_stale=True)
+            except ValueError as exc:return changed_selection(str(exc))
+            if (scope!=[sport,game_id,selected,methods,player_methods]
+                    or scan['criteria']!=criteria or scan.get('prompt_methods',{})!=overrides):return changed_selection()
         def pending_view(progress):
             state('pending','',progress['percent'])
             return in_scope(quick_progress(progress,'kalshi'))
@@ -412,7 +422,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
                      'This result expired. Click Quick Filtering to load it again.')
             state('error',message)
             return in_scope(html.P(message,className='mispricing-error',role='status'))
-        if (previous and previous.get('status')=='pending' and previous.get('job')==scan.get('job')
+        if (not restored and previous and previous.get('status')=='pending' and previous.get('job')==scan.get('job')
                 and previous.get('sequence')==scan.get('sequence')):
             checkpoint=quick_finish_progress(jobs.tasks,scan['job'],previous.get('progress'))
             if checkpoint:return pending_view(checkpoint)

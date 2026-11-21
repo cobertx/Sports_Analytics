@@ -42,6 +42,7 @@ def layout():
             ], className="historical-status"),
             html.Div([
                 html.Div(id="dataset-summary", className="dataset-summary"),
+                html.Div(id="historical-market-return"),
                 html.Div([
                     html.Div(field("Team", dcc.Dropdown(id="player-team", options=[], disabled=True,
                                                        placeholder="Loading teams...", clearable=False)),

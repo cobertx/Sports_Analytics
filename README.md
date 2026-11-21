@@ -424,7 +424,7 @@ definitions or forecast methods trigger calculation, and explicit scans can retr
 missing historical data.
 
 Game discovery refreshes once a minute while the page is visible. The selected
-game/category polls every **5 seconds** by default, with **2, 10, 30 seconds** or
+game/category polls every **30 seconds** by default, with **2, 5, 10 seconds** or
 **Paused** available. Polling stops on other pages and when viewing a saved
 snapshot. This is periodic REST data, not a continuous streaming connection or
 a latency guarantee. The provider's metadata update time is not used as a quote

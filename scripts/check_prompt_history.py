@@ -184,11 +184,24 @@ class PromptChartChecks(TestCase):
         self.assertLess(figure.layout.yaxis.range[0],52);self.assertGreater(figure.layout.yaxis.range[1],52)
         self.assertIn('4/7 historical hits',str(figure.layout.annotations))
         self.assertEqual(list(figure.data[0].marker.color),['#e77c85','#e77c85','#a6b2c5',*['#57dbc4']*4])
-        self.assertIn('PROMPT HIT RATE',str(cards));self.assertIn('#nfl-game-123',str(cards))
+        self.assertIn('PROMPT HIT RATE',str(cards));self.assertNotIn('Back to market',str(cards))
         self.assertEqual(columns[-1]['id'],'prompt_result')
         normal=cb['analyze'](dataset,entity,metric,3,ALL_TEAMS)
         self.assertFalse(normal[0].layout.shapes);self.assertEqual(len(normal[1]),3)
         self.assertNotIn('prompt_result',normal[2][0])
+
+    def test_market_return_link_is_above_selection_fields_and_works_without_a_dataset(self):
+        from check_dashboard_efficiency import post
+        layout=list(history_fixtures.components(self.fixture.app.layout))
+        ids=[getattr(node,'id',None) for node in layout]
+        for field in ('player-team','entity','metric-group','metric','window'):
+            self.assertLess(ids.index('historical-market-return'),ids.index(field))
+        def route(location):
+            values={'market-url':location,'workspace-page':'historical','sport':'NFL'}
+            return post(self.fixture.app,'historical_market_return',values,'nav-historical.data')['response']
+        link=route(self.href)['historical-market-return']['children']['props']
+        self.assertEqual((link['children'],link['href']),('Back to market','#nfl-game-123'))
+        self.assertIsNone(route('#historical-player')['historical-market-return']['children'])
 
     def test_same_entity_new_line_updates_via_actual_dash_http_callback(self):
         meta_key,meta=next((key,m) for key,m in self.fixture.app.callback_map.items() if m.get('callback') and m['callback'].__wrapped__.__name__=='analyze')

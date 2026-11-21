@@ -6,7 +6,7 @@ from dash import dcc,html
 
 from sports_analytics.display_time import format_eastern
 from app.sections.markets.market_view import logo_badge,market_provider_heading,probability_text
-from app.sections.markets.mispricing import GAME_METHODS,PLAYER_METHODS,QUICK_DEFAULT_PROBABILITY,QUICK_DEFAULT_EDGE
+from app.sections.markets.mispricing import GAME_METHODS,PLAYER_METHODS,QUICK_DEFAULT_PROBABILITY,QUICK_DEFAULT_EDGE,quick_start_progress
 from app.sections.markets import quick_visibility
 from app.sections.market_structure.market_structure_link import line_actions
 from sports_analytics.market_summary import PROVIDERS
@@ -50,8 +50,8 @@ def quick_controls():
                 value=QUICK_DEFAULT_EDGE,min=-100,max=100,step='any')),
             html.Button('Run Quick Filtering',id='summary-quick-run',n_clicks=0,className='apply-criteria-button'),
         ],className='criteria-controls'),
-        quick_visibility.feedback('summary','summary-quick-results'),
-    ],id='summary-quick-panel',className='quick-filter-section',style={'display':'none'})
+        quick_visibility.feedback('summary','summary-quick-results',starting=quick_start_progress('summary')),
+    ],id='summary-quick-panel',className='quick-filter-section')
 
 
 def chart_criteria_controls():
@@ -140,8 +140,11 @@ def layout():
                 options=[dict(label='Latest saved snapshot',value='latest')],value='latest',clearable=False)),
                 className='summary-draftkings-only'),
             html.Div(html.Div(id='summary-model-status',className='forecast-history',role='status'),id='summary-forecast-status'),
-            dcc.Tabs(id='summary-category',value='Game Lines',mobile_breakpoint=0,children=[dcc.Tab(label=value,value=value) for value in
-                     ['Game Lines','Player Props',QUICK,'Other Markets']],className='market-category-tabs'),
+            dcc.Tabs(id='summary-category',value='Game Lines',mobile_breakpoint=0,children=[
+                dcc.Tab(label=value,value=value,selected_className={
+                    QUICK:'market-filter-tab-selected','Player Props':'summary-player-tab-selected',
+                }.get(value))
+                for value in ['Game Lines','Player Props',QUICK,'Other Markets']],className='market-category-tabs'),
             quick_controls(),
             html.Div(dcc.Loading(html.Div(id='summary-market-sections'),delay_show=500,color='#57dbc4',
                                  overlay_style={'visibility':'visible'}),id='summary-quote-content'),
@@ -359,9 +362,7 @@ def quick_results(bundle,ranked,criteria,job=None):
             snapshot=snapshots[row['provider']];original=snapshot['rows'][row['index']]
             details='; '.join(f"{v['method']}: {probability_text(v['probability'])}, {v['edge']*100:+.2f} pp" for v in row['estimates'])
             label,action=row_action(row['selection'],player_line(row.get('comparison')),'summary',bundle=bundle['id'],job=job)
-            game_line=row['category']=='Game Lines'
-            controls=line_actions(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary',grouped=game_line)
-            if not game_line:controls=[html.Div(controls)]
+            controls=line_actions(snapshot,original,row['provider'],row['side'] or 'yes',surface='summary',grouped=True)
             content.append(html.Tr([html.Td(rank),html.Th([label,*controls],scope='row'),
                 html.Td(provider_logo(row['provider'])),html.Td(row['method'],title=details),
                 html.Td(odds_text(row['odds'],row['implied'])),html.Td(probability_text(row['implied'])),

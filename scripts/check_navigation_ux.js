@@ -120,21 +120,27 @@ errorArgs[23].kalshi.has_rows=true;
 check(!api.screen(...errorArgs).includes('exchange-quotes-pending')&&api.screen(...errorArgs).includes('market-view-updating'),
   'Usable partial quotes stay visible with an updating label');
 function checkQuickFiltering() {
-  const events = {}, observers = new Map();
+  const events = {}, observers = new Map(), clickHandlers = {}, layout = {};
   const window = {location: {hash: '#nfl-game-123'},
+    dash_component_api: {getLayout: id => layout[id]},
+    setTimeout: () => 1, clearTimeout() {},
     addEventListener(name, handler) { (events[name] ??= []).push(handler); }};
   new Function('window', assets('market_transition.js'))(window);
   const providers = ['market','kalshi','summary'];
-  const feedback = Object.fromEntries(providers.map(provider => [provider, {dataset: {quickSelection: 'old'}}]));
+  const feedback = Object.fromEntries(providers.map(provider => [provider, {
+    dataset: {quickSelection: 'old'}, setAttribute() { this.starting = true; }, removeAttribute() { this.starting = false; },
+  }]));
   const slots = Object.fromEntries(providers.map(provider => [provider, [{children: []}, {children: []}]]));
   const kalshiStartSlot={children:[]};
+  const message = {};
   const starter={id:'kalshi-starting-quick-progress',dataset:{},hidden:true,
-    toggleAttribute(name,show){this.visible=show;}};
+    querySelector: () => message, toggleAttribute(name,show){this.visible=show;}};
   kalshiStartSlot.children=[starter];
   slots.kalshi.push(kalshiStartSlot);
   const document = {
     getElementById: id => id===starter.id?starter:feedback[id.split('-')[0]],
     querySelectorAll: selector => slots[selector.split('"')[1]],
+    addEventListener: (name, handler) => { clickHandlers[name] = handler; },
   };
   class MutationObserver {
     constructor(callback) { this.callback = callback; }
@@ -152,8 +158,8 @@ function checkQuickFiltering() {
     observers.get(target)([{type:'attributes',target}]);
   };
   const key = (hash, selection) => JSON.stringify([hash,selection]);
-  const publish = (slot, hash, selection) => {
-    const node = {dataset:{quickScope:key(hash,selection)},
+  const publish = (slot, hash, selection, sequence) => {
+    const node = {dataset:{quickScope:key(hash,selection),quickSequence:sequence},
       toggleAttribute(name, show) { this.visible = show; }};
     slot.children = [node];
     observers.get(slot)([{type:'childList',target:slot}]);
@@ -201,6 +207,28 @@ function checkQuickFiltering() {
   move(kalshiGame);
   select('kalshi','live');
   check(!acknowledged.visible,'A resolved snapshot change hides an earlier archived scan');
+
+  const button = {id:'kalshi-quick-filter',disabled:false};
+  layout[button.id] = {props:{n_clicks:2}};
+  layout['kalshi-snapshot'] = {props:{value:'live'}};
+  const click = () => {
+    const event = {target:{closest: () => button}, preventDefault() { this.prevented = true; }, stopPropagation() {}};
+    clickHandlers.click(event);
+    return event;
+  };
+  click();
+  check(feedback.kalshi.starting && message.textContent.includes('Starting'),
+    'Click shows progress before any Dash callback or server response');
+  check(click().prevented,'Repeated clicks while submitting cannot queue duplicates');
+  publish(responses,kalshiGame,'live','2');
+  check(feedback.kalshi.starting,'An earlier scan for the same game cannot remove the new progress bar');
+  publish(responses,kalshiGame,'live','3');
+  check(!feedback.kalshi.starting,'Acknowledged progress or results replace the local bar');
+  check(!publish(responses,kalshiGame,'live','2').visible,'An older run stays hidden after acknowledgement');
+  layout[button.id].props.n_clicks=3;
+  click();
+  move(kalshiNext);
+  check(!feedback.kalshi.starting,'Changing games clears unacknowledged progress');
 
   const [results,chart] = slots.summary;
   const summary = '#nfl-market-summary', draftkings = '#nfl-draftkings-market';

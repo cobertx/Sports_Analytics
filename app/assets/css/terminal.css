@@ -1,9 +1,22 @@
 /* Shared presentation layer. Route visibility remains owned by market_transition.css. */
-.app-shell { font-family: var(--font); line-height: 1.5; }
-.app-shell > header { min-height: 60px; padding: 10px 3%; gap: var(--space-3); background: var(--panel); }
+.app-shell {
+  --workspace-max-width: 1600px;
+  --workspace-gutter: 3%;
+  font-family: var(--font);
+  line-height: 1.5;
+}
+.app-shell > header {
+  min-height: 60px;
+  padding: 10px max(var(--workspace-gutter), calc((100% - var(--workspace-max-width)) / 2 + var(--workspace-gutter)));
+  gap: var(--space-3);
+  background: var(--panel);
+}
 .app-shell .brand-mark { width: 36px; height: 36px; border-radius: var(--radius); font-size: 17px; }
 .app-shell .brand-name { font-size: 15px; font-weight: 650; letter-spacing: -.2px; }
-.app-shell > main { max-width: 1600px; padding: var(--space-6) 3% calc(20px + var(--parlay-space,0px)); }
+.app-shell > main {
+  max-width: var(--workspace-max-width);
+  padding: var(--space-6) var(--workspace-gutter) calc(20px + var(--parlay-space,0px));
+}
 .app-shell h1 { font-size: 26px; line-height: 1.25; margin: var(--space-1) 0 var(--space-2); letter-spacing: -.5px; }
 .app-shell h2 { line-height: 1.4; }
 .app-shell .eyebrow { font-size: 12px; letter-spacing: .07em; }
@@ -22,6 +35,22 @@
   .comparison-summary,.information-heading,.information-news,.information-weather,.pnl-heading,.pnl-form,
   .pnl-table,.odds-heading,.odds-setup,.in-game-setup,.in-game-visual,.in-game-details) { padding: 20px; }
 .app-shell :is(.market-heading,.backtesting-heading,.odds-heading,.in-game-heading) h2 { font-size: 20px; margin: var(--space-1) 0 var(--space-2); }
+.app-shell .filtered-results {
+  grid-template-columns: minmax(0,1fr);
+  gap: var(--space-4);
+  min-width: 0;
+}
+.app-shell .filtered-results .market-heading p { margin: 0; color: var(--muted); }
+.app-shell .filtered-results-body {
+  display: grid;
+  grid-template-columns: minmax(0,1fr);
+  gap: var(--space-4);
+  padding: 20px;
+}
+.app-shell .filtered-results .market-controls { flex-wrap: wrap; margin: 0; }
+.app-shell .filtered-results .market-controls .field { width: min(100%,320px); margin: 0; }
+.app-shell .filtered-results-body :is(.load-status,.ppp-comparison-note) { margin: 0; }
+.app-shell .filtered-results-table-region { overflow-x: auto; }
 .app-shell .market-provider-heading {
   display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
   gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-3);
@@ -201,6 +230,7 @@
   .app-shell :is(.sport-page-link,.backtesting-model-link,.market-history-link,summary,.market-link) { min-height: 44px; }
   .app-shell .field input:is([type='text'],[type='number']),.app-shell :is(.dash-dropdown,.Select-control) { min-height: 44px; }
   .app-shell :is(.market-heading,.odds-heading,.detail-page-actions,.snapshot-controls) { flex-direction: column; align-items: stretch; }
+  .app-shell .filtered-results :is(.market-heading,.filtered-results-body) { padding: var(--space-4); }
   .app-shell .snapshot-controls .field { width: 100%; }
   .app-shell .detail-pull-control { align-items: flex-start; }
   .app-shell :is(.game-grid,.backtest-chart-grid,.backtesting-info-grid,.odds-usage-grid,.odds-summary,

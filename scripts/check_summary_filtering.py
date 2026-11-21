@@ -38,13 +38,7 @@ class SummaryFilteringChecks(TestCase):
         self.assertEqual(tabs.value,'Game Lines')
         self.assertEqual([tab.value for tab in tabs.children],['Game Lines','Player Props',QUICK,'Other Markets'])
 
-    def test_quick_page_owns_its_method_controls_and_status(self):
-        from check_navigation_pipeline import node,run_client
-        if not node():self.skipTest('Node unavailable')
-        f=self.fixture()
-        refs=[dict(output='summary-quick-panel.style',args=[QUICK],expected=[{},dict(display='none'),dict(display='none'),dict(display='none')]),
-              dict(output='summary-quick-panel.style',args=['Game Lines'],expected=[dict(display='none'),{},{},{}])]
-        self.assertEqual(run_client(f.app,references=refs,steps=[])['checks'],2)
+        self.assertEqual([tab.value for tab in tabs.children if tab.selected_className=='market-filter-tab-selected'],[QUICK])
 
     def test_settlement_rules_and_every_selected_method_are_preserved(self):
         ranked=self.run_filter(methods=['PPP','EPA'],players=['WHP','PGE'])
@@ -90,6 +84,7 @@ class SummaryFilteringChecks(TestCase):
         request=f.cb['summary_quick_submit'](1,*args);f.app._summary_quick_jobs.queue.tasks.join()
         result=f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',1,None)
         self.assertEqual(result[2]['status'],'complete',result[1]);self.assertIn('Top 3 by edge',str(result[0]))
+        self.assertEqual(getattr(result[0],'data-quick-sequence'),'1')
         f.fd.pull.assert_not_called();f.kalshi.all_quotes.assert_not_called();f.poly.all_quotes.assert_not_called()
         with self.assertRaises(PreventUpdate):f.cb['summary_quick_results'](request,f.data,QUICK,'123','market-summary','NFL',2,result[2])
         changed=f.cb['summary_quick_results'](request,{**f.data,'id':'new'},QUICK,'123','market-summary','NFL',3,result[2])
@@ -102,6 +97,34 @@ class SummaryFilteringChecks(TestCase):
             self.assertIn('error',request)
         f.engines['PPP'].forecast.assert_not_called()
 
+    def test_summary_and_draftkings_are_tracked_and_restore_their_submitted_quotes(self):
+        from check_dashboard_efficiency import post
+        f=self.fixture()
+        draft={**f.data,'id':'draft-fixture','mode':'draftkings',
+               'providers':{'DraftKings':f.data['providers']['FanDuel']}}
+        client=f.app.server.test_client()
+        values={'summary-quick-run':1,'summary-quick-game-methods':['PPP'],'summary-quick-player-methods':['WHP'],
+                'summary-quick-probability':10,'summary-quick-edge':-100,'summary-game':'123',
+                'workspace-page':'market-summary','summary-category':QUICK,'sport':'NFL','summary-quotes':f.data}
+        def submit(bundle):
+            values['summary-quotes']=bundle
+            return post(f.app,'summary_quick_submit',values,'summary-quick-run.n_clicks',client=client
+                        )['response']['summary-quick-request']['data']
+        summary=submit(f.data)
+        values['summary-quick-run']=2
+        draft_request=submit(draft)
+        self.assertIs(f.app._summary_quick_jobs,f.app._filter_jobs.tasks)
+        f.app._summary_quick_jobs.queue.tasks.join()
+        monitor=post(f.app,'poll_quick_monitor',{'quick-monitor-timer':1},
+                     'quick-monitor-timer.n_intervals',client=client)['response']
+        self.assertEqual([(job['provider'],job['status']) for job in monitor['quick-monitor-state']['data']['jobs']],
+                         [('DraftKings','complete'),('Market Summary','complete')])
+        values.update({'summary-quotes':{**f.data,'id':'new-quote-bundle'},'summary-quick-request':draft_request})
+        result=post(f.app,'summary_quick_results',values,'summary-quotes.data',client=client)['response']
+        self.assertEqual(result['summary-quick-completed']['data']['job'],summary['job'])
+        self.assertIn('Using the quotes and settings',str(result['summary-quick-status']))
+        self.assertIn('Top 3 by edge',str(result['summary-quick-results']))
+
     def test_quick_player_row_opens_full_ladder_with_each_cached_method(self):
         f=self.fixture()
         quotes=f.data['providers']['FanDuel']['snapshot']['rows']
@@ -112,6 +135,12 @@ class SummaryFilteringChecks(TestCase):
         self.assertEqual(done['status'],'complete')
         self.assertEqual(json.loads(getattr(results,'data-quick-scope')),['#nfl-market-summary','123'])
         rows=fixtures.native_dom(results).find('tr')
+        for row in rows:
+            if 'data-prop-chart' in row.attrs:
+                selection=row.children[1]
+                actions=selection.find('div','market-line-actions')
+                self.assertEqual(len(actions),1)
+                self.assertEqual(list(map(str,actions[0].children)),['Historical Data','Market Structure'])
         selection=next(json.loads(row.attrs['data-prop-chart']) for row in rows if 'data-prop-chart' in row.attrs)
         self.assertEqual(selection['job'],request['job'])
         self.assertTrue(any(row.find('button','prop-chart-button') for row in rows))
@@ -129,6 +158,7 @@ class SummaryFilteringChecks(TestCase):
                 state=[dict(item,value=values[item['id']]) for item in meta['state']]))
         self.assertEqual(response.status_code,200,response.get_data(as_text=True))
         panel=response.get_json()['response']['summary-prop-result']['children']
+        self.assertEqual(panel['props']['data-prop-chart-tab'],QUICK)
         graph=next(child for child in panel['props']['children'] if child and child['type']=='Graph')
         traces={trace['name']:trace for trace in graph['props']['figure']['data']}
         self.assertTrue({'WHP forecast','UO forecast','FanDuel implied'} <= set(traces))

@@ -73,7 +73,7 @@ def layout():
             html.Div(id="market-criteria-status", role="status", **{"aria-live": "polite"},
                      className="criteria-status"),
             quick_controls('market', 'mispricing-results'),
-            ],id='mispricing-filter-panel',className='panel market-criteria',style={'display':'none'}),
+            ],id='mispricing-filter-panel',className='panel market-criteria'),
             html.Div([
                 html.Div(indicator('Loading the selected markets…'),id='market-sections-transition',className='market-sections-transition'),
                 dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),

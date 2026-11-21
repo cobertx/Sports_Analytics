@@ -93,11 +93,24 @@
 .app-shell:is(.market-screen,.workspace-screen) .page-toolbar .sport-page-link[aria-current="page"] { background: var(--selected); color: var(--accent); font-weight: 650; }
 .skip-navigation { position: fixed; left: 12px; top: -100px; z-index: 100; padding: 12px; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--text); }
 .skip-navigation:focus { top: 12px; }
+/* Dash marks the selected tab during the click, before the quote callbacks run. */
+:is(#mispricing-filter-panel,#kalshi-filter-panel,#summary-quick-panel) { display: none; }
+#market-category-parent:has(.market-filter-tab-selected) ~ #mispricing-filter-panel,
+#kalshi-category-parent:has(.market-filter-tab-selected) ~ #kalshi-filter-panel,
+#summary-category-parent:has(.market-filter-tab-selected) ~ #summary-quick-panel { display: block; }
+#market-category-parent:has(:is(.market-filter-tab-selected,.market-info-tab-selected)) ~ #market-quote-content,
+#kalshi-category-parent:has(.market-filter-tab-selected) ~ #kalshi-quote-content,
+#summary-category-parent:has(.market-filter-tab-selected) ~ #summary-quote-content,
+#summary-detail:has(#summary-category .market-filter-tab-selected) > :is(#summary-forecast-controls,#summary-forecast-status) { display: none; }
+#summary-detail:not(:has(#summary-category .market-filter-tab-selected)) #summary-prop-result > [data-prop-chart-tab="Quick Filtering"],
+#summary-detail:not(:has(#summary-category .summary-player-tab-selected)) #summary-prop-result > [data-prop-chart-tab="Player Props"] { display: none; }
 .quick-result-slot > :not([data-quick-visible]),
 .quick-result-slot.criteria-status:not(:has(> [data-quick-visible])),
 .quick-filter-feedback:has(.quick-filter-output > [data-quick-visible]) > .quick-filter-placeholder { display: none; }
 .quick-filter-feedback:has(#kalshi-starting-quick-progress[data-quick-visible]:not([hidden])) > :is(.criteria-status,.quick-filter-output,.quick-filter-placeholder),
+.quick-filter-feedback[data-quick-starting] > :is(.criteria-status,.quick-filter-output,.quick-filter-placeholder),
 .quick-filter-feedback:has(.kalshi-quick-submission[data-quick-visible]) > :is(.quick-filter-output,.quick-filter-placeholder) { display: none; }
+.quick-filter-feedback[data-quick-starting] > .quick-result-slot > [data-quick-starter] { display: block; }
 @media (prefers-reduced-motion: reduce) {
   .page-toolbar .sport-page-link { transition: none; }
 }

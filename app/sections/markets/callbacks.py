@@ -1,5 +1,6 @@
 """Sportsbook matchup, forecast and filtering callbacks."""
 
+from copy import copy
 from datetime import date
 import hashlib
 import json
@@ -7,6 +8,7 @@ from uuid import uuid4
 from time import time
 from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 from dash.exceptions import PreventUpdate
+from flask import has_request_context
 from sports_analytics.data import DataSourceError
 from sports_analytics.page_cache import forecast_revision
 from sports_analytics.player_history_refresh import refresh_live_history
@@ -21,7 +23,7 @@ from app.sections.markets.mispricing import (
     ALL_PROBABILITIES, FILTER_CATEGORY, consensus_rankings, criteria_values, filter_context,
     quick_finish_progress, quick_progress, rank_markets, results as mispricing_results, run_forecasts, selected_methods,
 )
-from app.sections.markets import quick_methods, quick_visibility
+from app.sections.markets import quick_filter_monitor, quick_methods, quick_visibility
 from sports_analytics.display_time import format_eastern
 from sports_analytics.availability_adjustment import note as availability_note
 from sports_analytics.game_information import ADDITIONAL_INFORMATION
@@ -135,7 +137,7 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         if not market_game_id(location_hash):raise PreventUpdate
         sport=market_game_sport(location_hash)
         information_tab=(dcc.Tab(label=ADDITIONAL_INFORMATION,value=ADDITIONAL_INFORMATION,className='market-category-tab',
-                                selected_className='market-category-tab selected') if sport in {'NBA','NFL'} else None)
+                                selected_className='market-category-tab selected market-info-tab-selected') if sport in {'NBA','NFL'} else None)
         snapshot = saved_snapshot(location_hash, selection)
         if not snapshot:
             return ([information_tab],ADDITIONAL_INFORMATION,"No saved markets yet. Additional Information is available without pulling odds.") if information_tab is not None else (
@@ -148,12 +150,13 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                 for key, label in categories if key in available]
         if information_tab is not None:tabs.append(information_tab)
         tabs.append(dcc.Tab(label='Mispricing Filter',value=FILTER_CATEGORY,className='market-category-tab',
-                            selected_className='market-category-tab selected'))
+                            selected_className='market-category-tab selected market-filter-tab-selected'))
         remembered=remembered_market(market_return,market_game_sport(location_hash),location_hash)
         restored=remembered.get('category') if remembered and remembered.get('snapshot')==selection else None
         value = restored if restored in available else previous if previous in available else tabs[0].value if tabs else None
         cost = f"{snapshot['cost']} credits" if snapshot["cost"] is not None else "Cost not reported"
-        return tabs, value, [html.Span(latest_pull_text(snapshot) + f" · {cost}"),
+        # A response for a snapshot can arrive after a different tab was clicked.
+        return tabs, no_update if value==previous else value, [html.Span(latest_pull_text(snapshot) + f" · {cost}"),
                              html.Small("Saved in data/market_data", title=snapshot.get("csv_file", "Saved locally"))]
 
     @app.callback(Output("market-applied-criteria", "data"), Output("market-criteria-status", "children"),
@@ -165,7 +168,7 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         try:criteria=criteria_values(probability,edge)
         except ValueError as exc:return no_update,str(exc),no_update
         return criteria, (
-            f"Applied to all calculated selections: estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Player tabs and Game Lines use their selected forecast methods."), category or FILTER_CATEGORY
+            f"Applied to all calculated selections: estimated probability > {probability:g}% and Edge > {edge:g} percentage points. Player tabs and Game Lines use their selected forecast methods."), no_update if category else FILTER_CATEGORY
 
     prompt_fields=dict(type='market-quick-prompt-method',scope=ALL,prompt=ALL)
 
@@ -183,8 +186,9 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                   Input('market-quick-filter','n_clicks'),State('market-quick-probability','value'),State('market-quick-edge','value'),
                   State('market-quick-game-methods','value'),State('market-quick-player-methods','value'),
                   State('market-url','hash'),State('market-snapshot','value'),
-                  State(prompt_fields,'value'),State(prompt_fields,'id'),prevent_initial_call=True)
-    def request_quick_filter(clicks,probability,edge,methods,player_methods,location_hash,selection,prompt_values=None,prompt_ids=None):
+                  State(prompt_fields,'value'),State(prompt_fields,'id'),State('mispricing-forecast-history','data'),prevent_initial_call=True)
+    def request_quick_filter(clicks,probability,edge,methods,player_methods,location_hash,selection,prompt_values=None,prompt_ids=None,
+                             previous_history=None):
         if not clicks:raise PreventUpdate
         try:
             criteria=criteria_values(probability,edge)
@@ -195,14 +199,18 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                 'market',market_game_sport(location_hash),market_game_id(location_hash)))
             request={**filter_context(location_hash,selection,methods,player_methods,criteria),'sequence':clicks}
             if overrides:request['prompt_methods']=overrides
+            if has_request_context():
+                snapshot = filtering_snapshot(location_hash, selection)
+                job, _, _, error = start_filter(snapshot, request, previous_history, refresh=True)
+                if error:
+                    raise DataSourceError(error)
+                request = {**request, 'job':job}
+                filter_jobs.tasks.track(quick_filter_monitor.owner(),job,('market',location_hash,selection),request,
+                    provider='FanDuel',sport=snapshot['sport'],matchup=snapshot['away_team']+' at '+snapshot['home_team'],
+                    methods=[*methods,*player_methods])
             return request, ''
-        except ValueError as exc:return no_update,quick_visibility.status(str(exc),location_hash,selection)
-
-    app.clientside_callback("""function(category){
-        const filtering=category==='Mispricing';
-        return [{display:filtering?'block':'none'},
-                {display:filtering||category==='Additional Information'?'none':'block'}];
-    }""",Output('mispricing-filter-panel','style'),Output('market-quote-content','style'),Input('market-category','value'))
+        except (DataSourceError,OSError,ValueError) as exc:
+            return no_update,quick_visibility.status(str(exc),location_hash,selection,clicks)
 
     @scoped_callback(app,'market',Output("player-forecast-method", "options"), Output("player-forecast-method", "value"),
                   Input("market-url", "hash"), State("player-forecast-method", "value"),State('market-return','data'))
@@ -323,6 +331,60 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
             return availability_service.apply(snapshot,service.forecast(snapshot),method),None
         except (DataSourceError,OSError,ValueError) as exc:return None,str(exc)
 
+    def filtering_snapshot(location_hash, selection):
+        snapshot = saved_snapshot(location_hash, selection)
+        if not snapshot:
+            raise ValueError('That saved snapshot is unavailable. Choose a snapshot and run Quick Filtering again.')
+        return {**snapshot, 'sport':market_game_sport(location_hash)}
+
+    def calculate_filter(snapshot, request, previous_history, report=None):
+        location_hash, selection = request['location'], request['snapshot']
+        methods, player_methods = request['game_method'], request['player_method']
+        criteria, overrides = request['criteria'], request.get('prompt_methods', {})
+        if report:report(5,'Preparing saved quotes and forecast methods')
+        assignments=quick_methods.plan(snapshot['rows'],methods,player_methods,overrides)
+        needed={method for choices in assignments.values() for method in choices}
+        game_methods=[method for method in quick_methods.game_methods(snapshot['sport']) if method in needed]
+        chosen_players=[method for method in quick_methods.player_methods(snapshot['sport']) if method in needed]
+        tasks={method:lambda method=method:forecast_game_markets(snapshot,method) for method in game_methods}
+        tasks.update({method:lambda method=method:forecast_player_markets(snapshot,method) for method in chosen_players})
+        forecasts=run_forecasts(tasks,snapshot['sport'],report)
+        if report:report(85,'Applying thresholds and ranking selections')
+        game_rows={**snapshot,'rows':[row for row in snapshot['rows'] if not row['market_key'].startswith('player_')]}
+        player_rows={**snapshot,'rows':[row for row in snapshot['rows'] if row['market_key'].startswith('player_')]}
+        rankings={method:rank_markets(game_rows,forecasts[method][0],None,ALL_PROBABILITIES,method) for method in game_methods}
+        rankings.update({method:rank_markets(player_rows,None,forecasts[method][0],ALL_PROBABILITIES,player_method=method) for method in chosen_players})
+        ranked=quick_methods.consensus(rankings,assignments,snapshot['rows'],criteria,
+            lambda item:(item['row']['market_key'],item['row']['subject'],item['row']['selection'],str(item['row']['line'])),consensus_rankings)
+        context=[location_hash,selection]
+        previous=previous_history if previous_history and previous_history.get('context')==context else {}
+        history=dict(context=context,filter_key=request,game=dict(previous.get('game',{})),player=dict(previous.get('player',{})),weighting_policy=POLICY_VERSION)
+        for method in game_methods:
+            forecast=forecasts[method][0]
+            history['game'][method]={'latest_date':forecast.diagnostics.get('last_game_date') if forecast else None}
+        for method in chosen_players:history['player'][method]=forecasts[method][2]
+        errors=[f'{method} forecast: {record[1]}' for method,record in forecasts.items() if record[1]]
+        injuries=availability_note(*(record[0] for record in forecasts.values()))
+        if injuries:errors.append(injuries)
+        if report:report(95,'Saving filtered selections')
+        try:
+            filtered_results_service.save(snapshot,ranked,criteria,request=request)
+        except (DataSourceError,OSError,ValueError) as exc:
+            errors.append('Quick Filtering completed, but its report was not saved: '+str(exc))
+        result=mispricing_results(snapshot,ranked,criteria,errors,
+            player_forecasts={method:forecasts[method][0] for method in chosen_players})
+        return quick_visibility.scoped(result,location_hash,selection,request.get('sequence')),history
+
+    def start_filter(snapshot, request, previous_history, *, refresh):
+        environment=forecast_environment(snapshot['sport'])
+        snapshot_keys={game:forecast_snapshot_key(snapshot,game) for game in (False,True)}
+        identities=[forecast_identity(snapshot,method,environment=environment,snapshot_keys=snapshot_keys)
+                    for method in [*request['game_method'],*request['player_method']]]
+        job=request_key([{key:value for key,value in request.items() if key!='sequence'},identities])
+        result,pending,error=filter_jobs.tasks.scan(job,lambda report:calculate_filter(
+            snapshot,request,previous_history,report),refresh=refresh,force=refresh)
+        return job,result,pending,error
+
     @scoped_callback(app,'market',Output('mispricing-results','children'),Output('mispricing-forecast-history','data'),
                   Input('mispricing-request','data'),Input('market-category','value'),Input('market-url','hash'),
                   Input('market-snapshot','value'),Input('market-quick-game-methods','value'),Input('market-quick-player-methods','value'),
@@ -331,7 +393,13 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                   Input(prompt_fields,'value'),State(prompt_fields,'id'),Input('market-quick-poll','n_intervals'),prevent_initial_call=True)
     def quick_filter_markets(request,category,location_hash,selection,methods,player_methods,probability,edge,previous_history,page=None,prompt_values=None,prompt_ids=None,_quick_tick=None):
         if (page is not None and page!='market') or not market_game_id(location_hash):raise PreventUpdate
-        def in_scope(content):return quick_visibility.scoped(content,location_hash,selection)
+        restored = None
+        if category==FILTER_CATEGORY and [(request or {}).get('location'),(request or {}).get('snapshot')]!=[location_hash,selection]:
+            restored = filter_jobs.tasks.latest(quick_filter_monitor.owner(),('market',location_hash,selection))
+            if restored:
+                request = restored
+        sequence=(request or {}).get('sequence')
+        def in_scope(content):return quick_visibility.scoped(content,location_hash,selection,sequence)
         prompt=in_scope(html.P(quick_visibility.PROMPTS['market'],className='saved-market-empty'))
         def changed_selection():
             if page is None:return prompt,no_update
@@ -340,17 +408,20 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         if category!=FILTER_CATEGORY:return prompt,no_update
         # Mounting or editing the per-prompt selectors only changes controls.
         # Fitting starts when the button publishes a new request.
-        if page is not None and isinstance(ctx.triggered_id,dict):return changed_selection()
-        try:
-            methods,player_methods=selected_methods(methods,player_methods,market_game_sport(location_hash))
-            criteria=criteria_values(probability,edge)
-            overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope(
-                'market',market_game_sport(location_hash),market_game_id(location_hash)))
-        except ValueError:return changed_selection()
-        expected=filter_context(location_hash,selection,methods,player_methods,criteria)
-        if overrides:expected['prompt_methods']=overrides
-        elif request and request.get('prompt_methods'):return changed_selection()
-        if not request or any(request.get(key)!=value for key,value in expected.items()):return changed_selection()
+        explicit=page is not None and (ctx.triggered_id=='mispricing-request' or
+                                       'mispricing-request.data' in getattr(ctx,'triggered_prop_ids',{}))
+        if page is not None and isinstance(ctx.triggered_id,dict) and not explicit:return changed_selection()
+        if not restored:
+            try:
+                methods,player_methods=selected_methods(methods,player_methods,market_game_sport(location_hash))
+                criteria=criteria_values(probability,edge)
+                overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope(
+                    'market',market_game_sport(location_hash),market_game_id(location_hash)))
+            except ValueError:return changed_selection()
+            expected=filter_context(location_hash,selection,methods,player_methods,criteria)
+            if overrides:expected['prompt_methods']=overrides
+            elif request and request.get('prompt_methods'):return changed_selection()
+            if not request or any(request.get(key)!=value for key,value in expected.items()):return changed_selection()
         if (page is not None and ctx.triggered_id in {'market-url','nav-market'} and previous_history
                 and previous_history.get('context')==[location_hash,selection] and previous_history.get('filter_key')==request):
             return no_update,no_update
@@ -365,7 +436,7 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                     and previous_history.get('filter_key')==request):
                 checkpoint=quick_finish_progress(filter_jobs.tasks,job,previous_history.get('progress'))
                 if checkpoint:return pending_view(previous_history,checkpoint)
-            return result[0],{**result[1],'filter_key':request}
+            return in_scope(copy(result[0])),{**result[1],'filter_key':request}
 
         if page is not None and ctx.triggered_id=='market-quick-poll' and previous_history and previous_history.get('filter_key')==request:
             job=previous_history.get('job')
@@ -376,53 +447,22 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                 result=filter_jobs.tasks.peek(job)
                 if result is not None:return completed_view(job,result)
                 return in_scope(html.P('This result expired. Run Quick Filtering again.',className='mispricing-error')),dict(previous_history,pending=False)
-        snapshot=saved_snapshot(location_hash,selection)
-        if not snapshot:return in_scope(html.P('That saved snapshot is unavailable. Choose a snapshot and run Quick Filtering again.',className='saved-market-empty')),no_update
-        snapshot={**snapshot,'sport':market_game_sport(location_hash)}
-        def calculate_filter(report=None):
-            if report:report(5,'Preparing saved quotes and forecast methods')
-            assignments=quick_methods.plan(snapshot['rows'],methods,player_methods,overrides)
-            needed={method for choices in assignments.values() for method in choices}
-            game_methods=[method for method in quick_methods.game_methods(snapshot['sport']) if method in needed]
-            chosen_players=[method for method in quick_methods.player_methods(snapshot['sport']) if method in needed]
-            tasks={method:lambda method=method:forecast_game_markets(snapshot,method) for method in game_methods}
-            tasks.update({method:lambda method=method:forecast_player_markets(snapshot,method) for method in chosen_players})
-            forecasts=run_forecasts(tasks,snapshot['sport'],report)
-            if report:report(85,'Applying thresholds and ranking selections')
-            game_rows={**snapshot,'rows':[row for row in snapshot['rows'] if not row['market_key'].startswith('player_')]}
-            player_rows={**snapshot,'rows':[row for row in snapshot['rows'] if row['market_key'].startswith('player_')]}
-            rankings={method:rank_markets(game_rows,forecasts[method][0],None,ALL_PROBABILITIES,method) for method in game_methods}
-            rankings.update({method:rank_markets(player_rows,None,forecasts[method][0],ALL_PROBABILITIES,player_method=method) for method in chosen_players})
-            ranked=quick_methods.consensus(rankings,assignments,snapshot['rows'],criteria,
-                lambda item:(item['row']['market_key'],item['row']['subject'],item['row']['selection'],str(item['row']['line'])),consensus_rankings)
-            context=[location_hash,selection]
-            previous=previous_history if previous_history and previous_history.get('context')==context else {}
-            history=dict(context=context,filter_key=request,game=dict(previous.get('game',{})),player=dict(previous.get('player',{})),weighting_policy=POLICY_VERSION)
-            for method in game_methods:
-                forecast=forecasts[method][0]
-                history['game'][method]={'latest_date':forecast.diagnostics.get('last_game_date') if forecast else None}
-            for method in chosen_players:history['player'][method]=forecasts[method][2]
-            errors=[f'{method} forecast: {record[1]}' for method,record in forecasts.items() if record[1]]
-            injuries=availability_note(*(record[0] for record in forecasts.values()))
-            if injuries:errors.append(injuries)
-            if report:report(95,'Saving filtered selections')
+        job=request.get('job')
+        if job:
+            state=filter_jobs.tasks.queue.state(job)
+            pending,error=state['pending'],state['error']
+            result=filter_jobs.tasks.peek(job)
+        else:
             try:
-                filtered_results_service.save(snapshot,ranked,criteria,request=request)
-            except (DataSourceError,OSError,ValueError) as exc:
-                errors.append('Quick Filtering completed, but its report was not saved: '+str(exc))
-            return in_scope(mispricing_results(snapshot,ranked,criteria,errors,
-                player_forecasts={method:forecasts[method][0] for method in chosen_players})),history
-        if page is None:return calculate_filter()
-        environment=forecast_environment(snapshot['sport'])
-        snapshot_keys={game:forecast_snapshot_key(snapshot,game) for game in (False,True)}
-        identities=[forecast_identity(snapshot,method,environment=environment,snapshot_keys=snapshot_keys)
-                    for method in [*methods,*player_methods]]
-        job=request_key([{key:value for key,value in request.items() if key!='sequence'},identities])
-        explicit=ctx.triggered_id=='mispricing-request'
-        result,pending,error=filter_jobs.tasks.scan(job,calculate_filter,refresh=explicit,force=explicit)
+                snapshot=filtering_snapshot(location_hash,selection)
+            except ValueError as exc:
+                return in_scope(html.P(str(exc),className='saved-market-empty')),no_update
+            if page is None:return calculate_filter(snapshot,request,previous_history)
+            job,result,pending,error=start_filter(snapshot,request,previous_history,refresh=explicit)
         if result is not None and not pending and not error:return completed_view(job,result)
         history=dict(context=[location_hash,selection],filter_key=request,pending=pending,job=job)
         if error:return in_scope(html.P(error,className='mispricing-error')),history
+        if not pending:return in_scope(html.P('This result expired. Run Quick Filtering again.',className='mispricing-error')),history
         return pending_view(history,filter_jobs.tasks.progress(job))
 
     app.clientside_callback("""function(page,category,history,location,selection){

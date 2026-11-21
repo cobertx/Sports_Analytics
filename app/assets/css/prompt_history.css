@@ -5,4 +5,7 @@
 .market-prompt > span { display: block; }
 .market-history-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .market-history-actions > div { display: flex; flex-direction: column; align-items: flex-start; }
-#historical-performance-panel { scroll-margin-top: 24px; }
+:is(#historical-performance-panel,#historical-market-return) { scroll-margin-top: 24px; }
+#historical-market-return { margin-bottom: var(--space-3,12px); }
+#historical-market-return:empty { display: none; }
+#historical-market-return .market-history-button { margin-top: 0; }

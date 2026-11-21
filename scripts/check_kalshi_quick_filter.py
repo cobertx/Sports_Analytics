@@ -60,9 +60,15 @@ class QuickLifecycleChecks(TestCase):
         values={'kalshi-quick-request':fixtures.quick_request(),'kalshi-quick-probability':0,'kalshi-quick-edge':-100,
                 'kalshi-quick-game-methods':['PPP'],'kalshi-quick-player-methods':['WHP'],'kalshi-context':stale,
                 'kalshi-games':dict(sport='NFL',games=[self.f.game])}
-        output=post(self.f.app,'kalshi_quick_scan',values,'kalshi-quick-request.data')['response']
+        client=self.f.app.server.test_client()
+        output=post(self.f.app,'kalshi_quick_scan',values,'kalshi-quick-request.data',client=client)['response']
         self.assertTrue(entered.wait(1))
         self.assertIn('kalshi-submitted-quick-progress',str(output['kalshi-quick-status']))
+        self.assertEqual(output['kalshi-quick-status']['children']['props']['data-quick-sequence'],'1')
+        sidebar=post(self.f.app,'poll_quick_monitor',{'quick-monitor-timer':1},
+                     'quick-monitor-timer.n_intervals',client=client)['response']
+        tracked,=sidebar['quick-monitor-state']['data']['jobs']
+        self.assertEqual((tracked['provider'],tracked['percent']),('Kalshi',5))
         scan=output['kalshi-quick-scan']['data']
         self.assertEqual(scan['scope'][:3],['NFL',self.f.game['id'],'live'])
         for _ in range(2):
@@ -80,6 +86,7 @@ class QuickLifecycleChecks(TestCase):
         output=post(self.f.app,'kalshi_quick_scan',values,'kalshi-quick-request.data')['response']
         self.assertIn('still loading',output['kalshi-quick-scan']['data']['error'])
         self.assertIn('still loading',str(output['kalshi-quick-status']))
+        self.assertEqual(output['kalshi-quick-status']['children']['props']['data-quick-sequence'],'1')
         self.f.exchange.all_quotes.assert_not_called()
 
     def test_pending_job_survives_availability_revision_and_discovery_metadata_updates(self):

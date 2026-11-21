@@ -16,9 +16,15 @@ def layout():
         ('probability','Calculated probability'),('edge','Edge (pp)'),('odds','Market odds'),
         ('implied','Market implied'),('weighting','Weighting'),('criteria','Applied criteria'),('quote_time','Quote snapshot'),('saved_at','Filtered at')]
     return html.Section([
-        html.Div([html.Div('MARKET DATA',className='eyebrow accent'),html.H2('Filtered Results'),
-            html.P('Qualifying selections saved by Quick Filtering across upcoming games. '
-                   'Sorted by calculated probability, then edge, highest first.')],className='panel market-heading'),
+        html.Div(
+            html.Div([
+                html.Div('MARKET DATA',className='eyebrow accent'),
+                html.H2('Filtered Results',id='filtered-results-title'),
+                html.P('Qualifying selections saved by Quick Filtering across upcoming games. '
+                       'Sorted by calculated probability, then edge, highest first.'),
+            ]),
+            className='panel market-heading',
+        ),
         html.Section([
             html.Div([
                 html.Div([html.Label('Saved runs',htmlFor='filtered-results-scope'),dcc.Dropdown(id='filtered-results-scope',
@@ -31,17 +37,22 @@ def layout():
                    'The latest-run view shows current-season weighting only. Earlier estimates remain labeled in All saved runs; rerun Quick Filtering to update them. '
                    'For multiple methods, probability and edge are the lowest values across the selected methods. '
                    'Games disappear from this view at their scheduled start. Opening this page reads local results only.',className='ppp-comparison-note'),
-            dash_table.DataTable(id='filtered-results-table',data=[],columns=[dict(id=key,name=label,
-                **({'presentation':'markdown'} if key=='open' else {'type':'numeric','format':{'specifier':'.2%'}}
-                   if key in {'probability','implied'} else {'type':'numeric','format':{'specifier':'+.2f'}}
-                   if key=='edge' else {'type':'numeric','format':{'specifier':'+.0f'}} if key=='odds' else {})) for key,label in columns],
-                markdown_options={'link_target':'_self'},cell_selectable=False,page_size=25,filter_action='native',
-                sort_action='native',sort_mode='multi',sort_by=[dict(column_id='probability',direction='desc'),dict(column_id='edge',direction='desc')],
-                tooltip_duration=None,style_table={'overflowX':'auto'},
-                style_cell=table_cell(minWidth='110px', maxWidth='290px', whiteSpace='normal', height='auto'),style_header=table_header()),
-        ],className='panel'),
+            html.Div(
+                dash_table.DataTable(id='filtered-results-table',data=[],columns=[dict(id=key,name=label,
+                    **({'presentation':'markdown'} if key=='open' else {'type':'numeric','format':{'specifier':'.2%'}}
+                       if key in {'probability','implied'} else {'type':'numeric','format':{'specifier':'+.2f'}}
+                       if key=='edge' else {'type':'numeric','format':{'specifier':'+.0f'}} if key=='odds' else {})) for key,label in columns],
+                    markdown_options={'link_target':'_self'},cell_selectable=False,page_size=25,filter_action='native',
+                    sort_action='native',sort_mode='multi',sort_by=[dict(column_id='probability',direction='desc'),dict(column_id='edge',direction='desc')],
+                    tooltip_duration=None,
+                    style_cell=table_cell(minWidth='110px', maxWidth='290px', whiteSpace='normal', height='auto'),style_header=table_header()),
+                className='filtered-results-table-region',role='region',tabIndex=0,
+                **{'aria-label':'Filtered results table'},
+            ),
+        ],className='panel filtered-results-body'),
         dcc.Interval(id='filtered-results-clock',interval=30000,disabled=True),
-    ],id='filtered-results-page',style={'display':'none'})
+    ],id='filtered-results-page',className='filtered-results',style={'display':'none'},
+        **{'aria-labelledby':'filtered-results-title'})
 
 
 def selection_label(row):

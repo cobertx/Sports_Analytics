@@ -78,7 +78,7 @@
 .summary-quote-tools > summary { cursor:pointer; color:var(--muted); }
 .summary-quote-tools .market-structure-button { max-width:100%; min-width:0; white-space:normal; text-align:left; }
 .summary-quick-ranking .criteria-evaluation { background:var(--selected,#12302f); border-color:var(--line); color:var(--text); }
-@media(min-width:1900px) { .app-shell:has(#market-summary-page[style*="grid"]) > main { max-width:2240px; } }
+@media(min-width:1900px) { .app-shell:has(#market-summary-page[style*="grid"]) { --workspace-max-width:2240px; } }
 .summary-scroll-hint { margin:8px 12px; color:var(--muted); font-size:11px; }
 @media(min-width:1900px) { .summary-scroll-hint { display:none; } }
 .summary-model-values > div { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 5px 0; }

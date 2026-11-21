@@ -170,6 +170,11 @@ def register(app, service, career_service, career_tasks, ncaaf_model_data, backt
         return (target.get('season',no_update),'regular',
                 target['name'] if target['sport']=='NCAAF' and target['kind']=='team' else no_update,None)
 
+    @scoped_callback(app,'historical',Output('historical-market-return','children'),Input('market-url','hash'))
+    def historical_market_return(location_hash):
+        origin = (history_target(location_hash) or {}).get('origin')
+        return html.A('Back to market', href=origin, className='market-history-button') if origin else None
+
     def college_player_history(season,phase,week):
         frame=backtesting_service.player_inputs('NCAAF')
         frame=frame[pd.to_numeric(frame.season,errors='coerce').eq(int(season)) & frame.season_type.eq(phase)].copy()
@@ -498,8 +503,6 @@ def register(app, service, career_service, career_tasks, ncaaf_model_data, backt
             hits,count,pushes=int(result.eq('Hit').sum()),int(result.notna().sum()),int(result.eq('Push').sum())
             scope=' pre-game' if target.get('as_of') else ''
             detail=f'{hits} hits / {count}{scope} appearances · {pushes} pushes'
-            if target.get('origin'):
-                detail=[detail+'. ',html.A('Back to market',href=target['origin'],className='market-history-button')]
             cards.append(kpi('PROMPT HIT RATE',f'{100*hits/count:.1f}%' if count else '—',detail))
             for record,index in zip(records,table.index):record['prompt_result']=result.loc[index]
             columns.append({'name':'Prompt result','id':'prompt_result'})

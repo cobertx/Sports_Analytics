@@ -40,12 +40,12 @@ def quote_version(sport,game,providers):
         for p,r in sorted(providers.items())]])
 
 
-def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast,pages=None,tasks=None,source_revision=None,*,draftkings=None):
+def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast,pages=None,tasks=None,source_revision=None,*,draftkings=None,quick_jobs=None):
     register_controls(app,'summary',single='summary-game-method',player_single='summary-player-method')
     quote_jobs=SummaryQuoteJobs()
     books={'FanDuel':markets,'DraftKings':draftkings or {}}
     from app.sections.market_summary.summary_filter_callbacks import register as register_quick
-    quick_chart_result=register_quick(app,quote_jobs,game_forecast,player_forecast,source_revision)
+    quick_chart_result=register_quick(app,quote_jobs,game_forecast,player_forecast,source_revision,quick_jobs)
     costs={provider:{sport:view.pull_estimate(sport,provider) for sport in SOURCES} for provider in books}
     app.clientside_callback("function(sport){return '#'+sport.toLowerCase()+'-draftkings-market';}",
         Output('draftkings-page-link','href'),Input('sport','value'))
@@ -463,24 +463,23 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                                    quick,completed,sport,page):
         if not selection:
             raise PreventUpdate
-        if page!='market-summary' or not reference or selection['bundle']!=reference['id'] or (
+        if page!='market-summary' or not reference or (
                 reference['sport']!=sport or str(reference['game']['id'])!=selected):
             return None
         location=quick_visibility.summary_location(reference,sport)
         def show(content):
+            setattr(content,'data-prop-chart-tab',view.QUICK if selection.get('job') else 'Player Props')
             return quick_visibility.scoped(prop_probability.clicked(content,selection),location,selected)
-        bundle=quote_jobs.resolve(reference)
-        if bundle is None:
-            return show(prop_probability.message('This saved market view expired. Select the game again to reload it.'))
         if category==view.QUICK and selection.get('job'):
-            if not quick or quick.get('job')!=selection['job']:
-                return None
-            ranked=quick_chart_result(quick,completed,sport)
+            ranked=quick_chart_result(quick,completed,sport,('summary',location,selected),selection)
             if not ranked:
                 return show(prop_probability.message('This result is unavailable. Run Quick Filtering again.'))
             return show(prop_probability.chart(selection['key'],ranked['player_lines']))
-        if category!='Player Props' or selection.get('job'):
+        if category!='Player Props' or selection.get('job') or selection['bundle']!=reference['id']:
             return None
+        bundle=quote_jobs.resolve(reference)
+        if bundle is None:
+            return show(prop_probability.message('This saved market view expired. Select the game again to reload it.'))
         models=stored_models(model_state)
         ready=analysis.current_models(models,bundle,method,player_method)
         rows=models['rows'] if ready else analysis.entries(bundle)

@@ -1,7 +1,8 @@
 """Rank saved game and player selections with the same probabilities as market tabs."""
 
 import math
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from itertools import islice
 from threading import Lock
 
 from dash import dcc, html
@@ -20,15 +21,15 @@ FILTER_CATEGORY = 'Mispricing'
 ALL_PROBABILITIES = dict(probability=-1, edge=-2)
 QUICK_DEFAULT_PROBABILITY = 80
 QUICK_DEFAULT_EDGE = 5
-_method_workers=ThreadPoolExecutor(max_workers=2,thread_name_prefix='market-filter')
+METHOD_WORKERS=2
+_method_workers=ThreadPoolExecutor(max_workers=METHOD_WORKERS,thread_name_prefix='market-filter')
 _college_preparation=Lock()
 
 
 def quick_controls(prefix, result_id):
     def field(label, control):
         return html.Div([html.Label(label, htmlFor=control.id), control], className='field')
-    starting = quick_progress(dict(percent=None,message='Submitting Quick Filtering…'),'kalshi-starting',
-                              hidden=True,**{'data-quick-scope':None}) if prefix=='kalshi' else None
+    starting = quick_start_progress(prefix)
     return html.Section([
         dcc.Interval(id=prefix+'-quick-poll',interval=500,disabled=True),
         html.H3('Quick Filtering'),
@@ -84,6 +85,11 @@ def quick_progress(progress, prefix, **props):
     ],id=prefix+'-quick-progress',className='quick-filter-progress',**props)
 
 
+def quick_start_progress(prefix):
+    return quick_progress(dict(percent=None,message='Starting Quick Filtering…'),prefix+'-starting',
+                          hidden=True,**{'data-quick-scope':None,'data-quick-starter':''})
+
+
 def quick_finish_progress(tasks, key, displayed):
     """Surface a missed forecast checkpoint before displaying a verified result."""
     if displayed is None or displayed >= FORECASTS_FINISHED:
@@ -106,10 +112,19 @@ def run_forecasts(tasks, sport, report=None):
                 values[key]=task()
                 forecast_progress(report,len(values),len(tasks))
     else:
-        pending = {_method_workers.submit(task):key for key,task in tasks.items()}
-        for future in as_completed(pending):
-            values[pending[future]]=future.result()
-            forecast_progress(report,len(values),len(tasks))
+        # Keep later methods from one scan out of the shared queue until a slot
+        # opens so another game's scan can use a worker without waiting for them.
+        remaining = iter(tasks.items())
+        pending = {_method_workers.submit(task):key for key,task in islice(remaining,METHOD_WORKERS)}
+        while pending:
+            completed, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in completed:
+                values[pending.pop(future)]=future.result()
+                forecast_progress(report,len(values),len(tasks))
+                next_method=next(remaining,None)
+                if next_method:
+                    key,task=next_method
+                    pending[_method_workers.submit(task)]=key
     return {key:values[key] for key in tasks}
 
 
@@ -197,8 +212,7 @@ def results(snapshot, ranked, criteria, errors=(), *, player_forecasts=None):
         row = item['row']
         label, action = prop_probability.row_action(selection_text(row), prop_probability.sportsbook_line(row), view, methods=methods)
         return html.Tr([
-            html.Td(rank),html.Td([label,*line_actions(snapshot,row,surface='quick-filter',
-                grouped=not row['market_key'].startswith('player_'))]),
+            html.Td(rank),html.Td([label,*line_actions(snapshot,row,surface='quick-filter',grouped=True)]),
             html.Td(MARKET_NAMES.get(row['market_key'],(row['market'],))[0]),
             html.Td(method_details(item)),html.Td(f"{row['odds']:+g}"),
             html.Td(probability_text(item['implied'])),html.Td(probability_text(item['probability'])),

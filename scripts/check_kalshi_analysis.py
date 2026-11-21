@@ -244,8 +244,8 @@ class KalshiFilterCallbacks(TestCase):
         for sport in ['NBA','NFL','NCAAF']:
             g=dict(self.game,sport=sport,events=['KX'+sport+'GAME-TEST'])
             self.assertEqual(view.categories(g),['Game Lines',FILTER])
-        self.assertTrue(any('kalshi-filter-panel.style' in entry['output'] and entry.get('clientside_function')
-                            for entry in self.app._callback_list))
+        _,_,tabs,_=self.cb['kalshi_game'](dict(sport='NFL',games=[self.game]),view.href('NFL',GAME),'NFL',None,None)
+        self.assertEqual([tab.value for tab in tabs if 'market-filter-tab-selected' in tab.selected_className.split()],[FILTER])
         quotes=next(c for c in components(self.app.layout) if getattr(c,'id',None)=='kalshi-quote-content')
         self.assertNotIn('Market odds use American format',str(quotes))
         self.assertNotIn('Market implied = ask price',str(quotes))
