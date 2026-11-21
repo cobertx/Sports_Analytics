@@ -7,7 +7,7 @@ from app.shell.navigation import scoped_callback
 from dash import ALL,Input,Output,State,ctx,dcc,html,no_update
 from dash.exceptions import PreventUpdate
 
-from sports_analytics.comparison import Comparisons,methods,page_route,selected_methods,compare_reports
+from sports_analytics.comparison import Comparisons,PENDING_STATES,methods,page_route,selected_methods,compare_reports
 from app.sections.research.comparison_view import render
 from app.sections.backtesting.backtesting_results import render as full_report,field
 from sports_analytics.data import DataSourceError
@@ -135,13 +135,16 @@ def register(app,backtesting):
                 return None,'Choose methods and run a comparison, or open previous simulations.',no_update,True
             pages[page_key]=manifest['id']
             active=sum(e['state'] in {'queued','running'} for e in manifest['entries'].values())
+            paused=sum(e['state'] in {'pausing','paused'} for e in manifest['entries'].values())
             complete=sum(e['state']=='completed' for e in manifest['entries'].values())
-            failed=len(manifest['entries'])-active-complete
-            status=f"{complete} of {len(manifest['entries'])} methods completed · {active} running · {failed} failed/interrupted."
+            failed=len(manifest['entries'])-active-paused-complete
+            status=(f"{complete} of {len(manifest['entries'])} methods completed · {active} running"
+                    +(f' · {paused} paused or pausing' if paused else '')+f' · {failed} failed/interrupted.')
             if active:status+=' Simulations continue when you visit another page.'
             elif complete:status+=' Comparison and method reports saved locally.'
             if triggered=='comparison-poll' and manifest==current:raise PreventUpdate
-            return manifest,status,pages if pages!=previous else no_update,not bool(active)
+            return manifest,status,pages if pages!=previous else no_update,not any(
+                e['state'] in PENDING_STATES for e in manifest['entries'].values())
         except (ValueError,TypeError,OSError,DataSourceError) as exc:
             return no_update,'Check comparison settings: '+str(exc),no_update,no_update
 

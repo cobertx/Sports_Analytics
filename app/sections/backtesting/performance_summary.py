@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 from app.sections.backtesting.backtesting_view import SPORTS,GROUPS,PERFORMANCE_ROUTE,available_models,model_config,model_name,summary_href
 from sports_analytics.backtesting_service import default_evaluation_games,evaluation_bounds,current_player_cohort,parse_lookback
 from app.sections.backtesting.backtesting_results import field,figure,range_accuracy,valid_prediction_interval
-from sports_analytics.comparison import Comparisons,compare_reports
+from sports_analytics.comparison import Comparisons,PENDING_STATES,compare_reports
 from sports_analytics.data import DataSourceError
 from sports_analytics.display_time import eastern_datetime,format_eastern
 from sports_analytics.history_freshness import active_season
@@ -128,7 +128,7 @@ class PerformanceSummaries(Comparisons):
                     defaults=default_config(sport,group,key)
                     if configured(defaults,params['config_overrides'])!=defaults:continue
             except (ValueError,TypeError):continue
-            yield key,dict(state='running',job_id=job['id'],percent=job['percent'],message=job['message'])
+            yield key,dict(state=job['state'],job_id=job['id'],percent=job['percent'],message=job['message'])
 
     def ensure(self,context,request,team):
         evaluation_bounds(request['start'],request['end'],self.backtesting.now())
@@ -136,7 +136,7 @@ class PerformanceSummaries(Comparisons):
             models=available_models(context['sport'],context['group'])
             previous=active=None
             running={}
-            pending_states={'queued','running'}
+            pending_states=PENDING_STATES
             for saved in self.history(context):
                 if saved.get('settings')!=request:continue
                 manifest=(self.refresh(context,saved['id']) if any(
@@ -177,7 +177,7 @@ class PerformanceSummaries(Comparisons):
                     entry.update(state='running',job_id=job)
                 except (ValueError,OSError,RuntimeError) as exc:entry.update(state='failed',message=str(exc))
                 self.save(manifest)
-            if self.watch and not active and any(e['state']=='running' for e in entries.values()):
+            if self.watch and not active and any(e['state'] in PENDING_STATES for e in entries.values()):
                 threading.Thread(target=self.follow,args=(dict(context),manifest['id']),daemon=True,
                                  name='performance-'+manifest['id'][:8]).start()
             return manifest
@@ -365,7 +365,7 @@ def render(manager,manifest,market,tolerance,basis='all'):
         report=reports.get(model.key)
         stamp=report.get('created_at') if report else None
         state=entry.get('state')
-        status={'completed':'Completed','queued':'Running','running':'Running'}.get(state,'')
+        status={'completed':'Completed','queued':'Running','running':'Running','pausing':'Pausing','paused':'Paused'}.get(state,'')
         label=model_name(model,context['sport'])
         if state in {'failed','interrupted','unsupported'}:
             issues.append(html.Li(f"{label} · {entry.get('message') or state.capitalize()}"))
@@ -470,7 +470,7 @@ def register(app,backtesting):
             else:
                 scope=settings(context,market,team,100)
                 previous=manager.refresh(context,pages[page]) if pages.get(page) else None
-                running=previous and any(e['state'] in {'queued','running'} for e in previous['entries'].values())
+                running=previous and any(e['state'] in PENDING_STATES for e in previous['entries'].values())
                 manifest=(previous if running and all(previous['settings'].get(k)==scope[k] for k in ('entity','team_filter','market'))
                           else manager.latest(context,market,team))
                 if not manifest:
@@ -478,12 +478,13 @@ def register(app,backtesting):
                 restore=True
             if manifest.get('source')!='latest-saved':pages[page]=manifest['id']
             running=sum(e['state'] in {'queued','running'} for e in manifest['entries'].values())
+            paused=sum(e['state'] in {'paused','pausing'} for e in manifest['entries'].values())
             complete=sum(e['state']=='completed' for e in manifest['entries'].values())
             reused=sum(e['state']=='completed' and e.get('reused',False) for e in manifest['entries'].values())
             status=(f'Latest saved backtests · {complete} models · Newest completed {format_eastern(manifest["created_at"])}.'
                     if manifest.get('source')=='latest-saved' else
                     f'{complete} models completed'+(f' ({reused} loaded from saved runs)' if reused else '')+
-                    f' · {running} running.' +
+                    f' · {running} running'+(f' · {paused} paused or pausing' if paused else '')+'.' +
                     (' Jobs continue while you visit another page.' if running else ''))
             if ctx.triggered_id=='performance-poll' and current==manifest:raise PreventUpdate
             request=manifest['settings']
@@ -492,7 +493,7 @@ def register(app,backtesting):
         except (ValueError,TypeError,OSError,DataSourceError) as exc:return no_update,str(exc),no_update,*unchanged
 
     app.clientside_callback('''function(context,state){return !context||!state||state.context.sport!==context.sport||
-        state.context.group!==context.group||!Object.values(state.entries).some(e=>e.state==='running'||e.state==='queued');}''',
+        state.context.group!==context.group||!Object.values(state.entries).some(e=>['running','queued','paused','pausing'].includes(e.state));}''',
         Output('performance-poll','disabled'),Input('performance-context','data'),Input('performance-state','data'))
 
     @scoped_callback(app,'backtesting',Output('performance-results','children'),Output('performance-rendered','data'),Input('performance-state','data'),

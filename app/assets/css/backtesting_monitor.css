@@ -25,6 +25,7 @@
 .backtest-job-percent { color: var(--accent); font-size: 12px; font-weight: 700; }
 .backtest-job-scope { font-size: 12px; margin: 8px 0 4px; overflow-wrap: anywhere; }
 .backtest-job-detail,.backtest-job-message { display: block; color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.backtest-job-control { margin-top: var(--space-2); }
 :is(.backtest-job,.quick-filter-progress) progress { display: block; width: 100%; height: 7px; margin: 9px 0 6px; border: 0; border-radius: 6px; overflow: hidden; accent-color: var(--accent); }
 :is(.backtest-job,.quick-filter-progress) progress::-webkit-progress-bar { background: var(--line); border-radius: 6px; }
 :is(.backtest-job,.quick-filter-progress) progress::-webkit-progress-value { background: var(--accent); border-radius: 6px; transition: width .3s; }

@@ -1,9 +1,11 @@
 """One local-data replay. Standard output carries only progress/result messages."""
 from contextlib import contextmanager, redirect_stdout
 import json
+import os
 import sys
 import threading
 from time import monotonic
+from .backtest_checkpoint import BacktestJournal, BacktestPaused, ReplayCheckpoint, job_lock
 
 
 @contextmanager
@@ -35,8 +37,12 @@ def main():
     output = sys.stdout
 
     def send(kind, **values):
-        output.write(json.dumps(dict(type=kind, **values), allow_nan=False) + '\n')
-        output.flush()
+        try:
+            output.write(json.dumps(dict(type=kind, **values), allow_nan=False) + '\n')
+            output.flush()
+        except (BrokenPipeError, OSError):
+            # An orphaned worker must release its replay lock and CPU slot.
+            os._exit(1)
 
     try:
         request = json.loads(sys.stdin.readline())
@@ -47,8 +53,18 @@ def main():
             from .service import DataService
             service = BacktestingService(root=request['root'], data=DataService(request['cache']),
                 now=lambda: pd.Timestamp(request['now']), publish_latest=False)
-            result = service.run(**request['parameters'], progress=progress)
+            job_id=request.get('job_id')
+            if job_id:
+                journal=BacktestJournal(service.root)
+                with job_lock(journal.job_dir(job_id)/'worker.lock',wait=True), journal.connect() as db:
+                    result=service.run(**request['parameters'],progress=progress,
+                                       _checkpoint=ReplayCheckpoint(db,job_id))
+            else:
+                result = service.run(**request['parameters'], progress=progress)
         send('result', result=result)
+        return 0
+    except BacktestPaused:
+        send('paused')
         return 0
     except Exception as exc:
         send('error', message=str(exc))

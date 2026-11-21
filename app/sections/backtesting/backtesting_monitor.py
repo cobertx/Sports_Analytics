@@ -1,4 +1,4 @@
-"""Sidebar overview of active app backtests."""
+"""Sidebar overview and controls for running and paused backtests."""
 from dash import dcc,html
 from app.sections.backtesting.backtesting_view import find_model,model_name
 from sports_analytics.backtesting_service import default_evaluation_games
@@ -32,6 +32,9 @@ def contents(jobs):
         games=params.get('limit') or default_evaluation_games(sport,params.get('entity','__all__'))
         target=(params.get('market') or '').removeprefix('player_').replace('_',' ').title()
         percent=int(job['percent'])
+        state=job['state']
+        action='resume' if state=='paused' else 'pause'
+        control='Pausing…' if state=='pausing' else action.capitalize()
         cards.append(html.Li([
             html.Div([html.Strong(f'{sport} · {key.upper()}'+(' · Research' if params.get('workspace')=='research' else ''),title=label),html.Span(f'{percent}%',className='backtest-job-percent')],
                 className='backtest-job-heading'),
@@ -39,5 +42,8 @@ def contents(jobs):
             html.Small(f'{games:,} games'+(' · '+target if target else ''),className='backtest-job-detail'),
             html.Progress(value=percent,max=100,**{'aria-label':f'{sport} {label}, {scope} progress'}),
             html.Small(job['message'],className='backtest-job-message'),
+            html.Button(control,id=dict(type='backtest-control',job=job['id'],action=action),
+                type='button',n_clicks=0,disabled=state=='pausing',className='export-button backtest-job-control',
+                **{'aria-label':f'{control} {sport} {label}, {scope}'}),
         ],className='backtest-job',**{'data-job-id':job['id']}))
     return html.Ul(cards,className='backtest-job-list',**{'aria-label':'Active runs'})

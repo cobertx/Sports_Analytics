@@ -9,8 +9,11 @@ import time
 from uuid import uuid4
 
 from .backtesting_service import diagnostics, evaluated_records, evaluation_bounds, parse_lookback
+from .backtest_checkpoint import ACTIVE_STATES
 from app.sections.backtesting.backtesting_view import CATALOG, GROUPS
 from models.Player_Stats.Weighted_Historical_Performance.historical_data import atomic_json
+
+PENDING_STATES=ACTIVE_STATES|{'queued'}
 
 
 def methods(group,sport=None):
@@ -47,7 +50,7 @@ class Comparisons:
                 # Keep following the jobs so their final references are retained.
                 time.sleep(.5)
                 continue
-            if not manifest or not any(e['state'] in {'queued','running'} for e in manifest['entries'].values()):return
+            if not manifest or not any(e['state'] in PENDING_STATES for e in manifest['entries'].values()):return
             time.sleep(.5)
 
     def path(self,context,identity):
@@ -134,7 +137,7 @@ class Comparisons:
             if not manifest:return None
             original=json.dumps(manifest,sort_keys=True)
             for key,entry in manifest['entries'].items():
-                if entry['state'] not in {'running','queued'}:continue
+                if entry['state'] not in PENDING_STATES:continue
                 job=self.backtesting.progress(entry.get('job_id'))
                 if job is None:
                     entry.update(state='interrupted',message='This run was interrupted. Run another comparison to retry.')
