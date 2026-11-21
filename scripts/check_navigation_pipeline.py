@@ -81,10 +81,33 @@ class NavigationPipelineChecks(TestCase):
         result=run_client(self.app,references=refs)
         self.assertEqual(result['checks'],len(refs))
 
+    def test_player_chart_requests_follow_a_matching_selection_and_forecast(self):
+        if not node():self.skipTest('Node unavailable; no dependencies installed')
+        route,stamp,category,method='#nfl-game-123','saved','Passing','WHP'
+        request=dict(click=7,context=[route,stamp,category])
+        history=dict(context=[route,stamp],view_key=[category,'PPP',method],
+                     player={method:dict(fit='ready-fit')})
+        output='market-prop-request.data-model-revision'
+        no={'_dash_no_update':'_dash_no_update'}
+        pending='[7,"WHP",false,false,null]'
+        ready='[7,"WHP",true,false,"ready-fit"]'
+        cases=[
+            ([None,None,route,stamp,category,method,'market',None],[no,{'display':'none'}]),
+            ([request,None,route,stamp,category,method,'market',None],[pending,{}]),
+            ([request,history,route,stamp,category,method,'market',pending],[ready,{}]),
+            ([request,history,route,stamp,category,method,'market',ready],[no,{}]),
+            ([request,history,'#nfl-game-124',stamp,category,method,'market',ready],[no,{'display':'none'}]),
+        ]
+        checks=run_client(self.app,references=[dict(output=output,args=args,expected=expected)
+                                              for args,expected in cases])
+        self.assertEqual(checks['checks'],len(cases))
+
     def test_scopes_wake_only_the_active_workspace_and_revisits_activate_once(self):
         if not node():self.skipTest('Node unavailable')
         result=run_client(self.app)
         for step in result['steps']:
+            self.assertTrue({'market_prop_probabilities','polymarket_distributions'}.isdisjoint(step['after']),
+                            step['label'])
             for name in step['after']:
                 metadata=next(item for item in graph(self.app) if item['name']==name)
                 scoped=[i['id'] for i in metadata['inputs'] if i['id'].startswith('nav-')]

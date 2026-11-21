@@ -45,17 +45,17 @@ def table(snapshot, include_rules=True):
 
 
 def register_distributions(app, game_forecast, player_forecast, tasks):
-    from app.shell.navigation import scoped_callback
     app.clientside_callback("function(state,page){return page!=='polymarket'||!state?.pending;}",
         Output('polymarket-model-poll','disabled'),Input('polymarket-distribution-state','data'),Input('workspace-page','value'))
-    @scoped_callback(app,'polymarket',Output('polymarket-game-distributions','children'),
+    @app.callback(Output('polymarket-game-distributions','children'),
         Output('polymarket-prop-result','children'),Output('polymarket-distribution-state','data'),
         Input('polymarket-quotes','data'),Input('polymarket-context','data'),Input('polymarket-category','value'),
         Input('polymarket-snapshot','value'),Input('polymarket-prop-request','data-selection'),
-        Input('workspace-page','value'),Input('market-url','hash'),Input('polymarket-model-poll','n_intervals'),
+        State('workspace-page','value'),State('market-url','hash'),Input('polymarket-model-poll','n_intervals'),
         State('polymarket-distribution-state','data'),prevent_initial_call=True)
     def polymarket_distributions(snapshot,game,category,selected,selection,page,location,_tick,previous):
-        if page!='polymarket' or not game or route(location)!=(game['sport'],game['id']):
+        if page!='polymarket':raise PreventUpdate
+        if not game or route(location)!=(game['sport'],game['id']):
             return [],None,None
         context=[game['sport'],game['id'],category]
         if not snapshot or [snapshot.get('sport'),snapshot.get('game_id'),snapshot.get('category')]!=context or (

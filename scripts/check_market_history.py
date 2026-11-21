@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase, main
 from unittest.mock import Mock, patch
+import json
 import sys
 import tempfile
 
@@ -72,10 +73,13 @@ class MarketHistoryChecks(TestCase):
                     self.assertFalse(any(getattr(c,'className',None)=='market-history-link' for c in components(outcome)))
                 for link in links:
                     target=history_target(link.href)
-                    self.assertEqual((target['sport'],target['market'],target['kind']),(sport,key,'player' if player else 'team'))
+                    self.assertEqual((target['sport'],target['market'],target['kind'],target['name']),
+                                     (sport,key,'player',subject))
                 if player:
-                    self.assertEqual(links[0].children,'Jerry Jeudy')
-                    self.assertIn(' - ',str(rendered[0].children[0]))
+                    header=rendered[0].children[0]
+                    self.assertIn(subject,header.children[0].children)
+                    self.assertEqual(links[0].children,'Player history')
+                    self.assertIn(links[0],list(components(header)))
         banner=game_header(dict(start='2026-10-25T17:00:00Z',home=dict(name='Cleveland Browns',abbreviation='CLE'),
                                away=dict(name='Baltimore Ravens',abbreviation='BAL')),sport='NFL')
         self.assertEqual(len([x for x in components(banner) if getattr(x,'className',None)=='market-history-link']),2)
@@ -110,6 +114,8 @@ class MarketHistoryChecks(TestCase):
                 for side,line in [('Under',35.5),('Over',40.5),('Over',30.5)]])
         sections=market_sections(snapshot,'Combos')
         link=next(node for node in components(sections) if getattr(node,'className',None)=='market-history-link')
+        action=json.loads(getattr(sections[0].children[0],'data-prop-chart'))
+        self.assertEqual(action['key'],['Player Props','player_points_rebounds_assists','player one',30.5,'gt',False])
         target=history_target(link.href)
         self.assertEqual((target['line'],target['compare'],target['push']),(30.5,'gt',True))
         self.assertEqual(target['origin'],'#nba-game-123')

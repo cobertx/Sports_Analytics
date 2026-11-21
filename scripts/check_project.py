@@ -16,6 +16,11 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+CHECKPOINT_PATHS = (
+    "sports_analytics/backtest_checkpoint.py",
+    "sports_analytics/backtest_inputs.py",
+    "scripts/check_backtest_resume.py",
+)
 
 
 def require(condition, message):
@@ -35,6 +40,10 @@ def check_layout():
                 "git mv Models __models_case_fix, then git mv __models_case_fix models, "
                 "and include the staged renames in your commit.")
         require(any(name.startswith("models/") for name in tracked), "Git must track the lowercase models/ package.")
+        missing = sorted(set(CHECKPOINT_PATHS) - set(tracked))
+        require(not missing, "Add the missing backtest checkpoint files to Git: " + ", ".join(missing))
+    missing = [path for path in CHECKPOINT_PATHS if not (ROOT / path).is_file()]
+    require(not missing, "Missing backtest checkpoint files: " + ", ".join(missing))
     names = {path.name for path in ROOT.iterdir()}
     require("models" in names and "Models" not in names, "Model directory must be named exactly models (lowercase).")
     require("requirements" in names, "Requirements belong under requirements/.")
@@ -89,6 +98,7 @@ def main():
         "sports_analytics.page_cache",
         "app.sections.historical.historical_view",
         "sports_analytics.backtesting_service", "app.sections.backtesting.backtesting_results",
+        "sports_analytics.backtest_checkpoint", "sports_analytics.backtest_inputs",
         "sports_analytics.backtest_process", "sports_analytics.backtest_worker",
         "app.sections.backtesting.backtesting_monitor",
         "sports_analytics.ncaaf_markets", "sports_analytics.whp_service",

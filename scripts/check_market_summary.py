@@ -12,7 +12,7 @@ from unittest import TestCase,main
 from unittest.mock import Mock,patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from dash import no_update
+from dash import dcc, no_update
 from dash._utils import to_json
 from dash.exceptions import PreventUpdate
 from models.Game_Outcome.PPP.PPP import MarketProbability,PPPForecast
@@ -59,6 +59,11 @@ def native_dom(value):
 def table_states(value):
     tables=[c for c in components(value) if isinstance(getattr(c,'id',None),dict) and c.id.get('type')=='summary-model-table']
     return [table.id for table in tables],[getattr(table,'data-rows') for table in tables]
+
+
+def chart_figure(chart):
+    return next(child.figure for child in chart.children if isinstance(child,dcc.Graph))
+
 
 START='2026-10-25T13:30:00Z'
 STAMP='2026-10-24T12:00:00Z'
@@ -130,7 +135,7 @@ class SummaryAnalysisChecks(TestCase):
         self.assertTrue(any({'DraftKings','Kalshi','Polymarket'}<=set(r['quotes']) for r in aligned))
         from app.sections.market_summary.summary_probability import panel
         charts=panel(source,result['rows'],'PPP')[-1].children
-        self.assertTrue(any(trace.name=='DraftKings implied' for chart in charts for trace in chart.children[1].figure.data))
+        self.assertTrue(any(trace.name=='DraftKings implied' for chart in charts for trace in chart_figure(chart).data))
 
     def test_game_line_charts_use_source_quotes_and_settlement_matched_forecasts(self):
         from app.sections.market_summary.summary_probability import panel
@@ -142,7 +147,7 @@ class SummaryAnalysisChecks(TestCase):
         with patch('sports_analytics.market_summary.availability_revision',return_value='fixture'):
             result=calculate(source,'PPP','WHP',lambda *args:(model,None),lambda *args:(None,None,{}))
         rendered=panel(source,result['rows'],'PPP')
-        charts={c.children[0].children.children:c.children[1].figure for c in rendered[-1].children}
+        charts={c.children[0].children.children:chart_figure(c) for c in rendered[-1].children}
         self.assertEqual(set(charts),{'Spread · New Orleans Saints','Game total · Over','Game total · Under'})
         traces={trace.name:trace for trace in charts['Game total · Over'].data}
         self.assertEqual(set(traces),{'PPP forecast','FanDuel implied','Kalshi implied','Polymarket implied'})
@@ -156,7 +161,7 @@ class SummaryAnalysisChecks(TestCase):
             self.assertEqual(list(quote.x),[47.5]);self.assertEqual(list(quote.y),[.5])
         market_only=panel(source,entries(source),'PPP',waiting=True)
         self.assertIn('Calculating the selected forecast',market_only[1].children)
-        self.assertTrue(all(trace.name.endswith('implied') for c in market_only[-1].children for trace in c.children[1].figure.data))
+        self.assertTrue(all(trace.name.endswith('implied') for c in market_only[-1].children for trace in chart_figure(c).data))
 
     def test_probability_highlights_skip_exact_thresholds_and_keep_unqualified_gaps(self):
         from app.sections.market_summary.summary_probability import panel
@@ -170,13 +175,14 @@ class SummaryAnalysisChecks(TestCase):
             row.update(probability=probability,edge=probability-row['implied'],method='PPP')
         criteria=dict(probability=.7,edge=.1)
         charts=panel(source,rows,'PPP',criteria=criteria)[-1].children
-        matched=charts[0].children[1].figure.data[-1]
+        matched=chart_figure(charts[0]).data[-1]
         self.assertEqual(matched.name,'Meets criteria')
         self.assertEqual(list(matched.y),[.8,None,.83])
         self.assertFalse(matched.connectgaps)
         self.assertEqual(matched.customdata[0][1:3],['FanDuel','PPP'])
         ranked=[{**rows[2],'probability':.76,'edge':.26,'method':'PPP / ELO'}]
-        quick=panel(source,rows,'PPP',criteria=criteria,quick_rows=ranked)[-1].children[0].children[1].figure.data[-1]
+        quick_chart=panel(source,rows,'PPP',criteria=criteria,quick_rows=ranked)[-1].children[0]
+        quick=chart_figure(quick_chart).data[-1]
         self.assertEqual(quick.name,'Quick Filtering matches')
         self.assertEqual(list(quick.y),[None,None,.76])
         self.assertEqual(quick.customdata[2][2],'PPP / ELO')

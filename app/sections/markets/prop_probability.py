@@ -99,7 +99,7 @@ def outlet(view):
     request = f'{view}-prop-request' if shared else dict(type='prop-chart-request', view=view)
     result = f'{view}-prop-result' if shared else dict(type='prop-chart-result', view=view)
     data = {'data-selection': None}
-    if view == 'kalshi':
+    if view in {'kalshi','market'}:
         data['data-model-revision'] = None
     attributes = {'data-prop-chart-result': view}
     result_panel = slot('summary', result, **attributes) if view == 'summary' else html.Div(id=result, **attributes)

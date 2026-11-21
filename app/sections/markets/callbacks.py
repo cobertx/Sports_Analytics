@@ -550,11 +550,26 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         history['rendered']=True
         return market_sections(snapshot, category, forecast, model_error, criteria, method), history
 
-    @scoped_callback(app,'market',Output('market-prop-result','children'),Input('market-prop-request','data-selection'),
-        Input('market-forecast-history','data'),Input('market-url','hash'),Input('market-snapshot','value'),
-        Input('market-category','value'),Input('player-forecast-method','value'),Input('workspace-page','value'),
+    app.clientside_callback('''function(request,history,hash,snapshot,category,method,page,previous){
+        const no=window.dash_clientside.no_update, scope=request?.context;
+        if(page!=='market'||!scope||scope[0]!==hash||scope[1]!==snapshot||scope[2]!==category)
+            return [no,{display:'none'}];
+        const matching=history?.context?.[0]===hash&&history.context[1]===snapshot&&
+            history.view_key?.[0]===category&&history.view_key?.[2]===method;
+        const revision=JSON.stringify([request.click,method,matching,matching&&!!history.pending,
+            matching?history.player?.[method]?.fit||null:null]);
+        return [revision===previous?no:revision,{}];
+    }''',Output('market-prop-request','data-model-revision'),Output('market-prop-result','style'),
+        Input('market-prop-request','data-selection'),Input('market-forecast-history','data'),Input('market-url','hash'),
+        Input('market-snapshot','value'),Input('market-category','value'),Input('player-forecast-method','value'),
+        Input('workspace-page','value'),State('market-prop-request','data-model-revision'))
+
+    @app.callback(Output('market-prop-result','children'),State('market-prop-request','data-selection'),
+        State('market-forecast-history','data'),State('market-url','hash'),State('market-snapshot','value'),
+        State('market-category','value'),State('player-forecast-method','value'),State('workspace-page','value'),
+        Input('market-prop-request','data-model-revision'),
         prevent_initial_call=True)
-    def market_prop_probabilities(request,history,location,selection,category,method,page):
+    def market_prop_probabilities(request,history,location,selection,category,method,page,_revision=None):
         from app.sections.markets import prop_probability
         from app.sections.markets.market_view import player_probability_chart
         if not request:raise PreventUpdate
