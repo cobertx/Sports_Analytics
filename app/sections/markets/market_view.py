@@ -20,7 +20,6 @@ from sports_analytics.parlay import quote_key
 from sports_analytics.historical_links import history_href
 from app.sections.markets.prompt_history import button as history_button
 from app.sections.market_structure.market_structure_link import line_actions
-from app.sections.markets.player_distribution import panel as distribution_panel
 from app.sections.markets import prop_probability
 from app.sections.information.availability_view import panel as availability_panel
 from app.sections.markets.lazy_markets import markets as lazy_markets
@@ -216,14 +215,14 @@ def player_probability_chart(snapshot, key, forecasts, *, waiting=False):
             implied, estimate, _ = _line_values(row, forecast)
             quotes.append(dict(comparison=outcome, provider=provider, method=method, implied=implied,
                                probability=estimate.probability if estimate else None))
-    return prop_probability.chart(key, quotes, waiting=waiting)
+    return prop_probability.chart(key, quotes, waiting=waiting, fits=forecasts)
 
 
-def _comparison_figure(snapshot, forecast, market_key, group, method="PPP", criteria=None):
+def _comparison_figure(snapshot, forecast, market_key, group, method="PPP", criteria=None, curve=None):
     spreads = market_key == "alternate_spreads"
     selected = sorted([row for row in snapshot["rows"] if row["market_key"] == market_key and row["line"] is not None
                        and (row["subject"] if spreads else row["selection"]) == group], key=lambda row: row["line"])
-    if not selected:
+    if not selected and curve is None:
         return None
     lines = [row["line"] for row in selected]
     city = group.rsplit(" ", 1)[0] if spreads else group
@@ -232,13 +231,14 @@ def _comparison_figure(snapshot, forecast, market_key, group, method="PPP", crit
     model_probabilities = [estimate.probability if estimate else None for _, estimate, _ in values]
     market_probabilities = [implied for implied, _, _ in values]
     figure = go.Figure()
-    if forecast:
+    if forecast and selected:
         figure.add_trace(go.Scatter(x=lines, y=model_probabilities, name=f"{method} probability", mode="lines+markers",
                                    line={"color": "#57dbc4", "width": 2.5}, marker={"size": 4},
                                    fill="tozeroy", fillcolor="rgba(87, 219, 196, 0.16)", connectgaps=False,
                                    customdata=labels,
                                    hovertemplate=f"%{{customdata}}<br>{method} %{{y:.2%}}<extra>%{{fullData.name}}</extra>"))
-    figure.add_trace(go.Scatter(x=lines, y=market_probabilities, name="Market implied probability", mode="lines+markers",
+    if selected:
+        figure.add_trace(go.Scatter(x=lines, y=market_probabilities, name="Market implied probability", mode="markers" if curve else "lines+markers",
                                line={"color": "#8197ff", "width": 2.5}, marker={"symbol": "diamond", "size": 5},
                                fill="tozeroy", fillcolor="rgba(129, 151, 255, 0.16)", connectgaps=False,
                                customdata=[[label, f"{row['odds']:+g}" if row["odds"] is not None else "Unreported"]
@@ -258,30 +258,40 @@ def _comparison_figure(snapshot, forecast, market_key, group, method="PPP", crit
                         for label, (implied, _, edge) in zip(labels, values)],
             hovertemplate=(f"%{{customdata[0]}}<br>{method} %{{y:.2%}}<br>Market %{{customdata[1]}}"
                            "<br>Edge %{customdata[2]}<extra>Meets criteria</extra>")))
+    if curve:
+        figure.add_trace(go.Scatter(x=curve[0],y=curve[1],name=f'{method} calculated distribution',
+            mode='lines',line=dict(color='#57dbc4',width=2.5,shape='hvh'),
+            hovertemplate='%{x:g}<br>%{y:.2%}<extra>%{fullData.name}</extra>'))
     figure.update_layout(**chart_style(), height=420,
                          margin={"l": 55, "r": 20, "t": 65, "b": 115},
                          legend={"orientation": "h", "y": 1.18, "font": {"size": 11}}, hovermode="x unified")
     ticks = list(range(0, len(lines), max(1, math.ceil(len(lines) / 6))))
-    if ticks[-1] != len(lines) - 1:
+    if ticks and ticks[-1] != len(lines) - 1:
         ticks.append(len(lines) - 1)
     figure.update_xaxes(title="Team handicap" if spreads else "Game total line (points)", gridcolor="#223047",
-                        tickmode="array", tickvals=[lines[index] for index in ticks], ticktext=[labels[index] for index in ticks],
-                        tickangle=-35, automargin=True)
-    figure.update_yaxes(title="Win probability, excluding pushes", tickformat=".0%", range=[0, 1], gridcolor="#223047")
+                        automargin=True)
+    if not curve:
+        figure.update_xaxes(tickmode="array",tickvals=[lines[index] for index in ticks],
+                            ticktext=[labels[index] for index in ticks],tickangle=-35)
+    figure.update_yaxes(title="Win probability", tickformat=".0%", range=[0, 1], gridcolor="#223047")
     if not forecast:
         figure.add_annotation(text=f"{method} estimate unavailable; market probabilities shown", x=.5, y=1.02,
                               xref="paper", yref="paper", showarrow=False)
+    elif not any(value is not None for value in market_probabilities):
+        figure.add_annotation(text="No comparable market prices for this side",x=.5,y=1.02,
+                              xref="paper",yref="paper",showarrow=False)
     return figure
 
 
 def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=None):
+    from app.sections.markets import game_distribution
     details = forecast.diagnostics if forecast else {}
     if forecast:
         last_date = date.fromisoformat(details["last_game_date"]).strftime("%m/%d/%Y") if details.get("last_game_date") else "—"
         status = (f"{method} forecast: {forecast.away_team} {forecast.away_mean:.1f} · {forecast.home_team} {forecast.home_mean:.1f} · "
                   f"Total {forecast.total_mean:.1f} · Home margin {forecast.margin_mean:+.1f}. "
                   f"{details.get('training_games', '—')} training games; {details.get('validation_games', '—')} held-out games. "
-                  f"As of {format_eastern(details['as_of'])}. Last training game {last_date}.")
+                  f"As of {format_eastern(details.get('as_of') or snapshot.get('pulled_at'))}. Last training game {last_date}.")
         if details.get("snapshot_after_kickoff"):
             status += " Pregame estimate; this market snapshot was captured after kickoff."
         if details.get("source_notices"):
@@ -321,26 +331,34 @@ def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=N
                        + methodology,
                        className="ppp-comparison-note")]
     charts = []
+    try:
+        distributions,_=game_distribution.distributions(forecast,snapshot,method) if forecast else ({},[])
+    except (AttributeError,ValueError,TypeError,OverflowError):
+        distributions={}
     for key, group, title in [
             ("alternate_spreads", snapshot["home_team"], "Spread probabilities by handicap"),
             ("alternate_spreads", snapshot["away_team"], "Spread probabilities by handicap"),
             ("alternate_totals", "Over", "Total points probabilities by line"),
             ("alternate_totals", "Under", "Total points probabilities by line")]:
-        figure = _comparison_figure(snapshot, forecast, key, group, method, criteria)
+        curve=game_distribution.curve(distributions,key,'gt' if group=='Over' else 'lt',home=group==snapshot['home_team'])
+        figure = _comparison_figure(snapshot, forecast, key, group, method, criteria, curve)
         if figure:
             charts.append(html.Section([html.Div(html.H2(f"{title} · {group}"), className="panel-heading"),
                                         dcc.Graph(figure=figure, config={"displaylogo": False})], className="panel ppp-chart",
                                        role='group', **{'aria-label':f'{title} · {group} probability comparison'}))
     children.append(html.Div(charts, className="ppp-comparison-grid"))
-    children.append(html.P("Curves show probabilities for each line, rather than probabilities that sum across alternate lines. "
-                           "Market lines connect quotes from the selected saved snapshot; estimates never trigger an odds pull.", className="ppp-comparison-note"))
+    children.append(html.P("The calculated curves show cover and total probabilities across outcomes. Market points are from the selected "
+                           "snapshot and include bookmaker margin. Forecasts at whole-point quotes exclude pushes.", className="ppp-comparison-note"))
     if criteria:
         children.append(html.P("Gold segments and markers meet both applied criteria using the selected forecast method.",
                                className="ppp-comparison-note"))
-    return html.Div(children, className="ppp-comparison")
+    if not charts:children.append(html.P('No comparable spread or total quotes are available.',className='chart-note'))
+    return html.Section([html.H2('Game outcome distributions'),*children],
+                        className="ppp-comparison"+(" market-quotes-only" if not forecast else ""))
 
 
-def market_sections(snapshot, category, forecast=None, model_error=None, criteria=None, method="PPP", *, loading=False,lazy=True):
+def market_sections(snapshot, category, forecast=None, model_error=None, criteria=None, method="PPP", *,
+                    loading=False,lazy=True,prop_context=None):
     player_method = method in {"WHP", "UO", "OAM", "PGE", "PTR", "ILA"}
     groups = OrderedDict()
     row_indices = {id(row):index for index,row in enumerate(snapshot['rows'])}
@@ -353,8 +371,12 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
     view=lazy_markets.view() if lazy else None
     prop_view = prop_panel = None
     if any(player and any(prop_probability.sportsbook_line(row) for row in rows) for (_, player), rows in groups.items()):
-        prop_view, prop_panel = prop_probability.mount(
-            lambda selected, _: player_probability_chart(snapshot, selected, {method: forecast}, waiting=loading))
+        if prop_context:
+            prop_view='market'
+        else:
+            prop_view, prop_panel = prop_probability.mount(
+                lambda selected, _: player_probability_chart(snapshot, selected, {method: forecast}, waiting=loading))
+    prop_action_context={'context':prop_context} if prop_context else {}
     evaluated = 0
     matched_counts = {"alternate_spreads": 0, "alternate_totals": 0}
     for index, ((key, player), rows) in enumerate(groups.items()):
@@ -366,10 +388,10 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
             # A ladder header opens the first displayed selection. Each row's
             # Historical Data button continues to carry its own exact threshold.
             prompt_link=history_button(snapshot,rows[0])
-            link=html.A(player,href=getattr(prompt_link,'href',None) or history_href(sport,'player',player,key,snapshot),
+            link=html.A('Player history',href=getattr(prompt_link,'href',None) or history_href(sport,'player',player,key,snapshot),
                         className='market-history-link',
                         title=f"View {player} history for {selection_text(rows[0])}; use a row's Historical Data button for another line")
-            title=[link,' - ',MARKET_NAMES.get(key,(rows[0]['market'],''))[0]]
+            title=[player,' - ',MARKET_NAMES.get(key,(rows[0]['market'],''))[0],' ',link]
         else:title=rows[0]['market']
         comparison = key in {"alternate_spreads", "alternate_totals"} or (player_method and key.startswith("player_"))
         values = {id(row): _line_values(row, forecast) for row in rows} if comparison else {}
@@ -402,7 +424,8 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 title='Add or remove this saved selection in the parlay slip',
                 **{'aria-label':f"Add {selection_text(row)} at {price} to parlay",'aria-pressed':'false'})
             selection = selection_text(row)
-            label, action = prop_probability.row_action(selection, prop_probability.sportsbook_line(row), prop_view)
+            label, action = prop_probability.row_action(selection, prop_probability.sportsbook_line(row), prop_view,
+                                                       **prop_action_context)
             actions = line_actions(snapshot, row, grouped=not row['market_key'].startswith('player_'))
             description = html.Div([label, *actions], className='market-selection market-prompt')
             if comparison:
@@ -428,16 +451,15 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
                 description,
                 price_button,
             ], className="market-outcome", **action)
-        def body(count,rows=rows,outcome=outcome,key=key,player=player):
-            return [html.Div([outcome(row) for row in rows[:count]],className='market-outcomes'),
-                    distribution_panel(rows,forecast,method,market_section_id(snapshot,key,player),
-                        MARKET_NAMES.get(key,(rows[0]['market'],rows[0]['market']))[1])
-                    if player and player_method and not loading else None]
+        def body(count,rows=rows,outcome=outcome):
+            return html.Div([outcome(row) for row in rows[:count]],className='market-outcomes')
+        prop_key=next((line for row in rows if (line:=prop_probability.sportsbook_line(row)) is not None),None) if player else None
         sections.append(html.Details([
             html.Summary([html.Strong(title),
                           html.Span(f"{match_count} matches", className="criteria-match-count") if match_count else
                           html.Span("no match", className="criteria-no-match-count") if no_match else None,
-                          html.Span("⌄", className="market-chevron", **{"aria-hidden": "true"})]),
+                          html.Span("⌄", className="market-chevron", **{"aria-hidden": "true"})],
+                         **prop_probability.block_action(prop_key,prop_view,**prop_action_context)),
             html.Div([html.Span(label) for label in ["Selection", "Market odds", "Market implied", f"{method} probability", f"{method} fair odds", "Edge"]],
                      className="market-comparison-heading market-line-comparison") if comparison else None,
             html.P('Calculated probability unavailable: '+unavailable_reason, className='mispricing-error', role='status')
@@ -479,8 +501,8 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
             sections.insert(0,availability_panel(forecast))
     if loading:
         sections.insert(0,indicator('Quotes are ready. Calculating the selected forecast in the background…'))
-    if not loading and category == "Game" and any(row["market_key"] in {"alternate_spreads", "alternate_totals"} for row in snapshot["rows"]):
-        sections.append(ppp_comparison(snapshot, forecast, model_error, method, criteria))
+    if category == "Game":
+        sections.append(ppp_comparison(snapshot, forecast, 'Calculating the selected forecast…' if loading else model_error, method, criteria))
     if prop_panel is not None:
         sections.append(prop_panel)
     return sections or [html.P("No saved selections in this category.", className="saved-market-empty")]

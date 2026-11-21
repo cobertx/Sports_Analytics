@@ -3,6 +3,7 @@ from pathlib import Path
 from statistics import NormalDist
 from types import SimpleNamespace
 import sys
+import json
 from unittest import TestCase,main
 from unittest.mock import patch
 
@@ -68,11 +69,10 @@ class PlayerDistributionChecks(TestCase):
         bounded=distribution(PaceForecast.from_samples([5,5]),[1e15])
         self.assertEqual(bounded['x'][-1],5)
 
-    def test_each_header_has_lazy_method_specific_payload_and_no_eager_graphs(self):
+    def test_each_header_selects_its_ladder_without_mounting_eager_charts(self):
         rows=[dict(market_key='player_points_alternate',subject=player,group='Points',market='Alt Points',
             selection='Over',line=6.5,odds=-110) for player in ['Player A','Player B']]
         snapshot=dict(sport='NBA',game_id='123',pulled_at='2026-10-29T12:00:00Z',rows=rows)
-        ids=[]
         for method,kind in [('WHP',None),('UO',UsageOpportunityForecast),('OAM',MatchupForecast),('PGE',PaceForecast)]:
             fitted=kind.from_samples([5,7,7,8]) if kind else WHPForecast(6,4,'normal',True,[],[])
             forecast=SimpleNamespace(forecasts={(row['subject'],'player_points'):fitted for row in rows},
@@ -80,13 +80,17 @@ class PlayerDistributionChecks(TestCase):
             with patch('requests.sessions.Session.request',side_effect=AssertionError('No HTTP')):
                 content=market_sections(snapshot,'Points',forecast,method=method)
             nodes=list(components(content))
-            stores=[node for node in nodes if isinstance(node,dcc.Store)]
-            self.assertEqual(len(stores),2)
+            self.assertFalse(any(isinstance(node,dcc.Store) for node in nodes))
             self.assertFalse(any(isinstance(node,dcc.Graph) for node in nodes))
-            self.assertTrue(all(store.data['method']==method for store in stores))
-            self.assertEqual({store.data['player'] for store in stores},{'Player A','Player B'})
-            ids.extend(store.id['key'] for store in stores)
-        self.assertEqual(len(ids),len(set(ids)))
+            headers=[json.loads(getattr(node,'data-prop-chart')) for node in nodes
+                     if node.__class__.__name__=='Summary' and getattr(node,'data-prop-chart',None)]
+            self.assertEqual({action['key'][2] for action in headers},{'player a','player b'})
+            from app.sections.markets.prop_probability import _views
+            for action in headers:
+                result=_views[action['view']](action['key'],action)
+                graph=next(node.figure for node in components(result) if isinstance(node,dcc.Graph))
+                self.assertTrue(any(trace.name==method+' calculated distribution' for trace in graph.data))
+                self.assertTrue(any(trace.name=='FanDuel implied' for trace in graph.data))
         unavailable=market_sections(snapshot,'Points',None,method='WHP',loading=True)
         self.assertFalse(any(isinstance(node,dcc.Store) for node in components(unavailable)))
 
@@ -100,11 +104,39 @@ class PlayerDistributionChecks(TestCase):
             fixture.player_services[method].forecast.return_value=SimpleNamespace(
                 forecasts=fitted_rows,selection=lambda row:fitted.market(row['line'],row['selection']))
             shown,_=fixture.cb['show_saved_markets']('Passing',fixture.saved['pulled_at'],'#nfl-game-123',None,'PPP',method,None)
-            payloads=[node.data for node in components(shown) if isinstance(node,dcc.Store)]
-            self.assertEqual(len(payloads),2)
-            self.assertTrue(all(payload['method']==method for payload in payloads))
-            self.assertTrue(all(payload['mass']==distribution(fitted)['mass'] for payload in payloads))
+            headers=[json.loads(getattr(node,'data-prop-chart')) for node in components(shown)
+                     if node.__class__.__name__=='Summary' and getattr(node,'data-prop-chart',None)]
+            self.assertTrue(headers)
+            self.assertFalse(any(isinstance(node,dcc.Graph) for node in components(shown)))
+            from app.sections.markets.prop_probability import _views
+            for action in headers:
+                result=_views[action['view']](action['key'],action)
+                graph=next(node.figure for node in components(result) if isinstance(node,dcc.Graph))
+                trace=next(trace for trace in graph.data if trace.name==method+' calculated distribution')
+                value=trace.y[list(trace.x).index(6.5)]
+                self.assertAlmostEqual(value,fitted.market(6.5,'Over' if action['key'][4]=='gt' else 'Under').win)
             fixture.player_services[method].forecast.assert_called_once()
+
+    def test_selected_player_chart_uses_new_model_when_the_quote_view_finishes(self):
+        from app.sections.markets.prop_probability import sportsbook_line
+        fixture=mispricing_fixtures.MispricingChecks();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        category='Passing';location='#nfl-game-123';selected=fixture.saved['pulled_at']
+        row=next(row for row in fixture.saved['rows'] if row['group']==category and sportsbook_line(row))
+        key=sportsbook_line(row)
+        fitted=UsageOpportunityForecast.from_samples([55,66,78])
+        fixture.player_services['WHP'].forecast.return_value=SimpleNamespace(
+            forecasts={(row['subject'],key[1]):fitted},
+            selection=lambda row:fitted.market(row['line'],row['selection']))
+        click=dict(key=key,click=1,context=[location,selected,category])
+        callback=fixture.cb['market_prop_probabilities']
+        pending=callback(click,None,location,selected,category,'WHP','market')
+        self.assertIn('Calculating the selected forecast',str(pending))
+        self.assertIn('FanDuel implied',str(pending))
+        _,history=fixture.cb['show_saved_markets'](category,selected,location,None,'PPP','WHP',None)
+        completed=callback(click,history,location,selected,category,'WHP','market')
+        self.assertIn('WHP calculated distribution',str(completed))
+        self.assertIn('FanDuel implied',str(completed))
+        self.assertIsNone(callback(click,history,location,selected,'Game','WHP','market'))
 
 
 if __name__=='__main__':main()

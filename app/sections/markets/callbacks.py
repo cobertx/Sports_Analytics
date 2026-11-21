@@ -480,6 +480,7 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                   Input("market-forecast-method", "value"), Input("player-forecast-method", "value"),
                   State("market-forecast-history", "data"),State('workspace-page','value'),Input('market-model-poll','n_intervals'),Input('history-update-poll','n_intervals'))
     def show_saved_markets(category, selection, location_hash, criteria, method, player_method, previous_history,page=None,_model_tick=None,_history_tick=None):
+        from app.sections.markets import prop_probability
         if (page is not None and page!='market') or not market_game_id(location_hash):raise PreventUpdate
         if category is None:
             raise PreventUpdate
@@ -536,17 +537,45 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
             if pending and resume and ctx.triggered_id=='market-model-poll':return no_update,no_update
             if pending or calculated is None:
                 return market_sections(snapshot,category,model_error=error,method=player_method if category!='Game' else method,
-                    criteria=criteria,loading=pending),history
+                    criteria=criteria,loading=pending,prop_context=[*context,category]),history
             forecast,model_error,record=calculated
         else:forecast,model_error,record=calculate_view()
         if category != "Game":
-            record={**record,'category':category}
+            record={**record,'category':category,'fit':prop_probability.remember_fit(forecast)}
             history['player'][player_method]=record
             history['rendered']=True
-            return market_sections(snapshot, category, forecast, model_error, criteria, player_method), history
+            return market_sections(snapshot, category, forecast, model_error, criteria, player_method,
+                                   prop_context=[*context,category] if page is not None else None), history
         history['game'][method]=record
         history['rendered']=True
         return market_sections(snapshot, category, forecast, model_error, criteria, method), history
+
+    @scoped_callback(app,'market',Output('market-prop-result','children'),Input('market-prop-request','data-selection'),
+        Input('market-forecast-history','data'),Input('market-url','hash'),Input('market-snapshot','value'),
+        Input('market-category','value'),Input('player-forecast-method','value'),Input('workspace-page','value'),
+        prevent_initial_call=True)
+    def market_prop_probabilities(request,history,location,selection,category,method,page):
+        from app.sections.markets import prop_probability
+        from app.sections.markets.market_view import player_probability_chart
+        if not request:raise PreventUpdate
+        if (page!='market' or not market_game_id(location) or category in {'Game',FILTER_CATEGORY,ADDITIONAL_INFORMATION}
+                or request.get('context')!=[location,selection,category]):
+            return None
+        method=method or 'WHP'
+        snapshot=saved_snapshot(location,selection)
+        if not snapshot:
+            return prop_probability.clicked(prop_probability.message('The saved snapshot is unavailable.'),request)
+        history=history or {}
+        scope=history.get('view_key') or []
+        matching=history.get('context')==[location,selection] and scope[:1]==[category] and scope[2:3]==[method]
+        waiting=not matching or history.get('pending',False)
+        record=(history.get('player') or {}).get(method,{})
+        fit=prop_probability.stored_fit(record.get('fit')) if matching and record.get('category')==category else None
+        if fit is None and matching and not waiting and history.get('job'):
+            cached=market_page_tasks.peek(history['job'])
+            if cached:fit=cached[0]
+        content=player_probability_chart(snapshot,request['key'],{method:fit},waiting=waiting)
+        return prop_probability.clicked(content,request)
 
     def exchange_source_revision(game,method,player_method):
         sport=game['sport']

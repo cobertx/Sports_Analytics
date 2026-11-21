@@ -146,6 +146,8 @@ def layout(provider='Kalshi'):
         *([dcc.Store(id='kalshi-models'),dcc.Store(id='kalshi-applied-criteria'),
            dcc.Store(id='kalshi-filter-quotes'), dcc.Store(id='kalshi-quick-request'),dcc.Store(id='kalshi-quick-scan'),
            dcc.Store(id='kalshi-quick-state')] if not polymarket else []),
+        *([dcc.Store(id='polymarket-distribution-state'),
+           dcc.Interval(id='polymarket-model-poll',interval=750,disabled=True)] if polymarket else []),
         dcc.Interval(id=f'{prefix}-list-timer', interval=60000, disabled=True),
         dcc.Interval(id=f'{prefix}-quote-timer', interval=1000*default_frequency, disabled=True),
         dcc.Store(id=f'{prefix}-cache-state'),dcc.Interval(id=f'{prefix}-cache-poll',interval=1500,disabled=True),
@@ -180,7 +182,6 @@ def layout(provider='Kalshi'):
                 ],className='exchange-update-status'),
                 html.Div(className='exchange-sections-transition'),
                 html.Div(id=f'{prefix}-market-sections'),
-                html.Div(id='kalshi-game-distributions') if not polymarket else None,
                 html.Details([html.Summary('Detailed quote table & CSV export'),
                   dash_table.DataTable(id=f'{prefix}-table', columns=columns, data=[], page_size=20, sort_action='native',
                     filter_action='native', export_format='csv', tooltip_duration=None,
@@ -190,8 +191,9 @@ def layout(provider='Kalshi'):
                     id=f'{prefix}-detail-table',open=False,className='panel kalshi-detail-table'),
                 html.Details([html.Summary('Contract rules, payout & settlement'), html.Div(id=f'{prefix}-rules')],
                              id=f'{prefix}-rules-panel',open=False,className='panel kalshi-rules'),
+                html.Div(id=f'{prefix}-game-distributions'),
             ], id=f'{prefix}-quote-content'),
-            prop_probability.outlet('kalshi') if not polymarket else None,
+            prop_probability.outlet(prefix),
         ], id=f'{prefix}-detail', style={'display': 'none'}, className='sportsbook-view kalshi-sportsbook'),
         html.Details([html.Summary('API connection & update speed'),
             html.P([f'This page uses {provider}’s ', html.A('public market-data REST API',
@@ -312,12 +314,12 @@ def odds_text(probability):
     return '+∞' if probability==0 else '−∞' if probability==1 else '—'
 
 
-def prop_outcome(row, sport, side):
-    from sports_analytics.market_summary import comparison
-    target = adapter(row, sport, ())
+def prop_outcome(row, sport, side, snapshot=None, provider='Kalshi'):
+    from sports_analytics.market_summary import comparison,polymarket_target
+    target=polymarket_target(snapshot,row) if provider=='Polymarket' else adapter(row,sport,())
     if not target or not target[0]['market_key'].startswith('player_'):
         return None
-    return comparison(*target, side, 'Kalshi', sport, ())
+    return comparison(*target, side, provider, sport, ())
 
 
 def prop_lines(rows, sport):
@@ -329,6 +331,17 @@ def prop_lines(rows, sport):
             if outcome:
                 yield dict(comparison=outcome, provider='Kalshi', method=row.get('model_method'),
                            probability=row.get(side+'_probability'), implied=implied(row, side))
+
+
+def prop_chart_key(row,snapshot,provider,side):
+    if not snapshot or (provider=='Kalshi' and not player_market(row,snapshot['sport'])):
+        return None
+    return prop_probability.player_line(prop_outcome(row,snapshot['sport'],side,snapshot,provider))
+
+
+def prop_chart_context(snapshot):
+    return dict(context=[snapshot['sport'],snapshot['game_id'],snapshot.get('category')],
+                snapshot=(snapshot.get('view_scope') or [None])[0])
 
 
 def comparison_rows(row,snapshot=None,provider='Kalshi'):
@@ -343,11 +356,8 @@ def comparison_rows(row,snapshot=None,provider='Kalshi'):
         label=row.get(side+'_label') or side.title()
         display=row.get('_display_label') or formatter(row,side,snapshot)[0]
         action={}
-        if not polymarket and snapshot and player_market(row,snapshot['sport']):
-            key=prop_probability.player_line(prop_outcome(row,snapshot['sport'],side))
-            display,action=prop_probability.row_action(display,key,'kalshi',
-                context=[snapshot['sport'],snapshot['game_id'],snapshot.get('category')],
-                snapshot=(snapshot.get('view_scope') or [None])[0])
+        if key:=prop_chart_key(row,snapshot,provider,side):
+            display,action=prop_probability.row_action(display,key,provider.lower(),**prop_chart_context(snapshot))
         result.append(html.Div([
             html.Div([html.Span(display,className='market-selection'),
                       html.Small('Previously loaded quote · '+str(row.get('quote_fetched_at') or 'timestamp unavailable'),
@@ -402,10 +412,12 @@ def market_sections(snapshot, provider='Kalshi', *,lazy=True,view_id=None):
             from sports_analytics.polymarket_labels import section_title
             title=section_title(title)
         rows = selection_rows(rows,snapshot,provider)
+        chart_key=next((key for row in rows if (key:=prop_chart_key(row,snapshot,provider,row.get('_display_side','yes')))),None)
         # Stable keys and unchanged open props preserve native accordion state
         # while live quote values update, including the nested "Show more" list.
         sections.append(html.Details([
-            html.Summary([html.Strong(title),html.Span('⌄',className='market-chevron',**{'aria-hidden':'true'})]),
+            html.Summary([html.Strong(title),html.Span('⌄',className='market-chevron',**{'aria-hidden':'true'})],
+                         **prop_probability.block_action(chart_key,provider.lower(),**prop_chart_context(snapshot))),
             html.Div([
                 html.Div([html.Span(label) for label in
                     (['Selection','Market odds','Market implied probability','Calculated probability','Model fair odds','Edge'] if not polymarket else

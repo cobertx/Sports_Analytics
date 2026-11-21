@@ -329,6 +329,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     register_kalshi_analysis(app,kalshi_service,forecast_game_markets,forecast_player_markets,filtered_results_service,
                             jobs=filter_jobs,tasks=market_page_tasks,source_revision=exchange_source_revision)
     register_kalshi_callbacks(app,polymarket_service,view=polymarket_view,provider='Polymarket',pages=exchange_pages.get('Polymarket'))
+    polymarket_view.register_distributions(app,forecast_game_markets,forecast_player_markets,market_page_tasks)
     register_market_summary(app,schedule_service,market_services,kalshi_service,polymarket_service,forecast_game_markets,forecast_player_markets,
                             pages=exchange_pages,tasks=market_page_tasks,source_revision=exchange_source_revision,
                             draftkings=draftkings_services,quick_jobs=filter_jobs.tasks)

@@ -9,6 +9,15 @@ from dash import ClientsideFunction, Input, MATCH, Output, State, dcc, html
 from models.Player_Stats.Usage_Opportunity.markets import prop_key
 
 
+def threshold_curve(payload, *, above=True, reverse_axis=False):
+    """Exact threshold probabilities on half-point lines, where pushes cannot occur."""
+    x=[value+.5 for value in payload['x']]
+    y=[1-value for value in payload['cumulative']] if above else payload['cumulative']
+    if reverse_axis:
+        return [-value for value in reversed(x)], list(reversed(y))
+    return x,y
+
+
 def distribution(forecast, lines=()):
     """Keep exact empirical support; analytic tails are shown without rescaling."""
     mean,sd=float(forecast.mean),math.sqrt(float(forecast.variance))

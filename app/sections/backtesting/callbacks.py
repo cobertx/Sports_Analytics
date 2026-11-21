@@ -107,9 +107,15 @@ def register(app, backtesting_service):
                     'Insufficient training history may cause skips.'+note)
         except (DataSourceError,OSError,ValueError,TypeError) as exc:return str(exc)
 
+    job_controls=dict(type='backtest-control',job=ALL,action=ALL)
     @app.callback(Output('backtest-monitor-jobs','data'),Input('backtest-monitor-timer','n_intervals'),
-                  Input('backtest-job','data'),State('backtest-monitor-jobs','data'))
-    def poll_backtest_monitor(_tick,_job,previous):
+                  Input('backtest-job','data'),State('backtest-monitor-jobs','data'),
+                  Input(job_controls,'n_clicks'),State(job_controls,'id'))
+    def poll_backtest_monitor(_tick,_job,previous,clicks=None,controls=None):
+        action=ctx.triggered_id if clicks else None
+        if isinstance(action,dict) and any(c==action and n for c,n in zip(controls or [],clicks)):
+            if action['action']=='pause':backtesting_service.pause(action['job'])
+            elif action['action']=='resume':backtesting_service.resume(action['job'])
         jobs=backtesting_service.active_jobs()
         if jobs==previous:raise PreventUpdate
         return jobs
@@ -204,10 +210,16 @@ def register(app, backtesting_service):
                 line=line if context['group']=='player-stats' else None,include_playoffs=playoffs=='include',lookback=lookback,
                 display_label=label,**extra)
             entry['job_id']=job_id
+            job=backtesting_service.progress(job_id)
+            if job and job['state']=='paused':
+                return remember(no_update,job['message'],job_id,False,job['percent'],
+                                f'{job["percent"]}% · Paused',False,'Run another backtest')
             return remember(no_update,'Running backtest. You can change the controls and start another run.',job_id,False,0,'0% · Preparing saved inputs',False,'Run another backtest')
         # A page's remembered job takes precedence over the shared visible job
         # slot, which can still belong to the page we just navigated away from.
         job_id=entry.get('job_id') or (None if restoring else job_id)
+        if restoring and not job_id and not entry.get('run_id'):
+            job_id=backtesting_service.active_job_for_page(context)
         if not job_id and not restoring:raise PreventUpdate
         job=backtesting_service.progress(job_id) if job_id else None
         if job is not None and any(job['parameters'].get(k)!=context[c] for k,c in [('sport','sport'),('group','group'),('key','model')]):
@@ -235,7 +247,8 @@ def register(app, backtesting_service):
     def show_backtest_results(result,context,target):
         if (not result or not context or any(result.get('context',{}).get(k)!=context[k] for k in ['sport','group','model'])):
             return empty_backtesting_results(),True
-        return render_backtesting_results(result,target if target in {'margin','total'} else 'margin'),False
+        return render_backtesting_results(result,target if target in {'margin','total'} else 'margin',
+            player_metadata=backtesting_service.saved_player_metadata),False
 
     @app.callback(Output('backtest-download','data'),Input('backtest-export','n_clicks'),
                   State('backtest-result','data'),State('backtest-context','data'),State('backtest-target','value'),prevent_initial_call=True)

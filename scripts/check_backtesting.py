@@ -61,6 +61,85 @@ def saved_game_report(run_id='a'*64,created='2025-10-01T12:00:00Z'):
 
 
 class ReplayChecks(TestCase):
+    def test_team_breakdown_counts_both_sides_and_uses_the_selected_target(self):
+        from app.sections.backtesting.backtesting_results import accuracy_breakdown,render
+        from sports_analytics.backtesting_service import evaluated_records
+        report=saved_game_report()
+        report['records'][0].update(margin_interval=[4,5],total_interval=[170,180])
+        report['records'][1].update(label='C @ A',margin_interval=[1,2],total_interval=[200,201],
+                                   probability=None,event_actual=None)
+        rows={}
+        for target in ('margin','total'):
+            breakdown=accuracy_breakdown(evaluated_records(report,target),report['context'],.8)
+            rows[target]={r['name']:r for r in breakdown.children[2].children[1].data}
+        self.assertEqual(rows['margin']['A']['range_samples'],'1 / 2')
+        self.assertEqual(rows['margin']['B']['range_accuracy'],1.)
+        self.assertEqual(rows['total']['B']['range_accuracy'],0.)
+        self.assertEqual(rows['total']['C']['range_accuracy'],1.)
+        self.assertEqual(rows['total']['A']['event_samples'],1)
+        self.assertEqual(rows['total']['A']['event_accuracy'],1.)
+        cards=next(c for c in render(report).children if getattr(c,'className','')=='backtest-kpis')
+        self.assertTrue({'BRIER SCORE','LOG LOSS','BASELINE MAE','PUSHES / TIES'}.isdisjoint(
+            card.children[0].children for card in cards.children))
+
+    def test_saved_player_breakdowns_recover_positions_by_game_and_track_trades(self):
+        from app.sections.backtesting.backtesting_results import accuracy_breakdown,probability_calibration
+        context=dict(sport='NBA',group='player-stats',line=None)
+        common=dict(actual=12.,predicted=11.,lower=8.,upper=12.,interval_level=.8)
+        records=[
+            dict(common,game_id='01',label='Player One · AAA vs BBB'),
+            dict(common,game_id='02',player_name='Player One',player_id='7',team='BBB',position='SG',upper=11.),
+            dict(common,game_id='03',label='Player Two · AAA vs BBB',upper=7.),
+            dict(common,game_id='04',label='Player Three · CCC vs AAA',interval_level=.9),
+        ]
+        history=pd.DataFrame([
+            dict(game_id='01',entity_name='Player One',entity_id='7',team='AAA',position='PG'),
+            dict(game_id='99',entity_name='Player Two',entity_id='8',team='AAA',position='PF'),
+        ])
+        metadata=Mock(side_effect=lambda sport,ids: history[history.game_id.isin(ids)])
+        result=accuracy_breakdown(records,context,.8,metadata)
+        metadata.assert_called_once_with('NBA',{'01','03','04'})
+        positions,teams,players=[{r['name']:r for r in details.children[1].data} for details in result.children[2:]]
+        self.assertEqual(positions['PG']['range_accuracy'],1.)
+        self.assertEqual(positions['SG']['range_accuracy'],0.)
+        self.assertEqual(positions['Position unavailable']['range_samples'],'0 / 0')
+        self.assertEqual(teams['AAA']['samples'],2)
+        self.assertEqual(teams['AAA']['range_samples'],'1 / 1')
+        self.assertEqual(players['Player One']['range_samples'],'1 / 2')
+        chart,_=probability_calibration(records,context,{})
+        self.assertEqual(chart.layout.xaxis.title.text,'Nominal prediction interval')
+        self.assertEqual(list(chart.data[1].x),[.8,.9])
+        self.assertEqual(list(chart.data[1].y),[.5,1.])
+        self.assertIn('1 hits / 2 valid intervals',chart.data[1].text[0])
+
+    def test_player_replay_calibrates_with_pregame_history_without_setting_a_prop_line(self):
+        from app.sections.backtesting.backtesting_results import probability_calibration
+        from models.Player_Stats.Usage_Opportunity.distributions import UsageOpportunityForecast
+        from models.Player_Stats.Weighted_Historical_Performance.markets import stat_spec
+        days=pd.date_range('2025-10-01',periods=3,tz='UTC')
+        frame=pd.DataFrame(dict(event_date=days,available_at=days+pd.Timedelta(hours=5),
+            game_id=['01','02','03'],entity_id='7',entity_name='Player One',team='AAA',
+            position='PG',value=[8.,12.,20.]))
+        fitted=UsageOpportunityForecast([0,10,20],[.25,.25,.5],100)
+        context=dict(sport='NBA',group='player-stats',entity='7',lookback=None,line=None)
+        result=dict(context=context,records=[],skipped=[],config={})
+        with tempfile.TemporaryDirectory() as temporary:
+            service=BacktestingService(root=temporary)
+            with patch.object(WeightedHistoricalPerformance,'forecast',return_value=fitted):
+                service._players(result,'NBA','whp',frame,frame,[frame.iloc[-1]],
+                                 stat_spec('NBA','player_points'),'player_points',None)
+        row,=result['records']
+        self.assertEqual(row['calibration_line'],10.5)
+        self.assertEqual(row['calibration_probability'],.5)
+        self.assertEqual((row['player_id'],row['team'],row['position']),('7','AAA','PG'))
+        self.assertIsNone(row['probability'])
+        self.assertIsNone(row['event_actual'])
+        chart,note=probability_calibration([row],context,{})
+        self.assertEqual(chart.layout.xaxis.title.text,'Predicted event probability')
+        self.assertEqual(list(chart.data[1].x),[.5])
+        self.assertEqual(list(chart.data[1].y),[1.])
+        self.assertIn('prior appearances',note)
+
     def test_prepared_replay_preserves_fold_keys_and_point_in_time_rows(self):
         frame=team_history().sample(frac=1,random_state=5)
         frame.loc[frame.index%7==0,'available_at']+=pd.Timedelta(days=4)

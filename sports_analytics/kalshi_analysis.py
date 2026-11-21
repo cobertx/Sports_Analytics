@@ -204,6 +204,10 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
     message=availability_note(gf,pf)
     if message:errors.append(message)
     distributions=old.get('game_distributions',{});distribution_errors=old.get('distribution_errors',[])
+    player_fits=dict(old.get('player_fits',{}))
+    if pf:
+        from app.sections.markets.prop_probability import remember_fit
+        player_fits[snapshot.get('category','')]=remember_fit(pf)
     if game_rows and include_presentation:
         distributions={};distribution_errors=[]
         if gf:
@@ -237,7 +241,8 @@ def calculate(game, snapshot, selected, method, player_method, game_forecast, pl
             except (ValueError,TypeError,OverflowError) as exc:detail=str(exc)
         records[row['ticker']]=dict(definition=signature,probability=probability,method=model,detail=detail)
     return dict(context=context,predictions=records,errors=list(dict.fromkeys([*old.get('errors',[]),*errors])),
-                history=history,cutoff=source['pulled_at'],game_distributions=distributions,distribution_errors=distribution_errors)
+                history=history,cutoff=source['pulled_at'],game_distributions=distributions,distribution_errors=distribution_errors,
+                player_fits=player_fits)
 
 
 def decorate(snapshot, game, selected, method, player_method, models=None, criteria=None, *, context=None,contracts=None):
@@ -307,7 +312,8 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
         models=calculate(game,subset,selected,game_method,player_method,game_forecast,player_forecast,
                          context=context,prepared=prepared,contracts=contracts,include_presentation=False)
         displayed=decorate(subset,game,selected,game_method,player_method,models,context=context,contracts=contracts)
-        return rank(displayed,ALL_PROBABILITIES),models.get('errors',[]),displayed['rows'] if player else []
+        return (rank(displayed,ALL_PROBABILITIES),models.get('errors',[]),displayed['rows'] if player else [],
+                models.get('player_fits',{}).get(subset.get('category','')) if player else None)
     tasks={method:lambda method=method:evaluate(method,False) for method in quick_methods.game_methods(game['sport']) if method in needed}
     tasks.update({method:lambda method=method:evaluate(method,True) for method in quick_methods.player_methods(game['sport']) if method in needed})
     forecasts=run_forecasts(tasks,game['sport'],report)
@@ -315,6 +321,7 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
     ranked=quick_methods.consensus({method:record[0] for method,record in forecasts.items()},assignments,
         snapshot['rows'],criteria,lambda item:(item['row']['ticker'],item['side']),consensus_rankings,
         prompt=lambda row:prompts[row['ticker']],sides=2)
-    ranked['player_lines']=[row for _,_,rows in forecasts.values() for row in rows]
-    errors=list(dict.fromkeys(error for _, messages, _ in forecasts.values() for error in messages))
+    ranked['player_lines']=[row for _,_,rows,_ in forecasts.values() for row in rows]
+    ranked['player_fits']={method:record[3] for method,record in forecasts.items() if record[3]}
+    errors=list(dict.fromkeys(error for _,messages,_,_ in forecasts.values() for error in messages))
     return ranked,errors

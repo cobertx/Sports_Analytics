@@ -115,7 +115,12 @@ class PerformanceSummaryChecks(TestCase):
                 self.assertEqual(card.children[1].children,rate)
                 aside=next(c for c in components(detail) if getattr(c,'className',None)=='backtest-coverage')
                 self.assertEqual(aside.children[0].children,rate)
-                self.assertEqual(len(next(c for c in components(detail) if c.__class__.__name__=='DataTable').data),count)
+                predictions=next(c for c in detail.children if getattr(c,'className',None)=='panel backtest-table')
+                self.assertEqual(len(predictions.children[1].data),count)
+                breakdown=next(c for c in detail.children if getattr(c,'className',None)=='panel backtest-breakdown')
+                team_rows=breakdown.children[2].children[1].data
+                self.assertEqual({r['name']:r['range_samples'] for r in team_rows},
+                                 {'A':f'{hits} / {count}','B':f'{hits} / {count}'})
                 with patch('app.sections.backtesting.backtesting_summary.ctx',SimpleNamespace(triggered_id='backtest-summary-export')):
                     download=callbacks['backtest_summary_export'](1,'backtesting','NBA',href,'total')
                 from io import StringIO
@@ -388,8 +393,8 @@ class PerformanceSummaryChecks(TestCase):
         parameters=dict(**self.context,key='epa',entity='__all__',limit=10,lookback='Model Default',
                         market='winner',config_overrides=model_config(epa,'NBA'))
         running=[
-            dict(id='matching-epa',percent=35,message='Evaluating',parameters=parameters),
-            dict(id='different-elo',percent=20,message='Evaluating',parameters=dict(parameters,key='elo',limit=11)),
+            dict(id='matching-epa',state='running',percent=35,message='Evaluating',parameters=parameters),
+            dict(id='different-elo',state='running',percent=20,message='Evaluating',parameters=dict(parameters,key='elo',limit=11)),
         ]
         with patch.object(self.backend,'active_jobs',return_value=running),patch.object(
                 self.backend,'start',side_effect=lambda **p:f"new-{p['key']}") as start:

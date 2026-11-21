@@ -6,6 +6,7 @@ from sports_analytics.schedule import FANDUEL_LINKS
 from app.sections.markets.market_view import market_provider_heading
 from app.sections.markets.mispricing import quick_controls
 from app.sections.markets import quick_methods
+from app.sections.markets.prop_probability import outlet
 from app.sections.information.game_information_view import layout as game_information_layout
 from app.components.controls import field
 
@@ -78,6 +79,7 @@ def layout():
                 html.Div(indicator('Loading the selected markets…'),id='market-sections-transition',className='market-sections-transition'),
                 dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),
             ],id='market-quote-content'),
+            outlet('market'),
             ], className="sportsbook-view"),
         ], id="market-game-detail", className="market-detail-view", style={"display": "none"}),
     ], id="market-page", className="market-page", style={"display": "none"})

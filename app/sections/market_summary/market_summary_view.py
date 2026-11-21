@@ -11,7 +11,7 @@ from app.sections.markets import quick_visibility
 from app.sections.market_structure.market_structure_link import line_actions
 from sports_analytics.market_summary import PROVIDERS
 from app.sections.markets.lazy_markets import markets as lazy_markets
-from app.sections.markets.prop_probability import outlet, player_line, row_action
+from app.sections.markets.prop_probability import block_action, outlet, player_line, row_action
 from sports_analytics.nba_markets import NBA_MARKETS
 from sports_analytics.nfl_markets import NFL_MARKETS,SPORTSBOOKS,draftkings_markets
 from sports_analytics.ncaaf_markets import NCAAF_MARKETS
@@ -148,12 +148,12 @@ def layout():
             quick_controls(),
             html.Div(dcc.Loading(html.Div(id='summary-market-sections'),delay_show=500,color='#57dbc4',
                                  overlay_style={'visibility':'visible'}),id='summary-quote-content'),
-            html.Details([
-                html.Summary('Forecast vs. market probabilities'),
+            html.Section([
+                html.H2('Game outcome distributions'),
                 chart_criteria_controls(),
                 dcc.Loading(html.Div(id='summary-game-probability-charts',**{'data-scope':None}),
                             color='#57dbc4'),
-            ],id='summary-game-probabilities',open=False,style={'display':'none'},
+            ],id='summary-game-probabilities',style={'display':'none'},
                 className='sportsbook-market summary-game-probabilities'),
             outlet('summary'),
         ],id='summary-detail',style={'display':'none'}),
@@ -343,8 +343,10 @@ def sections(bundle,rows,category):
         body=(lazy_markets.panel(scope,index,render,len(items),initial=index<2,size=SUMMARY_BATCH,step=SUMMARY_STEP,
                                  loading=False,text_more=True)
               if lazy else render(len(items)))
+        key=player_line(items[0]['outcome'])
         table=html.Details([
-            html.Summary([html.Strong(title),html.Span(f'{len(items)} selections',className='market-chevron')]),
+            html.Summary([html.Strong(title),html.Span(f'{len(items)} selections',className='market-chevron')],
+                         **block_action(key,'summary',bundle=bundle['id'])),
             body,
         ],open=index<2,key=group+'-'+title,className='sportsbook-market summary-market')
         categories.setdefault(group,[]).append(table);index+=1

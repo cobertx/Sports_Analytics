@@ -81,7 +81,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         if not isinstance(cached,dict) or 'rows' not in cached:return None
         if any(cached.get(key)!=models.get(key) for key in ('bundle_id','method','player_method','weighting_policy','availability_revision')):
             return None
-        return {**models,'rows':cached['rows']}
+        return {**models,'rows':cached['rows'],'game_distributions':cached.get('game_distributions')}
 
     if tasks is not None:
         @scoped_callback(app,'market-summary',Output('summary-model-completed','data'),
@@ -331,7 +331,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                 and (previous or {}).get('source_revision',[])==revision
                 and ctx.triggered_id!='summary-recalculate'):raise PreventUpdate
         def compute():
-            return analysis.calculate(bundle,method,player_method,game_forecast,player_forecast)
+            return analysis.calculate(bundle,method,player_method,game_forecast,player_forecast,include_distributions=True)
         background=tasks is not None and (_model_tick is not None or _history_tick is not None)
         if background:
             key=request_key(['summary-model-v2',bundle['id'],method,player_method,analysis.POLICY_VERSION,availability_revision(sport),revision,clicks])
@@ -356,7 +356,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
                 'All providers use the earliest quote timestamp, capped at game start, to avoid using later history for older saved prices.' if models['cutoff'] else '')
         # PageTasks already owns the full result. Send a scoped reference rather
         # than retransmitting thousands of model rows on each poll and cell POST.
-        wire={key:value for key,value in models.items() if key!='rows'} if background else models
+        wire={key:value for key,value in models.items() if key not in {'rows','game_distributions'}} if background else models
         return wire,[html.Span(status),*[html.P(error,className='ppp-comparison-note' if error.startswith('Game injuries:') else 'mispricing-error') for error in models['errors']]]
 
     @scoped_callback(app,'market-summary',Output('summary-market-sections','children'),Output('summary-rendered','data'),
@@ -408,15 +408,15 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         return dict(criteria=criteria,game_id=selected,sport=sport,applied_at=time()),''
 
     @app.callback(Output('summary-game-probability-charts','children'),Output('summary-game-probability-charts','data-scope'),
-                  Input('summary-game-probabilities','open'),Input('summary-quotes','data'),Input('summary-models','data'),
+                  Input('summary-quotes','data'),Input('summary-models','data'),
                   Input('summary-category','value'),Input('summary-game','value'),Input('summary-game-method','value'),
                   Input('summary-player-method','value'),Input('summary-chart-criteria','data'),
                   Input('summary-quick-request','data'),Input('summary-quick-completed','data'),
                   State('sport','value'),State('workspace-page','value'),
                   State('summary-game-probability-charts','data-scope'),prevent_initial_call=True)
-    def summary_game_probabilities(opened,reference,model_state,category,selected,method,player_method,
+    def summary_game_probabilities(reference,model_state,category,selected,method,player_method,
                                    applied,quick,completed,sport,page,previous):
-        if not opened or page!='market-summary' or category!='Game Lines' or not reference or (
+        if page!='market-summary' or category!='Game Lines' or not reference or (
             reference['sport']!=sport or str(reference['game']['id'])!=selected
         ):
             raise PreventUpdate
@@ -452,7 +452,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         if scope==previous:raise PreventUpdate
         rows=models['rows'] if ready else analysis.entries(bundle)
         return summary_probability.panel(bundle,rows,method,waiting,criteria=criteria,quick_rows=quick_rows,
-                                         quick_status=quick_status),scope
+                                         quick_status=quick_status,distributions=models.get('game_distributions') if ready else None),scope
 
     @app.callback(Output('summary-prop-result','children'),Input('summary-prop-request','data-selection'),
                   Input('summary-quotes','data'),Input('summary-models','data'),Input('summary-category','value'),
@@ -474,7 +474,7 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
             ranked=quick_chart_result(quick,completed,sport,('summary',location,selected),selection)
             if not ranked:
                 return show(prop_probability.message('This result is unavailable. Run Quick Filtering again.'))
-            return show(prop_probability.chart(selection['key'],ranked['player_lines']))
+            return show(prop_probability.chart(selection['key'],ranked['player_lines'],fits=ranked.get('player_fits')))
         if category!='Player Props' or selection.get('job') or selection['bundle']!=reference['id']:
             return None
         bundle=quote_jobs.resolve(reference)
@@ -485,7 +485,8 @@ def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecas
         rows=models['rows'] if ready else analysis.entries(bundle)
         waiting=(not model_state or model_state.get('pending') or model_state.get('bundle_id')!=bundle['id']
                  or model_state.get('method')!=method or model_state.get('player_method')!=player_method)
-        return show(prop_probability.chart(selection['key'],rows,waiting=waiting))
+        return show(prop_probability.chart(selection['key'],rows,waiting=waiting,
+                    fits={player_method:models.get('player_fit')} if ready else None))
 
     cells=dict(type='summary-model-table',bundle=ALL,category=ALL,group=ALL)
     @scoped_callback(app,'market-summary',Output(cells,'data-models'),Input('summary-models','data'),

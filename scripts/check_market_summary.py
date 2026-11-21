@@ -511,24 +511,61 @@ class SummaryCallbackChecks(TestCase):
         with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-pull' if pull else 'summary-game')):
             return self.cb['summary_quotes']('123',self.catalog,1 if pull else 0,'market-summary','NFL',previous)
 
-    def test_probability_charts_render_only_open_game_lines_and_reuse_the_existing_forecast(self):
+    def test_probability_charts_render_automatically_for_game_lines_and_reuse_the_existing_forecast(self):
         quoted=self.quotes()[0]
         callback=self.cb['summary_game_probabilities']
         args=(quoted,None,'Game Lines','123','PPP','WHP',None,None,None,'NFL','market-summary',None)
-        with self.assertRaises(PreventUpdate):callback(False,*args)
         for index,value in [(2,'Player Props'),(3,'456'),(9,'NBA'),(10,'market')]:
             changed=list(args);changed[index]=value
-            with self.assertRaises(PreventUpdate):callback(True,*changed)
-        market,scope=callback(True,*args)
+            with self.assertRaises(PreventUpdate):callback(*changed)
+        market,scope=callback(*args)
         self.assertIn('Calculating the selected forecast',str(market))
-        with self.assertRaises(PreventUpdate):callback(True,*args[:-1],scope)
+        with self.assertRaises(PreventUpdate):callback(*args[:-1],scope)
         with patch('app.sections.market_summary.market_summary_callbacks.ctx',SimpleNamespace(triggered_id='summary-quotes')):
             models,_=self.cb['summary_models'](quoted,'PPP','WHP',0,'market-summary','NFL','123',None)
         calls=self.engines['PPP'].forecast.call_count
-        completed,new_scope=callback(True,quoted,models,*args[2:])
+        completed,new_scope=callback(quoted,models,*args[2:])
         self.assertIn('PPP forecast',str(completed));self.assertNotEqual(scope,new_scope)
         self.assertEqual(self.engines['PPP'].forecast.call_count,calls)
         self.fd.pull.assert_not_called()
+
+    def test_polymarket_detail_automatically_loads_game_curves_and_only_selected_player(self):
+        from app.sections.exchanges.kalshi_view import market_sections
+        from models.Player_Stats.Usage_Opportunity.distributions import UsageOpportunityForecast
+        self.engines['PPP'].forecast.return_value=PPPForecast('NO','PIT',27,21,11,10)
+        fitted=UsageOpportunityForecast.from_samples([175,200,225,250])
+        self.players['WHP'].forecast.return_value=SimpleNamespace(
+            forecasts={('Test Quarterback','player_pass_yds'):fitted},
+            selection=lambda row:fitted.market(row['line'],row['selection']))
+        cb=self.cb['polymarket_distributions']
+        context=exchange('Polymarket')
+        base=self.data['providers']['Polymarket']['snapshot']
+        game_quotes={**base,'category':'Game Lines','selection':'live','rows':[binary(provider='Polymarket')]}
+        scope=(context,'Game Lines','live',None,'polymarket','#nfl-polymarket-game-100')
+        result=cb(game_quotes,*scope,0,None)
+        self.assertIn('Polymarket implied',str(result[0]))
+        self.app._page_tasks.queue.tasks.join()
+        result=cb(game_quotes,*scope,1,result[2])
+        self.assertIn('Game total',str(result[0]))
+        self.assertIn('Spread',str(result[0]))
+        self.assertIn('PPP calculated distribution',str(result[0]))
+        self.assertIn('Polymarket implied',str(result[0]))
+        self.assertIsNone(result[1])
+        self.engines['PPP'].forecast.assert_called_once()
+        props={**base,'category':'Player Props','selection':'live','rows':[binary(True,'Polymarket')]}
+        section=market_sections({**props,'game':context,'view_scope':['live']},'Polymarket',lazy=False)[0]
+        selection=json.loads(getattr(section.children[0],'data-prop-chart'))
+        self.assertEqual(selection['key'][2],'test quarterback')
+        player_scope=(context,'Player Props','live',None,'polymarket',scope[-1])
+        self.assertEqual(cb(props,*player_scope,0,None),([],None,None))
+        self.players['WHP'].forecast.assert_not_called()
+        player_scope=(*player_scope[:3],{**selection,'click':1},*player_scope[4:])
+        waiting=cb(props,*player_scope,0,None)
+        self.app._page_tasks.queue.tasks.join()
+        completed=cb(props,*player_scope,1,waiting[2])
+        self.assertIn('WHP calculated distribution',str(completed[1]))
+        self.assertIn('Polymarket implied',str(completed[1]))
+        self.players['WHP'].forecast.assert_called_once()
 
     def test_market_data_contains_draftkings_and_summary_routes_for_all_sports(self):
         nav=next(c for c in components(self.app.layout) if getattr(c,'id',None)=='market-data-navigation')

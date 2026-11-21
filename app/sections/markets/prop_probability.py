@@ -11,6 +11,7 @@ from dash.exceptions import PreventUpdate
 import plotly.graph_objects as go
 
 from app.components.presentation import chart_style
+from app.sections.markets.player_distribution import distribution, threshold_curve
 from app.sections.markets.quick_visibility import slot
 
 
@@ -20,8 +21,10 @@ SOURCE_STYLES = {
     'Kalshi': ('#8debab', 'square', 'dash'),
     'Polymarket': ('#b7b6ff', 'triangle-up', 'dot'),
 }
+SHARED_VIEWS = {'market','summary','kalshi','polymarket'}
 FORECAST_COLORS = ('#57dbc4', '#f6c667', '#f599c9', '#ddd995', '#95d6e8', '#d6b1a1')
 _views = OrderedDict()
+_fits = OrderedDict()
 _lock = RLock()
 
 
@@ -46,9 +49,39 @@ def row_action(label, key, view, **context):
     if key is None or view is None:
         return label, {}
     return html.Button(label, type='button', className='prop-chart-button',
-                       **{'aria-label': f'Compare forecast and market probabilities for {label}'}), {
-        'data-prop-chart': json.dumps(dict(key=key, view=view, **context), separators=(',', ':')),
-    }
+                       **{'aria-label': f'Compare forecast and market probabilities for {label}'}), block_action(key, view, **context)
+
+
+def block_action(key, view, **context):
+    return {'data-prop-chart': json.dumps(dict(key=key, view=view, **context), separators=(',', ':'))} if key and view else {}
+
+
+def remember_fit(forecast):
+    if forecast is None:
+        return None
+    identity=uuid4().hex
+    with _lock:
+        _fits[identity]=forecast
+        if len(_fits)>64:_fits.popitem(last=False)
+    return identity
+
+
+def stored_fit(identity):
+    with _lock:return _fits.get(identity)
+
+
+def player_payloads(key, forecasts):
+    payloads={}
+    for method, forecast in forecasts.items():
+        if isinstance(forecast,str):forecast=stored_fit(forecast)
+        for (subject, market), fitted in getattr(forecast,'forecasts',{}).items():
+            if market.removesuffix('_alternate')==key[1] and ' '.join(subject.casefold().split())==key[2]:
+                try:
+                    payloads[method]=distribution(fitted,[key[3]])
+                except (ValueError,TypeError,OverflowError,AttributeError):
+                    pass
+                break
+    return payloads
 
 
 def mount(render):
@@ -62,7 +95,7 @@ def mount(render):
 
 
 def outlet(view):
-    shared = view in {'summary', 'kalshi'}
+    shared = view in SHARED_VIEWS
     request = f'{view}-prop-request' if shared else dict(type='prop-chart-request', view=view)
     result = f'{view}-prop-result' if shared else dict(type='prop-chart-result', view=view)
     data = {'data-selection': None}
@@ -109,7 +142,7 @@ def matching_side(key, row_key):
     return row_key and row_key[:3] == key[:3] and row_key[4] == key[4]
 
 
-def chart(key, rows, *, waiting=False):
+def chart(key, rows, *, waiting=False, fits=None):
     prices, forecasts = defaultdict(dict), defaultdict(dict)
     title = None
     for row in rows:
@@ -144,8 +177,16 @@ def chart(key, rows, *, waiting=False):
         if selected in points:
             values.append(html.Li(f'{name} {points[selected][0]:.2%}'))
 
-    for index, (method, points) in enumerate(forecasts.items()):
-        add_trace(f'{method} forecast', points, FORECAST_COLORS[index % len(FORECAST_COLORS)], 'circle', 'solid', connect=True)
+    payloads=player_payloads(key,fits or {})
+    for index, method in enumerate(dict.fromkeys([*forecasts,*payloads])):
+        color=FORECAST_COLORS[index % len(FORECAST_COLORS)]
+        if method in forecasts:
+            add_trace(f'{method} forecast', forecasts[method], color, 'circle', 'solid', connect=method not in payloads)
+        if method in payloads:
+            x,y=threshold_curve(payloads[method],above=key[4]=='gt')
+            figure.add_trace(go.Scatter(x=x,y=y,mode='lines',name=f'{method} calculated distribution',
+                line=dict(color=color,width=2.5,shape='hvh'),
+                hovertemplate=direction+' %{x:g}<br>%{y:.2%}<extra>%{fullData.name}</extra>'))
     for provider, points in prices.items():
         color, symbol, dash = SOURCE_STYLES[provider]
         add_trace(f'{provider} implied', points, color, symbol, dash, connect=False)
@@ -159,14 +200,14 @@ def chart(key, rows, *, waiting=False):
     figure.add_vline(x=selected, line_color='#a8b8cc', line_dash='dot', layer='below')
     return html.Section([
         html.Div(html.H3(heading), className='panel-heading'),
-        html.P('Markets imply a win probability at each quoted threshold. Sportsbook prices include bookmaker margin. '
-               'Exchange prices are before fees. Forecasts for whole-number sportsbook lines exclude pushes. '
+        html.P('The model curve shows how win probability changes across stat outcomes. Market points use quoted thresholds. '
+               'Sportsbook prices include bookmaker margin, and exchange prices are before fees. Whole-number sportsbook forecasts exclude pushes. '
                'For duplicate quotes at a line, each source shows its lowest implied probability.',
                className='chart-note'),
         html.P('Calculating the selected forecast…' if waiting else 'A forecast is unavailable for these lines.',
-               className='chart-note', role='status') if not forecasts else None,
+               className='chart-note', role='status') if not forecasts and not payloads else None,
         html.Ul(values, className='prop-chart-values', **{'aria-label': f'Probabilities at {direction} {selected:g}'}) if values else None,
         dcc.Graph(figure=figure, config={'displaylogo': False}, responsive=True, style={'height': '390px'})
             if figure.data else html.P('No quoted or forecast probabilities are available.', className='chart-note'),
-    ], className='panel ppp-chart prop-probability-chart', tabIndex=-1,
+    ], className='panel ppp-chart prop-probability-chart'+(' prop-quotes-only' if not forecasts and not payloads else ''), tabIndex=-1,
        **{'aria-label': heading+' probability comparison'})

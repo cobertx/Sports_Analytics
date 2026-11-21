@@ -1,13 +1,16 @@
 """Controls, metric cards and plots for actual chronological replay records."""
 import math,json
+from collections import defaultdict
+from sqlite3 import Error as SQLiteError
 from dash import dcc,html,dash_table
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from app.components.presentation import chart_style, table_cell, table_header
 from sports_analytics.backtesting_service import (
-    diagnostics,PREDICTIVE_INTERVAL,evaluated_records,current_player_cohort,player_backtest_criteria,
+    calibration_bins,diagnostics,PREDICTIVE_INTERVAL,evaluated_records,current_player_cohort,player_backtest_criteria,
 )
+from sports_analytics.data import DataSourceError
 from sports_analytics.display_time import format_eastern,EASTERN
 
 
@@ -123,6 +126,139 @@ def range_accuracy(records,level=PREDICTIVE_INTERVAL):
     return dict(range_accuracy=sum(hits)/len(hits) if hits else None,range_samples=f'{sum(hits)} / {len(hits)}')
 
 
+def player_breakdown_groups(records,context,player_metadata):
+    appearances=[]
+    for row in records:
+        name,_,matchup=row.get('label','').partition(' · ')
+        team,_,_=matchup.partition(' vs ')
+        appearances.append((
+            row.get('player_name') or name or 'Player unavailable',
+            row.get('team') or team or 'Team unavailable',row,
+        ))
+    saved_players={}
+    legacy_ids={str(row['game_id']) for _,team,row in appearances
+                if 'position' not in row and team!='Team unavailable'}
+    if player_metadata and legacy_ids:
+        try:
+            history=player_metadata(context['sport'],legacy_ids)
+        except (DataSourceError,OSError,ValueError,SQLiteError):
+            history=pd.DataFrame()
+        keys=['game_id','entity_name','team']
+        if {*keys,'entity_id','position'}<=set(history):
+            matching=history[[*keys,'entity_id','position']].drop_duplicates()
+            # A legacy label identifies an appearance only when the saved box score agrees.
+            matching=matching[~matching.duplicated(keys,keep=False)]
+            saved_players={(str(r.game_id),r.entity_name,r.team):(r.entity_id,r.position)
+                           for r in matching.itertuples(index=False)}
+    groups={name:defaultdict(list) for name in ('Position','Team','Player')}
+    player_names={}
+    for name,team,row in appearances:
+        player_id,position=saved_players.get((str(row['game_id']),name,team),(None,None))
+        player_id=row.get('player_id') or player_id
+        position=row.get('position',position)
+        position=position.strip().upper() if isinstance(position,str) and position.strip() else 'Position unavailable'
+        groups['Position'][position].append(row)
+        groups['Team'][team].append(row)
+        identity=('id',str(player_id)) if player_id is not None else ('name',name)
+        groups['Player'][identity].append(row)
+        player_names[identity]=name
+    groups['Player']={(identity,player_names[identity]):rows for identity,rows in groups['Player'].items()}
+    return groups
+
+
+def breakdown_table(groups,heading,level,event_label=None):
+    rows=[]
+    for identity,records in groups.items():
+        name=identity[1] if heading=='Player' else identity
+        row=dict(name=name,samples=len(records),mae=np.mean([abs(r['predicted']-r['actual']) for r in records]).item(),
+                 **range_accuracy(records,level))
+        if event_label:
+            outcomes=[(r['probability']>=.5)==r['event_actual'] for r in records
+                      if r.get('probability') is not None and r.get('event_actual') is not None]
+            row.update(event_accuracy=sum(outcomes)/len(outcomes) if outcomes else None,event_samples=len(outcomes))
+        rows.append(row)
+    columns=[dict(id='name',name=heading),dict(id='samples',name='Evaluated',type='numeric'),
+             dict(id='range_accuracy',name=f'{level:.0%} interval coverage',type='numeric',format={'specifier':'.1%','nully':'—'}),
+             dict(id='range_samples',name='Interval hits / samples'),
+             dict(id='mae',name='MAE',type='numeric',format={'specifier':'.2f'})]
+    if event_label:
+        columns.extend([dict(id='event_accuracy',name=event_label,type='numeric',format={'specifier':'.1%','nully':'—'}),
+                        dict(id='event_samples',name='Settled events',type='numeric')])
+    return dash_table.DataTable(data=sorted(rows,key=lambda r:(-r['samples'],r['name'])),columns=columns,
+        page_size=12,sort_action='native',filter_action='native',cell_selectable=False,
+        style_table={'overflowX':'auto'},
+        style_cell=table_cell(minWidth='104px',whiteSpace='normal',height='auto'),style_header=table_header())
+
+
+def accuracy_breakdown(records,context,level,player_metadata=None):
+    game=context['group']=='game-outcome'
+    event_label=None
+    if game:
+        teams=defaultdict(list)
+        for row in records:
+            away,_,home=row.get('label','').partition(' @ ')
+            for team in dict.fromkeys((row.get('home_team') or home,row.get('away_team') or away)):
+                if team:teams[team].append(row)
+        groups={'Team':teams}
+        note='Each game counts for both teams. Error and coverage use the selected chart target.'
+        event_label='Winner accuracy'
+    else:
+        groups=player_breakdown_groups(records,context,player_metadata)
+        note='Team and position come from each evaluated appearance. Players who changed teams are grouped by player ID when available.'
+        if context.get('line') is not None:event_label='Over/Under accuracy'
+    explanation='Interval coverage is the share of actual results inside the stated prediction range.'
+    if event_label:explanation+=' Event accuracy uses only settled predictions with a recorded probability.'
+    return html.Section([html.H3('Accuracy breakdown'),
+        html.P(f'{explanation} {note}',className='backtest-status'),
+        *[html.Details([html.Summary('By '+name.lower()),
+            breakdown_table(rows,name,level,event_label) if rows else
+            html.P('Group information is unavailable for this run.',className='backtest-status')],
+            className='backtest-breakdown-group') for name,rows in groups.items()],
+    ],className='panel backtest-breakdown')
+
+
+def probability_calibration(records,context,metrics):
+    game=context['group']=='game-outcome'
+    line=context.get('line')
+    bins=metrics.get('reliability',[])
+    event='Home-team win' if game else f'Over {line:g}' if line is not None else 'Over the recent player baseline'
+    note=('Uses the home-win forecast for both chart targets. Ties are excluded.' if game else
+          f'Uses the fixed reference line of {line:g}. Pushes are excluded.' if line is not None else
+          "Each threshold uses the player's mean over up to five prior appearances, rounded down to the nearest integer plus 0.5.")
+    if not game and line is None and not bins:
+        outcomes=[(r['calibration_probability'],int(r['actual']>r['calibration_line'])) for r in records
+                  if r.get('calibration_probability') is not None and r.get('calibration_line') is not None
+                  and r['actual']!=r['calibration_line']]
+        if outcomes:
+            probabilities,actuals=zip(*outcomes)
+            bins=calibration_bins(probabilities,actuals)
+    if bins:
+        chart=figure('Probability calibration','Predicted event probability','Observed event frequency')
+        points=[(r['predicted'],r['observed'],f'{r["lower"]:.0%}–{r["upper"]:.0%} bin<br>Sample: {r["n"]:,}') for r in bins]
+        note=f'{event}. {note} Points show mean forecast probability and observed frequency in 2-percentage-point bins.'
+    else:
+        chart=figure('Probability calibration','Nominal prediction interval','Observed interval coverage')
+        levels=defaultdict(list)
+        for row in records:
+            level=row.get('interval_level')
+            if isinstance(level,(int,float)) and 0<level<1 and (bounds:=valid_prediction_interval(row,level)):
+                levels[level].append(bounds[0]<=row['actual']<=bounds[1])
+        points=[(level,sum(hits)/len(hits),f'{sum(hits):,} hits / {len(hits):,} valid intervals')
+                for level,hits in sorted(levels.items())]
+        note='This saved run uses its prediction intervals for calibration. Each point compares nominal coverage with the share of actual results inside that interval.'
+        empty_note='No valid prediction intervals were saved for this run.'
+    chart.add_trace(go.Scatter(x=[0,1],y=[0,1],mode='lines',name='Perfect calibration',line=dict(color='#a7b9cd',dash='dash')))
+    if points:
+        forecast,observed,detail=zip(*points)
+        chart.add_trace(go.Scatter(x=forecast,y=observed,text=detail,mode='markers',name='Observed',cliponaxis=False,
+            marker=dict(size=10,color='#57dbc4'),
+            hovertemplate='Expected: %{x:.1%}<br>Observed: %{y:.1%}<br>%{text}<extra></extra>'))
+    else:
+        chart.add_annotation(text=empty_note,showarrow=False,x=.5,y=.5,xref='paper',yref='paper')
+    chart.update_xaxes(range=[0,1],tickformat='.0%');chart.update_yaxes(range=[0,1],tickformat='.0%')
+    return chart,note
+
+
 def error_summary(errors):
     """Exact statistics of signed forecast errors, rather than histogram bins."""
     values=np.asarray(errors,dtype=float).ravel()
@@ -194,7 +330,8 @@ def historical_accuracy(fig,data,context):
     """Daily and trailing-game coverage of the actual central 80% intervals."""
     ordered=data.copy()
     level=ordered['interval_level'] if 'interval_level' in ordered else pd.Series(PREDICTIVE_INTERVAL,index=ordered.index)
-    valid=np.isclose(level,PREDICTIVE_INTERVAL)&np.isfinite(ordered[['actual','lower','upper']].to_numpy(float)).all(axis=1)
+    valid=(np.isclose(level,PREDICTIVE_INTERVAL)&ordered.lower.le(ordered.upper)
+           &np.isfinite(ordered[['actual','lower','upper']].to_numpy(float)).all(axis=1))
     ordered=ordered[valid].copy()
     if ordered.empty:
         fig.add_annotation(text='Rerun this backtest to calculate<br>80% predictive interval accuracy.',showarrow=False,
@@ -223,7 +360,7 @@ def historical_accuracy(fig,data,context):
     fig.update_yaxes(range=[-.05,1.05],tickformat='.0%',title='Accuracy')
 
 
-def render(result,target='margin'):
+def render(result,target='margin',*,player_metadata=None):
     records=evaluated_records(result,target);context=result['context'];game=context['group']=='game-outcome'
     metrics=diagnostics(records,context['tolerance']);data=pd.DataFrame(records)
     data['error']=data.predicted-data.actual
@@ -240,7 +377,9 @@ def render(result,target='margin'):
         center=(rate+z*z/(2*m))/(1+z*z/m)
         half=z*math.sqrt(rate*(1-rate)/m+z*z/(4*m*m))/(1+z*z/m)
         accuracy_note+=f' 95% Wilson interval {100*(center-half):.1f}–{100*(center+half):.1f}% (n={m}).'
-    else:accuracy_note='Enter a reference line and rerun to evaluate event accuracy.'
+    elif game:accuracy_note='No settled games with winner probabilities.'
+    elif context.get('line') is not None:accuracy_note='No settled forecasts at the applied reference line.'
+    else:accuracy_note='Set a fixed reference line to evaluate Over/Under accuracy.'
     cards=[card('EVALUATED GAMES',f'{len(records):,}',f'{result["attempted"]} attempted; {len(result["skipped"])} skipped'),
         card('EVENT ACCURACY',percent('accuracy'),accuracy_note),
         card('MAE',values('mae'),'Average absolute error; lower is better.'),
@@ -248,11 +387,7 @@ def render(result,target='margin'):
         card('BIAS',values('bias'),'Predicted − actual; positive means overprediction.'),
         card('ERROR VARIANCE',values('error_variance'),f'Sample variance (squared units); error SD {values("error_sd")}.'),
         card('WITHIN TOLERANCE',percent('within_tolerance'),f'Absolute error ≤ {context["tolerance"]:g} statistic units.'),
-        card(interval_label+' INTERVAL COVERAGE',percent('interval_coverage'),'Actual results inside the model’s predictive interval.'),
-        card('BRIER SCORE',values('brier'),'Event probability error; 0 is ideal. Pushes excluded.'),
-        card('LOG LOSS',values('log_loss'),'Penalizes confident incorrect probabilities; lower is better.'),
-        card('BASELINE MAE',values('baseline_mae'),'Prior league home margin/total mean.' if game else 'Prior five-appearance mean on the same evaluated games.'),
-        card('PUSHES / TIES',str(metrics['pushes']),'Excluded from binary event accuracy and probability scoring.')]
+        card(interval_label+' INTERVAL COVERAGE',percent('interval_coverage'),'Actual results inside the model’s predictive interval.')]
     if {'actual_minutes','projected_minutes'} <= set(data):
         minutes = (data.projected_minutes-data.actual_minutes).dropna()
         if len(minutes):
@@ -293,25 +428,13 @@ def render(result,target='margin'):
         line=dict(color='#f6c667',shape='spline',smoothing=.5),customdata=hover,
         hovertemplate='%{customdata[0]}<br>%{customdata[1]}<br>MAE: %{y:.2f}<extra>Prior-data baseline</extra>'))
     rolling.update_yaxes(rangemode='tozero')
-    calibration=figure('Probability calibration','Predicted event probability','Observed event frequency')
-    calibration.add_trace(go.Scatter(x=[0,1],y=[0,1],mode='lines',name='Perfect calibration',line=dict(color='#a7b9cd',dash='dash')))
-    bins=metrics.get('reliability',[])
-    if bins:
-        calibration.add_trace(go.Scatter(x=[r['predicted'] for r in bins],y=[r['observed'] for r in bins],
-            mode='lines+markers',name='Calibration (2% bins)',
-            text=[f'{r["lower"]:.0%}–{r["upper"]:.0%}; n={r["n"]}' for r in bins],
-            hovertemplate='%{text}<br>Mean forecast: %{x:.1%}<br>Observed: %{y:.1%}<extra></extra>',
-            marker=dict(size=[7+min(15,math.sqrt(r['n'])) for r in bins],color='#57dbc4')))
-    else:calibration.add_annotation(text='Enter a player reference line and rerun for probability calibration.',showarrow=False,x=.5,y=.5,xref='paper',yref='paper')
-    calibration.update_xaxes(range=[0,1],tickformat='.0%');calibration.update_yaxes(range=[0,1],tickformat='.0%')
+    calibration,calibration_note=probability_calibration(records,context,metrics)
     accuracy=figure('Historical accuracy by game','Game date','Accuracy')
     historical_accuracy(accuracy,data,context)
     chart_notes={id(timeline):'Evaluated games or player appearances are spaced evenly. Dates without evaluated results, including the offseason, are omitted. Hover for the actual game date.',
         id(residual):'Error = predicted − actual. Mean and median describe bias; sample SD describes spread. MAE and RMSE measure miss size. Hover a statistic for its definition, range and percentiles.',
         id(rolling):'Each point averages absolute errors over the last up to 5 evaluated observations, including individual player appearances in cohort runs. Lower is better. Compare the model with the prior-data baseline on the same observations; rising values indicate worse recent point forecasts.',
-        id(calibration):'Predictions are grouped in 2-percentage-point bins. The diagonal means forecast probability matches observed frequency; below it means the event happened less often than predicted. Hover for each bin’s sample count. '+
-            ('This checks home-team win probabilities, even when the error charts show total points. It does not check every alternate spread or total line.' if game else
-             'This checks Over the fixed reference line used in this run; pushes are excluded. It does not check every alternate prop line.')}
+        id(calibration):calibration_note}
     table=[]
     for r in records:
         table.append(dict(date=format_eastern(r['date']),game=r['label'],actual=round(r['actual'],3),
@@ -334,9 +457,7 @@ def render(result,target='margin'):
                 'This saved run used earlier player eligibility rules. Run again to apply the current workload criteria.',
                 className='backtest-status')] if not game else []),
         html.Div(cards,className='backtest-kpis'),
-        html.P('Event metrics evaluate the home winner.' if game else
-            ('Event metrics evaluate Over '+str(context['line'])+'.' if context['line'] is not None else 'Event metrics require an optional reference line.'),
-            className='backtest-status'),
+        accuracy_breakdown(records,context,records[0]['interval_level'],player_metadata),
         html.P('Probabilities are evaluated against outcomes, without assumed historical sportsbook prices. '
                'Availability lags and revised source files limit historical as-of fidelity. '
                'Accuracy intervals are descriptive; repeated players and teams can be correlated.',className='backtest-status'),

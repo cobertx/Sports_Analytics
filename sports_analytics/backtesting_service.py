@@ -4,6 +4,7 @@ No source preparation, sportsbook request or synthetic market price is used.
 Evaluation targets are final outcomes; they are never passed into a forecast.
 """
 from dataclasses import asdict,replace
+from copy import copy
 from datetime import datetime,timezone
 from hashlib import sha256
 from importlib import import_module
@@ -24,6 +25,8 @@ from .ncaaf_model_data import NcaafModelData
 from .display_time import EASTERN
 from .research_config import configured,player_config
 from .metrics import ROLE_POSITIONS,metric_group
+from .backtest_checkpoint import (ACTIVE_STATES,BacktestInterrupted,BacktestJournal,BacktestPaused,
+                                  ReplayCheckpoint,job_lock)
 from models.Player_Stats.backtest_eligibility import (
     NBA_MINUTES,FOOTBALL_SNAPS,MIN_PASS_ATTEMPTS,MIN_CARRIES,MIN_RECEIVING_OPPORTUNITIES,
     receiving_opportunities,recorded_count,recorded_workload_rows,
@@ -457,6 +460,15 @@ def game_model(sport,key):
     return getattr(module,name)(module.ELOConfig.nba()) if sport=='NBA' and key=='elo' else getattr(module,name)()
 
 
+def calibration_bins(probabilities,outcomes):
+    """Group settled forecasts by predicted probability, including exact 0 and 1."""
+    p=np.asarray(probabilities,dtype=float);y=np.asarray(outcomes,dtype=float)
+    return [dict(predicted=float(p[mask].mean()),observed=float(y[mask].mean()),n=int(mask.sum()),
+                 lower=i/CALIBRATION_BINS,upper=(i+1)/CALIBRATION_BINS)
+            for i in range(CALIBRATION_BINS)
+            for mask in [(p>=i/CALIBRATION_BINS)&(p<((i+1)/CALIBRATION_BINS) if i<CALIBRATION_BINS-1 else p<=1)] if mask.any()]
+
+
 def diagnostics(records,tolerance):
     """One point forecast per evaluated game/target, not per alternate line."""
     if not records:return {}
@@ -478,9 +490,7 @@ def diagnostics(records,tolerance):
         p=np.array([r['probability'] for r in settled]);y=np.array([r['event_actual'] for r in settled])
         result.update(accuracy=float(np.mean((p>=.5)==y)),brier=float(np.mean((p-y)**2)),
             log_loss=float(-np.mean(y*np.log(p.clip(1e-12,1-1e-12))+(1-y)*np.log1p(-p.clip(1e-12,1-1e-12)))),
-            reliability=[dict(predicted=float(p[mask].mean()),observed=float(y[mask].mean()),n=int(mask.sum()),
-                              lower=i/CALIBRATION_BINS,upper=(i+1)/CALIBRATION_BINS) for i in range(CALIBRATION_BINS)
-                         for mask in [(p>=i/CALIBRATION_BINS)&(p<((i+1)/CALIBRATION_BINS) if i<CALIBRATION_BINS-1 else p<=1)] if mask.any()])
+            reliability=calibration_bins(p,y))
     return result
 
 
@@ -503,6 +513,10 @@ class BacktestingService:
         self.data=data or DataService()
         self.now=now or (lambda:pd.Timestamp.now(tz='UTC'))
         self._jobs={};self._jobs_lock=threading.RLock()
+        self._workers=set()
+        self._journal=BacktestJournal(self.root)
+        self._frozen_root=None
+        self._frozen_revisions=None
         self._report_lock=threading.Lock()
         self._publish_latest=publish_latest
         self.history_updater=history_updater
@@ -510,6 +524,9 @@ class BacktestingService:
         if isolated:
             from .backtest_process import BacktestProcesses
             self._processes=BacktestProcesses()
+        if publish_latest:
+            for job in self._journal.active():
+                if job['state']=='running':self._launch(job)
 
     def _remember_report(self,cache):
         if self._publish_latest:
@@ -520,55 +537,123 @@ class BacktestingService:
     def start(self,*,display_label=None,**parameters):
         """Run independently of other jobs and the HTTP request thread."""
         signature=sha256(json.dumps(parameters,sort_keys=True).encode()).hexdigest()
-        with self._jobs_lock:
-            for job_id,job in self._jobs.items():
-                if job['signature']==signature and job['state']=='running':return job_id
-            # Retain a bounded number of completed jobs; reports live on disk.
-            completed=[k for k,v in self._jobs.items() if v['state']!='running']
-            for old in completed[:-31]:self._jobs.pop(old,None)
-            job_id=uuid4().hex
-            self._jobs[job_id]=dict(signature=signature,state='running',percent=0,completed=0,total=0,
-                message='Waiting to start',parameters=parameters,
-                display_label=display_label or ('All teams' if parameters.get('entity','__all__')=='__all__' else str(parameters['entity'])))
-        def progress(done,total,message):
-            with self._jobs_lock:
-                self._jobs[job_id].update(completed=done,total=total,message=message,
-                    percent=min(99,int(100*done/total)) if total else 0)
-        def work():
-            try:
-                updater=getattr(self,'history_updater',None)
-                if updater is not None:
-                    progress(0,0,'Checking for newly published historical results')
-                    failed=updater.refresh_for_analysis(parameters['sport'])
-                    if failed:
-                        with self._jobs_lock:self._jobs[job_id]['history_notice']='Source refresh needs attention: '+', '.join(failed)
-                run_parameters=dict(parameters)
-                if parameters.get('sport')=='NBA' and parameters.get('group')=='game-outcome':
-                    run_parameters.setdefault('prepare_history',True)
-                if self._processes is None:
-                    result=self.run(**run_parameters,progress=progress)
-                else:
-                    result=self._processes.run(self.root,self.data,self.now(),run_parameters,progress)
-                    context=result['context']
-                    self._remember_report(self.root/context['sport'].lower()/context['group']/context['model']/(result['run_id']+'.json'))
-                with self._jobs_lock:
-                    job=self._jobs[job_id]
-                    job.update(state='completed',percent=100,result=result,
-                        reused=job['message']=='Loaded saved results',message='Completed'+(' · '+job['history_notice'] if job.get('history_notice') else ''))
-            except Exception as exc:
-                with self._jobs_lock:self._jobs[job_id].update(state='failed',message=str(exc))
-        threading.Thread(target=work,name='backtest-'+job_id[:8],daemon=True).start()
+        label=display_label or ('All teams' if parameters.get('entity','__all__')=='__all__' else str(parameters['entity']))
+        job_id=self._journal.create(uuid4().hex,signature,parameters,label,self.now().isoformat())
+        job=self._journal.read(job_id)
+        if job and job['state']=='running':self._launch(job)
         return job_id
 
+    def _launch(self, request):
+        job_id=request['id']
+        with self._jobs_lock:
+            if job_id in self._workers:return
+            completed=[k for k,v in self._jobs.items() if v['state'] not in ACTIVE_STATES]
+            for old in completed[:-31]:self._jobs.pop(old,None)
+            self._jobs[job_id]=dict(request)
+            self._workers.add(job_id)
+
+        def progress(done,total,message):
+            with self._jobs_lock:
+                job=self._jobs[job_id]
+                if done>=job['completed']:
+                    job.update(completed=done,total=total,percent=min(99,int(100*done/total)) if total else 0)
+                if job['state']=='running':job['message']=message
+
+        def work():
+            try:
+                directory=self._journal.job_dir(job_id)
+                with job_lock(directory/'controller.lock') as owned:
+                    if not owned:return
+                    current=self._journal.read(job_id)
+                    if current['state']!='running':return
+                    parameters=dict(current['parameters'])
+                    if self.history_updater is not None and not (directory/'inputs').exists():
+                        progress(0,0,'Checking for newly published historical results')
+                        failed=self.history_updater.refresh_for_analysis(parameters['sport'])
+                        if failed:
+                            with self._jobs_lock:
+                                self._jobs[job_id]['history_notice']='Source refresh needs attention: '+', '.join(failed)
+                    if parameters.get('sport')=='NBA' and parameters.get('group')=='game-outcome':
+                        parameters.setdefault('prepare_history',True)
+                    as_of=pd.Timestamp(current['as_of'])
+                    if self._processes is None:
+                        replay=copy(self)
+                        replay.now=lambda:as_of
+                        with self._journal.connect() as db:
+                            result=replay.run(**parameters,progress=progress,
+                                              _checkpoint=ReplayCheckpoint(db,job_id))
+                    else:
+                        result=self._processes.run(self.root,self.data,as_of,parameters,progress,job_id=job_id)
+                        context=result['context']
+                        self._remember_report(self.root/context['sport'].lower()/context['group']/context['model']/(result['run_id']+'.json'))
+                    with self._jobs_lock:
+                        job=self._jobs[job_id]
+                        reused=job['message']=='Loaded saved results'
+                        message='Completed'+(' · '+job['history_notice'] if job.get('history_notice') else '')
+                    self._journal.finish(job_id,'completed',message,run_id=result.get('run_id'),reused=reused)
+                    from .backtest_inputs import release_inputs
+                    release_inputs(directory)
+                    with self._jobs_lock:
+                        job.update(state='completed',percent=100,result=result,reused=reused,message=message)
+            except BacktestPaused:
+                pass
+            except BacktestInterrupted:
+                from .backtest_process import shutting_down
+                if not shutting_down():
+                    self._journal.set_state(job_id,'running','paused','Worker stopped. Resume from the saved checkpoint.')
+            except Exception as exc:
+                self._journal.finish(job_id,'failed',str(exc))
+                with self._jobs_lock:self._jobs[job_id].update(state='failed',message=str(exc))
+            finally:
+                with self._jobs_lock:
+                    self._workers.discard(job_id)
+                    if self._jobs.get(job_id,{}).get('state') in ACTIVE_STATES:self._jobs.pop(job_id,None)
+        threading.Thread(target=work,name='backtest-'+job_id[:8],daemon=True).start()
+
+    def pause(self, job_id):
+        if not self._journal.path.exists():return False
+        with self._jobs_lock:
+            if not self._journal.set_state(job_id,'running','paused','Paused. Resume from this checkpoint.'):return False
+            if job_id in self._workers:
+                self._jobs[job_id].update(state='pausing',message='Pausing after the current replay step.')
+            return True
+
+    def resume(self, job_id):
+        if not self._journal.path.exists():return False
+        with self._jobs_lock:
+            if job_id in self._workers:return False
+            if not self._journal.set_state(job_id,'paused','running','Resuming saved backtest'):return False
+            self._launch(self._journal.read(job_id))
+            return True
+
     def progress(self,job_id):
-        with self._jobs_lock:return dict(self._jobs[job_id]) if job_id in self._jobs else None
+        with self._jobs_lock:
+            if job_id in self._jobs:return dict(self._jobs[job_id])
+        job=self._journal.read(job_id)
+        if job and job['state']=='completed':
+            params=job['parameters']
+            result=self.saved(params['sport'],params['group'],params['key'],job['run_id'])
+            if result is None:
+                job.update(state='failed',message='The completed backtest report is unavailable.')
+            else:job['result']=result
+        return job
 
     def active_jobs(self):
         """Small independent snapshots for the global monitor, without reports."""
         with self._jobs_lock:
+            jobs={job['id']:job for job in self._journal.active()}
+            jobs.update(self._jobs)
             return [dict(id=job_id,state=job['state'],percent=job['percent'],completed=job['completed'],
                 total=job['total'],message=job['message'],display_label=job['display_label'],
-                parameters=dict(job['parameters'])) for job_id,job in self._jobs.items() if job['state']=='running']
+                parameters=dict(job['parameters'])) for job_id,job in jobs.items() if job['state'] in ACTIVE_STATES]
+
+    def active_job_for_page(self,context):
+        for job in reversed(self._journal.active()):
+            params=job['parameters']
+            if ((params.get('sport'),params.get('group'),params.get('key'),params.get('workspace','backtesting'))
+                    ==(context['sport'],context['group'],context['model'],context.get('workspace','backtesting'))):
+                return job['id']
+        return None
 
     def available_games(self,sport,group,key,entity,market=None,start=None,end=None,include_playoffs=False,team_filter=None):
         lower,upper=evaluation_bounds(start,end,self.now())
@@ -587,11 +672,15 @@ class BacktestingService:
 
     def _player_evaluation_rows(self,candidates,sport,market,history,limit=None):
         if sport=='NFL' and not candidates.empty:
-            candidates=nfl_workload(candidates,ROOT/'data/modeling/nfl/raw')
+            candidates=nfl_workload(candidates,self.input_root/'data/modeling/nfl/raw')
         return player_backtest_rows(candidates,sport,market,history=history,limit=limit)
 
+    @property
+    def input_root(self):
+        return self._frozen_root or ROOT
+
     def game_inputs(self,sport,key):
-        directory=ROOT/'data/modeling'/sport.lower()
+        directory=self.input_root/'data/modeling'/sport.lower()
         dataset=None
         if sport=='NBA' and key=='epa':directory=directory/'epa'
         if sport=='NBA' and key in NBA_PACE_INPUT_METHODS:directory=directory/'pace'
@@ -615,11 +704,10 @@ class BacktestingService:
             dataset=NBAEPADataset(frame,ids,np.asarray(xx),np.asarray(xy),{})
         return frame,dataset
 
-    def player_inputs(self,sport):
-        frames=[]
+    def _player_source_frames(self,sport,columns=None):
+        paths=[]
         if sport=='NCAAF':
-            for path in sorted((ROOT/'data/modeling/ncaaf').glob('player_games_*.csv'),key=lambda p:p.stat().st_mtime_ns):
-                frames.append(read_input_csv(path,{'entity_id':str,'game_id':str}))
+            paths=sorted((self.input_root/'data/modeling/ncaaf').glob('player_games_*.csv'),key=lambda p:p.stat().st_mtime_ns)
         else:
             with self.data.connect() as db:
                 saved=db.execute('SELECT key, query FROM datasets ORDER BY fetched_at, rowid').fetchall()
@@ -627,13 +715,29 @@ class BacktestingService:
                 query=json.loads(raw)
                 if query.get('sport')==sport and query.get('entity_type')=='player':
                     cached=self.data.cached(key)
-                    if cached is not None:frames.append(season_phases(cached.frame,sport,default=query.get('season_type')))
-        imported=ROOT/'data/modeling/player_stats/whp/imports'/f'{sport.lower()}.csv'
-        if imported.exists():frames.append(read_input_csv(imported,{'entity_id':str,'game_id':str}))
+                    if cached is not None:
+                        yield cached.frame if columns else season_phases(cached.frame,sport,default=query.get('season_type'))
+        imported=self.input_root/'data/modeling/player_stats/whp/imports'/f'{sport.lower()}.csv'
+        if imported.exists():paths.append(imported)
+        for path in paths:
+            try:
+                yield read_input_csv(path,{'entity_id':str,'game_id':str},columns)
+            except (OSError,ValueError):
+                if columns is None:raise
+
+    def saved_player_metadata(self,sport,game_ids):
+        """Read identity and position from local box scores for legacy reports."""
+        columns=['game_id','entity_name','team','entity_id','position']
+        rows=[frame.loc[frame.game_id.astype(str).isin(game_ids),columns]
+              for frame in self._player_source_frames(sport,columns) if set(columns)<=set(frame)]
+        return pd.concat(rows,ignore_index=True) if rows else pd.DataFrame(columns=columns)
+
+    def player_inputs(self,sport):
+        frames=list(self._player_source_frames(sport))
         if not frames:raise DataSourceError(f'No saved {sport} player history. Load a player in Historical Data or prepare player inputs first.')
         frame=pd.concat(frames,ignore_index=True)
         # Recover dates from the saved NFL schedule, as the forecast repository does.
-        schedule=ROOT/'data/modeling/nfl/raw/games.csv'
+        schedule=self.input_root/'data/modeling/nfl/raw/games.csv'
         if sport=='NFL' and schedule.exists():
             dates=read_input_csv(schedule,{'game_id':str},['game_id','gameday']).drop_duplicates('game_id').set_index('game_id').gameday
             frame['event_date']=pd.to_datetime(frame.event_date,utc=True,errors='coerce',format='mixed').fillna(
@@ -646,7 +750,7 @@ class BacktestingService:
 
     def phase_map(self,sport):
         """Recover phase metadata for older prepared files without downloading."""
-        directory=ROOT/'data/modeling'/sport.lower()
+        directory=self.input_root/'data/modeling'/sport.lower()
         paths=list(directory.glob('team_games_*.csv'))
         if sport=='NFL' and (directory/'raw/games.csv').exists():paths.append(directory/'raw/games.csv')
         if sport=='NCAAF':paths.extend((directory/'raw').glob('games_*.json'))
@@ -655,7 +759,7 @@ class BacktestingService:
 
     @lru_cache(maxsize=8)
     def _phase_map(self,sport,revision):
-        known={};directory=ROOT/'data/modeling'/sport.lower()
+        known={};directory=self.input_root/'data/modeling'/sport.lower()
         for path in directory.glob('team_games_*.csv'):
             data=read_input_csv(path,{'game_id':str})
             phase=next((p for p in ['regular','postseason'] if path.stem.endswith('_'+p)),None)
@@ -702,8 +806,38 @@ class BacktestingService:
             service=service_class(repository=UsageHistoryRepository(data=self.data))
         else:
             service=service_class()
+        if self._frozen_root is not None:
+            data=self._frozen_role_data if key in {'uo','oam','pge'} else self.data
+            repository=service.repository
+            repository.data=repository.players.data=data
+            modeling=self.input_root/'data/modeling'
+            repository.players.root=modeling/'player_stats/whp'
+            repository.players.college_directory=modeling/'ncaaf'
+            repository.players.schedule_path=modeling/'nfl/raw/games.csv'
+            if key=='pge':repository.pbp_root=modeling/'nfl/raw'
+            if key=='ila':
+                from .availability import AvailabilityStore
+                service.availability=AvailabilityStore(self.input_root/'data/information_variable/availability')
+                service.lineup_directory=modeling/'player_stats/injury_lineup_adjusted/lineups'
         service.repository.root=self.root/'model_cache'/key
         return service
+
+    def _frozen_replay(self, checkpoint, sport, group, key):
+        from .backtest_inputs import pin_inputs
+        directory=self._journal.job_dir(checkpoint.job_id)
+        role_data=DataService() if group=='player-stats' and key in {'uo','oam','pge'} else self.data
+        revisions=(source_revisions(injury_reports=key=='ila')
+                   if group=='player-stats' and key!='whp' and not (directory/'inputs').exists() else [])
+        root=pin_inputs(directory,ROOT,self.data.path.resolve(),role_data.path.resolve(),sport,group,key,
+                        revisions,checkpoint.check_running)
+        manifest=json.loads((root/'sources.json').read_text(encoding='utf-8'))
+        replay=copy(self)
+        replay._frozen_root=root
+        replay._frozen_revisions=manifest['revisions']
+        if group=='player-stats':
+            replay.data=DataService(root/'primary.sqlite3')
+            replay._frozen_role_data=DataService(root/'roles.sqlite3') if manifest['separate_role_cache'] else replay.data
+        return replay
 
     def saved(self,sport,group,key,run_id):
         """Restore one page's report by its opaque ID, including after restart."""
@@ -771,7 +905,8 @@ class BacktestingService:
         return None
 
     def run(self,sport,group,key,entity='__all__',market=None,start=None,end=None,limit=None,tolerance=5,line=None,
-            include_playoffs=False,lookback=None,progress=None,config_overrides=None,team_filter=None,workspace='backtesting',prepare_history=False):
+            include_playoffs=False,lookback=None,progress=None,config_overrides=None,team_filter=None,workspace='backtesting',prepare_history=False,
+            _checkpoint=None):
         if sport not in {'NBA','NFL','NCAAF'} or group not in {'game-outcome','player-stats'}:raise ValueError('Choose a valid sport and model.')
         if workspace not in {'backtesting','research'}:raise ValueError('Choose a valid backtesting workspace.')
         if team_filter is not None and not isinstance(team_filter,str):raise ValueError('Choose one saved team or all teams.')
@@ -785,13 +920,20 @@ class BacktestingService:
         if not isinstance(tolerance,(int,float)) or not math.isfinite(tolerance) or tolerance<0:raise ValueError('Tolerance must be a finite nonnegative number.')
         if line is not None and (not isinstance(line,(int,float)) or not math.isfinite(line)):raise ValueError('Reference line must be a finite number.')
         lower,upper=evaluation_bounds(start,end,self.now())
+        if _checkpoint:
+            report=progress
+            def progress(done,total,message):
+                _checkpoint.check_running()
+                if report:report(done,total,message)
         if progress:progress(0,0,'Preparing saved inputs')
         if group=='game-outcome':
             model=game_model(sport,key)
             model.config=configured(model.config,config_overrides)
-            if prepare_history and sport=='NBA':
+            pinned=_checkpoint and (self._journal.job_dir(_checkpoint.job_id)/'inputs').exists()
+            if prepare_history and sport=='NBA' and not pinned:
                 from .backtest_history import NBAReplayHistory
                 NBAReplayHistory(self).ensure(key,entity,limit,lower,upper,include_playoffs,model.config,progress)
+            if _checkpoint:self=self._frozen_replay(_checkpoint,sport,group,key)
             frame,dataset=self.game_inputs(sport,key)
             frame=season_phases(frame,sport)
             frame=frame[frame.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
@@ -803,6 +945,7 @@ class BacktestingService:
             config=asdict(model.config)
         else:
             if not valid_report_page(sport,group,key):raise ValueError('Choose an available player model.')
+            if _checkpoint:self=self._frozen_replay(_checkpoint,sport,group,key)
             frame=season_phases(self.player_inputs(sport),sport);dataset=None
             frame=frame[frame.season_type.isin(['regular','postseason'] if include_playoffs else ['regular'])]
             spec=stat_spec(sport,market or '')
@@ -830,9 +973,10 @@ class BacktestingService:
         if progress:progress(0,len(games),'Checking saved runs')
         signature=implementation_signature(tuple(file_revision(p) for p in sorted([Path(__file__),*ROOT.joinpath('models').rglob('*.py'),
             ROOT/'sports_analytics/ncaaf_model_data.py'])))
-        # Game models use only the complete frame hashed below. Player models
+        # Game models and WHP use the frames hashed here. Joint player models
         # additionally read league/team histories from their repositories.
-        source_state=source_revisions(injury_reports=True) if key=='ila' else source_revisions() if group=='player-stats' else []
+        source_state=(self._frozen_revisions if self._frozen_revisions is not None else
+                      source_revisions(injury_reports=key=='ila') if group=='player-stats' and key!='whp' else [])
         identity=dict(sport=sport,group=group,model=key,entity=entity,market=market,start=start,end=end,limit=limit,
                       tolerance=tolerance,line=line,include_playoffs=include_playoffs,lookback=lookback,
                       interval_level=PREDICTIVE_INTERVAL,config=config,implementation=signature,
@@ -840,8 +984,16 @@ class BacktestingService:
         if workspace=='research' or team_filter is not None:identity.update(workspace=workspace,team_filter=team_filter)
         if group=='player-stats':identity['player_cohort']=PLAYER_COHORTS[sport]
         identity['evaluation_games']=[str((g.iloc[0] if group=='game-outcome' else g).game_id) for g in games]
+        if group=='player-stats':identity['evaluation_inputs']=repr(fingerprint(candidates))
         if sport=='NBA' and group=='game-outcome' and key=='epa':identity['evaluation_inputs']=repr(fingerprint(targets))
         cache=self.root/sport.lower()/group/key/(sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
+        result=dict(context={k:identity[k] for k in ['sport','group','model','entity','market','start','end','limit','tolerance','line','include_playoffs','lookback','interval_level']},
+            records=[],skipped=[],created_at=datetime.now(timezone.utc).isoformat(),config=config,run_id=cache.stem)
+        if workspace=='research' or team_filter is not None:result['context'].update(workspace=workspace,team_filter=team_filter)
+        if 'player_cohort' in identity:result['context']['player_cohort']=identity['player_cohort']
+        result['context']['entity_label']=(('All teams' if entity=='__all__' else str(entity)) if group=='game-outcome' else
+            ('All players'+(' · '+team_filter if team_filter else '') if entity=='__all__' else str(selected.iloc[-1].entity_name)))
+        done=_checkpoint.restore(identity,result,len(games)) if _checkpoint else 0
         if cache.exists():
             saved=json.loads(cache.read_text(encoding='utf-8'))
             if saved.get('identity')==identity:
@@ -850,14 +1002,10 @@ class BacktestingService:
                 self._remember_report(cache)
                 if progress:progress(len(games),len(games),'Loaded saved results')
                 return result
-        result=dict(context={k:identity[k] for k in ['sport','group','model','entity','market','start','end','limit','tolerance','line','include_playoffs','lookback','interval_level']},
-            records=[],skipped=[],created_at=datetime.now(timezone.utc).isoformat(),config=config,run_id=cache.stem)
-        if workspace=='research' or team_filter is not None:result['context'].update(workspace=workspace,team_filter=team_filter)
-        if 'player_cohort' in identity:result['context']['player_cohort']=identity['player_cohort']
-        result['context']['entity_label']=(('All teams' if entity=='__all__' else str(entity)) if group=='game-outcome' else
-            ('All players'+(' · '+team_filter if team_filter else '') if entity=='__all__' else str(selected.iloc[-1].entity_name)))
-        if group=='game-outcome':self._games(result,model,frame,dataset,games,progress)
-        else:self._players(result,sport,key,frame,selected,games,spec,market,line,progress)
+        if done and progress:progress(done,len(games),'Continuing from saved predictions')
+        resume=dict(checkpoint=_checkpoint,start_at=done) if _checkpoint else {}
+        if group=='game-outcome':self._games(result,model,frame,dataset,games,progress,**resume)
+        else:self._players(result,sport,key,frame,selected,games,spec,market,line,progress,**resume)
         if not result['records']:
             reasons=list(dict.fromkeys(r['reason'] for r in result['skipped']))[:3]
             raise DataSourceError('No out-of-sample predictions could be evaluated. '+' '.join(reasons))
@@ -871,10 +1019,11 @@ class BacktestingService:
         return result
 
     @replay_scope
-    def _games(self,result,model,frame,dataset,games,progress=None):
+    def _games(self,result,model,frame,dataset,games,progress=None,*,checkpoint=None,start_at=0):
         history=ReplayHistory(frame)
         previous_cutoff=None
-        for number,pair in enumerate(games,1):
+        for number,pair in enumerate(games[start_at:],start_at+1):
+            previous_records,previous_skips=len(result['records']),len(result['skipped'])
             h=pair[pair.is_home.eq(1)].iloc[0];a=pair[pair.is_home.eq(0)].iloc[0]
             try:
                 cutoff=h.event_date
@@ -891,6 +1040,7 @@ class BacktestingService:
                 margin=float(h.points-a.points);total=float(h.points+a.points)
                 prob=forecast.spread(forecast.home_team,0).probability
                 common=dict(game_id=str(h.game_id),date=cutoff.isoformat(),label=f'{a.team} @ {h.team}',
+                    home_team=str(h.team),away_team=str(a.team),
                     probability=prob,event_actual=int(margin>0) if margin else None,push=margin==0,
                     actual_margin=margin,predicted_margin=forecast.margin_mean,
                     actual_total=total,predicted_total=forecast.total_mean,
@@ -907,11 +1057,11 @@ class BacktestingService:
                 result['records'].append(common)
             except (ValueError,RuntimeError,OSError,np.linalg.LinAlgError) as exc:
                 result['skipped'].append(dict(game_id=str(h.game_id),date=h.event_date.isoformat(),reason=str(exc)))
-            finally:
-                if progress:progress(number,len(games),f'Evaluated {number:,} of {len(games):,} games')
+            if checkpoint:checkpoint.record(number,result,previous_records,previous_skips)
+            if progress:progress(number,len(games),f'Evaluated {number:,} of {len(games):,} games')
 
     @replay_scope
-    def _players(self,result,sport,key,frame,selected,games,spec,market,line,progress=None):
+    def _players(self,result,sport,key,frame,selected,games,spec,market,line,progress=None,*,checkpoint=None,start_at=0):
         from models.Player_Stats.Weighted_Historical_Performance.core import WHPConfig,WeightedHistoricalPerformance
         service=self.player_service(key) if key!='whp' else None
         team_games,_=self.game_inputs(sport,'ppp') if service else (None,None)
@@ -955,7 +1105,8 @@ class BacktestingService:
         else:names={}
         player_histories={str(entity):ReplayHistory(rows[rows.value.notna()])
                           for entity,rows in selected.groupby('entity_id',sort=False)}
-        for number,game in enumerate(games,1):
+        for number,game in enumerate(games[start_at:],start_at+1):
+            previous_records,previous_skips=len(result['records']),len(result['skipped'])
             try:
                 cutoff=game.event_date
                 own=player_histories[str(game.entity_id)]
@@ -984,15 +1135,23 @@ class BacktestingService:
                     forecast=joint_forecast;fitted=forecast.forecasts.get((game.entity_name,market))
                     if fitted is None:raise DataSourceError(forecast.errors.get((game.entity_name,market),'Required opportunity history is unavailable.'))
                 price=fitted.market(line,'Over') if line is not None else None
+                baseline=float(past.value.tail(5).mean()) if len(past) else None
+                position=game.get('position')
                 actual=float(game.value);mean=float(getattr(fitted,'mean'))
                 record=dict(game_id=str(game.game_id),date=cutoff.isoformat(),
-                    label=f'{game.entity_name} · {game.team} vs {game.get("opponent","")}',actual=actual,predicted=mean,
+                    label=f'{game.entity_name} · {game.team} vs {game.get("opponent","")}',
+                    player_id=str(game.entity_id),player_name=str(game.entity_name),team=str(game.team),
+                    position=str(position).strip() if pd.notna(position) else None,actual=actual,predicted=mean,
                     lower=player_quantile(fitted,(1-PREDICTIVE_INTERVAL)/2),
                     upper=player_quantile(fitted,(1+PREDICTIVE_INTERVAL)/2),interval_level=PREDICTIVE_INTERVAL,
-                    baseline=float(past.value.tail(5).mean()) if len(past) else None,
+                    baseline=baseline,
                     probability=price.probability if price else None,
                     event_actual=int(actual>line) if line is not None and actual!=line else None,
                     push=bool(line is not None and actual==line),latest_training=fitted.diagnostics.get('last_game_date'))
+                if line is None and baseline is not None and math.isfinite(baseline):
+                    # Keep the chart event separate from explicitly requested line metrics.
+                    reference=math.floor(baseline)+.5
+                    record.update(calibration_line=reference,calibration_probability=fitted.market(reference,'Over').probability)
                 if key in {'ptr','ila'}:
                     minutes=pd.to_numeric(game.get('min'),errors='coerce')
                     record.update(actual_minutes=float(minutes) if pd.notna(minutes) and np.isfinite(minutes) else None,
@@ -1007,5 +1166,5 @@ class BacktestingService:
             except (ValueError,RuntimeError,OSError,IndexError,np.linalg.LinAlgError) as exc:
                 result['skipped'].append(dict(game_id=str(game.game_id),date=game.event_date.isoformat(),
                     reason=(str(game.entity_name)+': ' if aggregate else '')+str(exc)))
-            finally:
-                if progress:progress(number,len(games),f'Evaluated {number:,} of {len(games):,} '+('player appearances' if aggregate else 'games'))
+            if checkpoint:checkpoint.record(number,result,previous_records,previous_skips)
+            if progress:progress(number,len(games),f'Evaluated {number:,} of {len(games):,} '+('player appearances' if aggregate else 'games'))

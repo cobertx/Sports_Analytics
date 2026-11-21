@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from hashlib import sha256
 from dash import html
 from models.Game_Outcome.PPP.PPP import MarketProbability
-from app.sections.markets.player_distribution import distribution,payload_panel
+from app.sections.markets.player_distribution import distribution,payload_panel,threshold_curve
 from sports_analytics.display_time import format_eastern
 
 
@@ -24,6 +24,17 @@ def distributions(forecast, source, method):
             result[key]=payload
         except (ValueError,TypeError,OverflowError) as exc:errors.append(f'{title}: {exc}')
     return result,errors
+
+
+def curve(payloads, market, group, *, home=False):
+    payload=(payloads or {}).get('margin' if market=='alternate_spreads' else 'total')
+    if not payload:
+        return None
+    if market=='alternate_spreads':
+        # Away margin is the negative of home margin. The handicap has
+        # the opposite sign of the margin required to cover.
+        return threshold_curve(payload,above=home,reverse_axis=home)
+    return threshold_curve(payload,above=group=='gt')
 
 
 def panel(models,method,scope):

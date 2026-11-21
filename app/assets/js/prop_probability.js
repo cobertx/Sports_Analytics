@@ -26,7 +26,7 @@
     });
     pending.set(result, observer);
     observer.observe(result, {childList:true, subtree:true, attributes:true, attributeFilter:['data-prop-chart-click']});
-    const request = ['summary','kalshi'].includes(selection.view) ? `${selection.view}-prop-request` : {type:'prop-chart-request', view:selection.view};
+    const request = ['market','summary','kalshi','polymarket'].includes(selection.view) ? `${selection.view}-prop-request` : {type:'prop-chart-request', view:selection.view};
     window.dash_clientside.set_props(request, {'data-selection': {...selection, click}});
   });
 })();

@@ -10,6 +10,8 @@ from sports_analytics.data import DataSourceError
 from sports_analytics.display_time import format_eastern
 from sports_analytics.kalshi import CATEGORIES
 from sports_analytics.kalshi_analysis import FILTER,identity,quick_scope,model_matches,definition,calculate,decorate,rank,quick_calculate,prompt_targets
+from sports_analytics import market_summary as summary_analysis
+from app.sections.market_summary import summary_probability
 from app.sections.markets import quick_methods
 from app.sections.markets.market_view import probability_text
 from app.sections.markets.mispricing import criteria_values, selected_methods, method_details, quick_finish_progress, quick_progress
@@ -29,7 +31,8 @@ def results(snapshot, ranked, criteria, models):
     if player_lines:
         def render(key,selection):
             return prop_probability.chart(key, (line for line in prop_lines(player_lines,snapshot['sport'])
-                                                 if line['method'] in selection['methods']))
+                                                if line['method'] in selection['methods']),
+                fits={method:fit for method,fit in ranked.get('player_fits',{}).items() if method in selection['methods']})
         view,panel=prop_probability.mount(render)
 
     def table_row(item,rank):
@@ -185,15 +188,28 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
     @app.callback(Output('kalshi-game-distributions','children'),
                   Input('kalshi-models','data'),Input('kalshi-context','data'),Input('kalshi-game-method','value'),
                   Input('kalshi-player-method','value'),Input('kalshi-snapshot','value'),Input('kalshi-category','value'),
-                  State('workspace-page','value'),State('market-url','hash'),prevent_initial_call=True)
-    def kalshi_game_distributions(models,game,method,player_method,selected,category,page,location):
+                  State('workspace-page','value'),State('market-url','hash'),Input('kalshi-quotes','data'),prevent_initial_call=True)
+    def kalshi_game_distributions(models,game,method,player_method,selected,category,page,location,snapshot=None):
         # Retain the chart for a warm return. The market shell hides it while its route or quotes are stale.
         if page!='kalshi' or not game or route(location)!=(game['sport'],game['id']):raise PreventUpdate
-        if category!='Game Lines':return []
-        if not model_matches(models,game,selected,method,player_method):return []
-        if models.get('pending') and not models.get('keep_visible'):return []
-        from app.sections.markets.game_distribution import panel
-        return panel(models,method,'|'.join([game['sport'],game['id'],selected]))
+        if category!='Game Lines' or not snapshot or (snapshot.get('sport'),snapshot.get('game_id'),snapshot.get('category'),
+                snapshot.get('selection',selected))!=(game['sport'],game['id'],category,selected):
+            return []
+        bundle=summary_analysis.exchange_bundle('Kalshi',game,snapshot)
+        if bundle is None:
+            return html.P('Team identities are needed to compare spreads and totals.',className='chart-note')
+        matching=model_matches(models,game,selected,method,player_method)
+        waiting=not matching or models.get('pending',False)
+        shown=decorate(snapshot,game,selected,method,player_method,models)
+        rows=summary_analysis.entries(bundle)
+        for row in rows:
+            original=shown['rows'][row['index']]
+            row['probability']=original.get(row['side']+'_probability')
+            row['method']=original['model_method']
+        distributions=models.get('game_distributions') if matching and (not waiting or models.get('keep_visible')) else None
+        return html.Section([html.H2('Game outcome distributions'),
+            *summary_probability.panel(bundle,rows,method,waiting,distributions=distributions)],
+            className='game-distribution-market')
 
     app.clientside_callback('''function(models,selection,page){
         if(!selection||!models||models.pending||page!=='kalshi')return window.dash_clientside.no_update;
@@ -206,7 +222,7 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
                   Input('kalshi-context','data'),
                   Input('kalshi-game-method','value'),Input('kalshi-player-method','value'),
                   Input('kalshi-snapshot','value'),Input('kalshi-category','value'),
-                  State('kalshi-quotes','data'),State('kalshi-models','data'),
+                  Input('kalshi-quotes','data'),State('kalshi-models','data'),
                   State('workspace-page','value'),State('market-url','hash'),prevent_initial_call=True)
     def kalshi_prop_probabilities(selection,_model_revision,game,method,player_method,selected,category,snapshot,models,page,location):
         if not selection:
@@ -219,7 +235,8 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
             return None
         shown=decorate(snapshot,game,selected,method,player_method,models)
         waiting=not model_matches(models,game,selected,method,player_method) or models.get('pending')
-        content=prop_probability.chart(selection['key'],prop_lines(shown['rows'],game['sport']),waiting=waiting)
+        fits={player_method:models.get('player_fits',{}).get(category)} if not waiting else None
+        content=prop_probability.chart(selection['key'],prop_lines(shown['rows'],game['sport']),waiting=waiting,fits=fits)
         return prop_probability.clicked(content,selection)
 
     @app.callback(Output(rows,'children'),Output(rows,'className'),

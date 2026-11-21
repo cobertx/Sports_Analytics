@@ -55,7 +55,7 @@ class KalshiAnalysisChecks(TestCase):
         return calculate(self.game,snapshot or self.snapshot,'live',method,player_method,self.game_engine,self.player_engine,previous)
 
     def test_game_distributions_match_actual_integer_settlement_and_nba_no_tie_rule(self):
-        from app.sections.markets.game_distribution import distributions,panel
+        from app.sections.markets.game_distribution import curve,distributions,panel
         from models.Game_Outcome.PPP.NBA_PPP import NBAPPPForecast
         from models.Game_Outcome.ELO.ELO import NBAELOForecast,ELOForecast
         from dash import dcc
@@ -71,6 +71,14 @@ class KalshiAnalysisChecks(TestCase):
                 self.assertAlmostEqual(sum(payload['mass'])+payload['below']+payload['above'],1,places=12)
                 self.assertEqual(payload['method'],method)
             if issubclass(kind,NBAPPPForecast):self.assertAlmostEqual(data['margin']['mass'][data['margin']['x'].index(0)],0)
+            for team,home in [('HOME',True),('AWAY',False)]:
+                lines,probabilities=curve(data,'alternate_spreads',team,home=home)
+                self.assertEqual(lines,sorted(lines))
+                for line in (-3.5,-.5,.5,3.5):
+                    self.assertAlmostEqual(probabilities[lines.index(line)],forecast.spread(team,line).win,places=12)
+            for side,direction in [('Over','gt'),('Under','lt')]:
+                lines,probabilities=curve(data,'alternate_totals',direction)
+                self.assertAlmostEqual(probabilities[lines.index(47.5)],forecast.total(47.5,side).win,places=12)
             view=panel(dict(game_distributions=data,cutoff=NOW.isoformat()),method,'fixture')
             self.assertFalse(view.open)
             self.assertEqual(len([c for c in components(view) if isinstance(c,dcc.Store)]),2)
@@ -224,15 +232,20 @@ class KalshiFilterCallbacks(TestCase):
         models=self.cb['kalshi_models'](snapshot,None,self.game,'PPP','WHP','live','kalshi','Game Lines',None)
         for engine in self.engines.values():engine.forecast.reset_mock()
         self.exchange.quotes.reset_mock()
-        args=[models,self.game,'PPP','WHP','live','Game Lines','kalshi',view.href(self.game['sport'],self.game['id'])]
+        snapshot={**snapshot,'selection':'live'}
+        args=[models,self.game,'PPP','WHP','live','Game Lines','kalshi',view.href(self.game['sport'],self.game['id']),snapshot]
         output=self.cb['kalshi_game_distributions'](*args)
-        self.assertIn('Forecast distributions',str(output));self.assertFalse(output.open)
-        for index,value in [(2,'EPA'),(4,'saved-other'),(5,'Passing Props')]:
+        self.assertIn('Game outcome distributions',str(output))
+        self.assertIn('PPP calculated distribution',str(output))
+        self.assertIn('Kalshi implied',str(output))
+        for index,value in [(4,'saved-other'),(5,'Passing Props')]:
             changed=list(args);changed[index]=value;self.assertEqual(self.cb['kalshi_game_distributions'](*changed),[])
         for index,value in [(6,'historical'),(7,'#nfl-kalshi-game-OTHER')]:
             changed=list(args);changed[index]=value
             with self.assertRaises(PreventUpdate):self.cb['kalshi_game_distributions'](*changed)
-        self.assertEqual(self.cb['kalshi_game_distributions']({**models,'pending':True,'keep_visible':False},*args[1:]),[])
+        pending=self.cb['kalshi_game_distributions']({**models,'pending':True,'keep_visible':False},*args[1:])
+        self.assertIn('Kalshi implied',str(pending))
+        self.assertNotIn('PPP calculated distribution',str(pending))
         for engine in self.engines.values():engine.forecast.assert_not_called()
         self.exchange.quotes.assert_not_called()
 

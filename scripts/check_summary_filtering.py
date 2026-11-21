@@ -180,7 +180,7 @@ class SummaryFilteringChecks(TestCase):
         done=f.cb['summary_quick_results'](quick,f.data,'Game Lines','123','market-summary','NFL',1,None)[2]
         self.assertEqual(done['status'],'complete')
         callback=f.cb['summary_game_probabilities']
-        args=(True,f.data,models,'Game Lines','123','PPP','WHP')
+        args=(f.data,models,'Game Lines','123','PPP','WHP')
         scope=('NFL','market-summary',None)
         engine_counts={key:engine.forecast.call_count for key,engine in f.engines.items()}
         waiting,_=callback(*args,applied,quick,None,*scope)
@@ -192,7 +192,7 @@ class SummaryFilteringChecks(TestCase):
         overridden,_=callback(*args,newer,quick,done,*scope)
         self.assertIn('Meets criteria',str(overridden))
         self.assertNotIn('Quick Filtering matches',str(overridden))
-        changed,_=callback(True,{**f.data,'id':'new'},*args[2:],applied,quick,done,*scope)
+        changed,_=callback({**f.data,'id':'new'},*args[1:],applied,quick,done,*scope)
         self.assertIn('Run Quick Filtering again',str(changed))
         self.assertEqual({key:engine.forecast.call_count for key,engine in f.engines.items()},engine_counts)
         f.fd.pull.assert_not_called()

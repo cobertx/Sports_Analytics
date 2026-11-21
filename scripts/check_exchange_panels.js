@@ -18,11 +18,6 @@ function checkExchangePanels(source) {
       check(writes.at(-1).props.open === false, 'Closing stops panel refreshes');
     }
   }
-  const summaryId = 'summary-game-probabilities';
-  handler({target: {id: summaryId, open: true}});
-  check(writes.at(-1).id === summaryId && writes.at(-1).props.open === true, 'Opening loads the probability charts');
-  handler({target: {id: summaryId, open: false}});
-  check(writes.at(-1).props.open === false, 'Closing stops rebuilding the probability charts');
   const count = writes.length;
   handler({target: {id: 'market-section-abc', open: true}});
   handler({target: {open: true}});

@@ -145,7 +145,7 @@ def register(app,service):
                 'Showing only the observations used in the Performance Summary comparison. ',
                 html.A('Open the complete saved backtest',href=summary_href(context,route['model'],result['run_id'],target)),
             ],className='backtest-status')])
-        return render(result,target),settings,status,False,style,signature
+        return render(result,target,player_metadata=service.saved_player_metadata),settings,status,False,style,signature
 
     @app.callback(Output('backtest-summary-download','data'),Input('backtest-summary-export','n_clicks'),
                   State('workspace-page','value'),State('sport','value'),State('market-url','hash'),

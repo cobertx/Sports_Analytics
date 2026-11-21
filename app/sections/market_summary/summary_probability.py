@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from app.sections.exchanges.kalshi_view import team_identity
 from app.sections.markets.market_view import criteria_match, probability_text
 from app.sections.markets.prop_probability import SOURCE_STYLES
+from app.sections.markets.game_distribution import curve
 from app.sections.market_summary.market_summary_view import odds_text, shared_estimate
 from app.components.presentation import chart_style
 
@@ -53,14 +54,14 @@ def best_matches(rows):
     return groups
 
 
-def comparison_figure(points, method, axis_title, matches=None, match_label='Meets criteria'):
+def comparison_figure(points, method, axis_title, matches=None, match_label='Meets criteria', model_curve=None):
     figure = go.Figure()
     labels = [[label, 'Pushes excluded' if push else 'Full settlement probability']
               for label, push, _ in points.values()]
     forecast = [shared_estimate(quotes)['probability'] for _, _, quotes in points.values()]
     if any(value is not None for value in forecast):
         figure.add_trace(go.Scatter(
-            x=list(points), y=forecast, name=f'{method} forecast', mode='lines+markers',
+            x=list(points), y=forecast, name=f'{method} forecast', mode='markers' if model_curve else 'lines+markers',
             line=dict(color='#57dbc4', width=2.5), marker=dict(size=5), connectgaps=False,
             fill='tozeroy', fillcolor='rgba(87, 219, 196, 0.13)', customdata=labels,
             hovertemplate='%{customdata[0]}<br>%{y:.2%} · %{customdata[1]}<extra>%{fullData.name}</extra>'))
@@ -70,10 +71,14 @@ def comparison_figure(points, method, axis_title, matches=None, match_label='Mee
             continue
         figure.add_trace(go.Scatter(
             x=[line for line, _, _ in quoted], y=[row['implied'] for _, _, row in quoted],
-            name=f'{provider} implied', mode='lines+markers', connectgaps=False,
+            name=f'{provider} implied', mode='markers', connectgaps=False,
             line=dict(color=color, width=2, dash=dash), marker=dict(symbol=symbol, size=7),
             customdata=[[label, odds_text(row['odds'], row['implied'])] for _, label, row in quoted],
             hovertemplate='%{customdata[0]}<br>%{y:.2%} · Odds %{customdata[1]}<extra>%{fullData.name}</extra>'))
+    if model_curve:
+        figure.add_trace(go.Scatter(x=model_curve[0],y=model_curve[1],name=f'{method} calculated distribution',
+            mode='lines',line=dict(color='#57dbc4',width=2.5,shape='hvh'),
+            hovertemplate='%{x:g}<br>%{y:.2%}<extra>%{fullData.name}</extra>'))
     if matches:
         # A missing or unqualified line breaks the gold segment.
         qualified = [matches.get(line) for line in points]
@@ -94,7 +99,7 @@ def comparison_figure(points, method, axis_title, matches=None, match_label='Mee
     return figure
 
 
-def panel(bundle, rows, method, waiting=False, *, criteria=None, quick_rows=None, quick_status=None):
+def panel(bundle, rows, method, waiting=False, *, criteria=None, quick_rows=None, quick_status=None, distributions=None):
     groups = game_line_quotes(rows)
     quick = quick_rows is not None
     candidates = quick_rows if quick else (
@@ -110,21 +115,24 @@ def panel(bundle, rows, method, waiting=False, *, criteria=None, quick_rows=None
     has_forecast = False
     matched = 0
     for key, title, axis_title in specs:
-        points = groups.get(key)
-        if not points:
+        points = groups.get(key,{})
+        model_curve=curve(distributions,*key,home=key[1]==' '.join(teams[0].casefold().split()))
+        if not points and model_curve is None:
             continue
         qualifying = {line:row for line,row in matches.get(key,{}).items() if line in points}
         matched += len(qualifying)
         figure = comparison_figure(dict(sorted(points.items())), method, axis_title, qualifying,
-                                   'Quick Filtering matches' if quick else 'Meets criteria')
+                                   'Quick Filtering matches' if quick else 'Meets criteria',model_curve)
         if figure.data:
-            has_forecast |= figure.data[0].name == f'{method} forecast'
+            has_forecast |= bool(model_curve) or figure.data[0].name.startswith(f'{method} forecast')
+            quoted=any(row['implied'] is not None for _,_,quotes in points.values() for row in quotes.values())
             charts.append(html.Section([
                 html.Div(html.H3(title), className='panel-heading'),
+                html.P('No comparable market prices are available for this side.',className='chart-note') if not quoted else None,
                 dcc.Graph(figure=figure, config={'displaylogo': False}, responsive=True, style={'height': '370px'}),
             ], className='panel ppp-chart', role='group', **{'aria-label':title + ' probability comparison'}))
     if not charts:
-        return html.P('No comparable spread or game total probabilities are available for this game.', className='chart-note')
+        return [html.P('No comparable spread or game total probabilities are available for this game.', className='chart-note')]
     status = quick_status
     if criteria and status is None:
         source = 'Quick Filtering' if quick else 'Apply Criteria'
@@ -134,7 +142,8 @@ def panel(bundle, rows, method, waiting=False, *, criteria=None, quick_rows=None
         else:
             status = rule+'. Highlights appear when forecast and quote values are available.'
     return [
-        html.P('Each point shows the chance of winning at that line. Whole-point sportsbook forecasts exclude pushes. '
+        html.P('The calculated curves show cover and total probabilities across outcomes. Market points use quoted lines. '
+               'Whole-point sportsbook forecasts exclude pushes. '
                'Sportsbook implied probabilities include bookmaker margin. Exchange implied probabilities use the buying price '
                'before fees. When a source lists multiple equivalent quotes, the chart uses its lowest implied probability.',
                className='chart-note'),

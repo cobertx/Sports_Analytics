@@ -34,7 +34,7 @@ def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player
         for method in selected:
             result=calculate(bundle,method if kind=='game' else methods[0],
                 method if kind=='player' else player_methods[0],game_forecast,player_forecast,
-                kinds=(kind,),prepared=(by_kind[kind],source),inline=True)
+                kinds=(kind,),prepared=(by_kind[kind],source),inline=True,include_distributions=kind=='player')
             results.append((method,result))
             with progress_lock:
                 completed+=1
@@ -44,10 +44,12 @@ def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player
     # One pool level. Within each family, preserve the selected method order.
     results=run_forecasts({'game':lambda:evaluate('game',methods),'player':lambda:evaluate('player',player_methods)},
                           bundle['sport'])
+    player_fits={}
     for kind,ranked in results.items():
         for method,result in ranked:
             errors.extend(result['errors'])
             values[kind,method]={selection_key(row):row for row in result['rows']}
+            if result.get('player_fit'):player_fits[method]=result['player_fit']
     if report:report(85,'Applying thresholds and ranking selections')
     matches=[];evaluated=unavailable=0
     for row in rows:
@@ -68,4 +70,4 @@ def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player
     player_lines=[row for (kind,_),indexed in values.items() if kind=='player' for row in indexed.values()
                   if row['category']=='Player Props' and row.get('comparison')]
     return dict(matches=matches,evaluated=evaluated,unavailable=unavailable,errors=list(dict.fromkeys(errors)),
-                player_lines=player_lines)
+                player_lines=player_lines,player_fits=player_fits)

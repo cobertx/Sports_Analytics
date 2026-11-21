@@ -36,6 +36,16 @@ def matching_game(game,sport,catalog):
     return found[0] if len(found)==1 else None
 
 
+def exchange_bundle(provider, game, snapshot):
+    found=matchup(game)
+    if not found:
+        return None
+    away,home=found[0]
+    return dict(id=str(game['id']),sport=game['sport'],oriented=found[1]==['Away','Home'],
+                game={**game,'away':away,'home':home},
+                providers={provider:dict(snapshot=snapshot,game=game)})
+
+
 def polymarket_target(snapshot,row):
     kind=row.get('sports_market_type','')
     rules=' '.join(str(row.get(key) or '') for key in ('title','rules_primary','rules_secondary'))
@@ -163,7 +173,8 @@ def target_key(target):
     return key
 
 
-def calculate(bundle,method,player_method,game_forecast,player_forecast,*,kinds=('game','player'),prepared=None,inline=False):
+def calculate(bundle,method,player_method,game_forecast,player_forecast,*,kinds=('game','player'),prepared=None,inline=False,
+              include_distributions=False):
     base_rows,source=prepare_forecast(bundle) if prepared is None else prepared
     sport=bundle['sport']
     if source is None:
@@ -206,10 +217,19 @@ def calculate(bundle,method,player_method,game_forecast,player_forecast,*,kinds=
                    edge=probability-row['implied'] if probability is not None and row['implied'] is not None else None,
                    detail='Forecast as of '+cutoff if probability is not None else 'History or this forecast target is unavailable.')
     injuries=availability_note(*(record[0] for record in forecasts.values()))
-    return dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(rows),cutoff=cutoff,weighting_policy=POLICY_VERSION,
+    result=dict(bundle_id=bundle['id'],method=method,player_method=player_method,rows=clean(rows),cutoff=cutoff,weighting_policy=POLICY_VERSION,
                 availability_revision=availability_revision(sport),
                 errors=[f'{method if kind=="game" else player_method}: {record[1]}' for kind,record in forecasts.items() if record[1]]+
                        ([injuries] if injuries else []))
+    if include_distributions:
+        from app.sections.markets.game_distribution import distributions
+        from app.sections.markets.prop_probability import remember_fit
+        gf=forecasts.get('game',(None,))[0]
+        if gf:
+            try:result['game_distributions']=distributions(gf,source,method)[0]
+            except (AttributeError,ValueError,TypeError,OverflowError):pass
+        result['player_fit']=remember_fit(forecasts.get('player',(None,))[0])
+    return result
 
 
 def clean(rows):
