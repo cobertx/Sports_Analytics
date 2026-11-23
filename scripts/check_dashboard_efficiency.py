@@ -164,6 +164,84 @@ class LazyRowChecks(TestCase):
 
 
 class AsyncScanChecks(TestCase):
+    def test_fanduel_idle_refresh_keeps_rendered_market_until_inputs_change(self):
+        f = self.fixture()
+        self.addCleanup(f.app._page_tasks.queue.shutdown)
+        f.player_services['WHP'].forecast.return_value = None
+        revisions = ['original']
+        values = {'workspace-page':'market', 'market-category':'Passing', 'market-url':'#nfl-game-123',
+                  'market-snapshot':f.saved['pulled_at'], 'market-forecast-method':'PPP', 'player-forecast-method':'WHP'}
+
+        def market(trigger):
+            response = post(f.app, 'show_saved_markets', values, trigger).get('response', {})
+            if response:
+                values['market-forecast-history'] = response['market-forecast-history']['data']
+            return response
+
+        with patch('app.sections.markets.callbacks.forecast_revision', side_effect=lambda *_: list(revisions)):
+            market('market-category.value')
+            f.app._page_tasks.queue.tasks.join()
+            self.assertIn('saved-market-sections', market('market-model-poll.n_intervals'))
+            original = values['market-forecast-history']['job']
+            self.assertFalse(market('history-update-poll.n_intervals'))
+            f.player_services['WHP'].forecast.assert_called_once()
+
+            revisions[0] = 'updated'
+            market('history-update-poll.n_intervals')
+            f.app._page_tasks.queue.tasks.join()
+            self.assertIn('saved-market-sections', market('market-model-poll.n_intervals'))
+            self.assertNotEqual(values['market-forecast-history']['job'], original)
+            self.assertEqual(f.player_services['WHP'].forecast.call_count, 2)
+
+    def test_fanduel_sidebar_completion_delivers_zero_match_result_without_another_page_poll(self):
+        f = self.fixture()
+        entered, release = Event(), Event()
+        self.addCleanup(release.set)
+
+        def hold_forecast(_snapshot):
+            entered.set()
+            if not release.wait(8):
+                raise AssertionError('Forecast was not released')
+            return fanduel_fixtures.GameForecast()
+
+        f.game_services['PPP'].forecast.side_effect = hold_forecast
+        client = f.app.server.test_client()
+        self.assertEqual(client.get('/_dash-layout').status_code, 200)
+        route, selection = '#nfl-game-123', f.saved['pulled_at']
+        values = {'workspace-page':'market', 'market-category':FILTER_CATEGORY, 'market-url':route,
+                  'market-snapshot':selection, 'market-quick-filter':1, 'market-quick-game-methods':['PPP'],
+                  'market-quick-player-methods':['WHP'], 'market-quick-probability':100, 'market-quick-edge':3}
+        submitted = post(f.app, 'request_quick_filter', values, 'market-quick-filter.n_clicks', client=client)
+        request = submitted['response']['mispricing-request']['data']
+        values['mispricing-request'] = request
+        self.assertTrue(entered.wait(4))
+        pending = post(f.app, 'quick_filter_markets', values, 'mispricing-request.data', client=client)['response']
+        values['mispricing-forecast-history'] = pending['mispricing-forecast-history']['data']
+        self.assertTrue(values['mispricing-forecast-history']['pending'])
+        release.set()
+        f.app._filter_jobs.tasks.queue.tasks.join()
+
+        monitor = post(f.app, 'poll_quick_monitor', {'quick-monitor-timer':1}, 'quick-monitor-timer.n_intervals',
+                       client=client)['response']
+        completion = monitor['quick-monitor-completions']['data']
+        self.assertIn([request['job'], 'complete'], completion)
+        values['quick-monitor-completions'] = [['another-job', 'complete']]
+        trigger = 'quick-monitor-completions.data'
+        self.assertFalse(post(f.app, 'quick_filter_markets', values, trigger, client=client).get('response'))
+        values['quick-monitor-completions'] = completion
+        values['market-url'] = '#nfl-game-456'
+        self.assertFalse(post(f.app, 'quick_filter_markets', values, trigger, client=client).get('response'))
+        values['market-url'] = route
+        final = post(f.app, 'quick_filter_markets', values, trigger, client=client)['response']
+        result = final['mispricing-results']['children']['props']
+        self.assertIn('0 qualifying selections', str(result))
+        self.assertNotIn('Loading filtered results', str(result))
+        self.assertEqual(json.loads(result['data-quick-scope']), [route, selection])
+        self.assertFalse(final['mispricing-forecast-history']['data'].get('pending', False))
+        values['mispricing-forecast-history'] = final['mispricing-forecast-history']['data']
+        self.assertFalse(post(f.app, 'quick_filter_markets', values, trigger, client=client).get('response'))
+        f.game_services['PPP'].forecast.assert_called_once()
+
     def test_two_game_submissions_publish_sidebar_progress_without_open_results(self):
         f=self.fixture(fanduel_fixtures.MispricingChecks)
         games={'123':dict(f.saved,rows=[row for row in f.saved['rows'] if row['group']=='Game'])}
@@ -252,12 +330,6 @@ class AsyncScanChecks(TestCase):
         self.assertIn('Click Quick Filtering',str(stale));self.assertNotIn('Top 3 by edge',str(stale))
         release.set();f.app._filter_jobs.tasks.queue.tasks.join()
         values['market-url']=location
-        finishing=post(f.app,'quick_filter_markets',values,'market-quick-poll.n_intervals')
-        self.assertIn('2 of 2 forecast methods finished',str(finishing))
-        self.assertNotIn('Top 3 by edge',str(finishing))
-        values['mispricing-forecast-history']=finishing['response']['mispricing-forecast-history']['data']
-        self.assertEqual(values['mispricing-forecast-history']['progress'],80)
-        self.assertTrue(values['mispricing-forecast-history']['pending'])
         finished=post(f.app,'quick_filter_markets',values,'market-quick-poll.n_intervals')
         self.assertIn('Top 3 by edge',str(finished))
         self.assertIn('Filtering complete',str(finished))

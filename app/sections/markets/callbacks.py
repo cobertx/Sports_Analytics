@@ -21,7 +21,7 @@ from app.sections.markets.market_navigation import market_game_id, market_game_s
 from app.shell.navigation import scoped_callback
 from app.sections.markets.mispricing import (
     ALL_PROBABILITIES, FILTER_CATEGORY, consensus_rankings, criteria_values, filter_context,
-    quick_finish_progress, quick_progress, rank_markets, results as mispricing_results, run_forecasts, selected_methods,
+    quick_progress, rank_markets, results as mispricing_results, run_forecasts, selected_methods,
 )
 from app.sections.markets import quick_filter_monitor, quick_methods, quick_visibility
 from sports_analytics.display_time import format_eastern
@@ -77,28 +77,42 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         if page!='market' or sport not in market_services:raise PreventUpdate
         if not game_id or market_game_sport(location_hash)!=sport:
             return {"display":"block"},{"display":"none"},no_update,no_update,no_update,no_update
-        if (previous_context and previous_context.get('sport')==sport and str(previous_context.get('id'))==game_id and previous
-                and set(ctx.triggered_prop_ids)<={'market-url.hash','workspace-page.value','nav-market.data'}):
+        triggered = set(ctx.triggered_prop_ids)
+        current_game = previous_context if (previous_context and previous_context.get('sport') == sport
+                                            and str(previous_context.get('id')) == game_id) else None
+        if current_game and previous and triggered <= {'market-url.hash','workspace-page.value','nav-market.data'}:
+            return (no_update,)*6
+
+        pulled_snapshot = None
+        if ("market-refresh-signal.data" in triggered and refreshed
+                and refreshed.get("sport", "NFL") == sport and str(refreshed.get("game_id")) == game_id):
+            pulled_snapshot = refreshed.get("snapshot")
+        game = next((game for game in (games or []) if str(game["id"]) == game_id), None)
+        # The upcoming catalog drops games at tipoff and can be incomplete
+        # during refresh. Keep the open game and its snapshot scoped to the URL.
+        if current_game and not game and not pulled_snapshot:
             return (no_update,)*6
         snapshots = market_services[sport].history(game_id)
-        game = next((game for game in (games or []) if str(game["id"]) == game_id), None)
+        options = [{"label": format_eastern(item["pulled_at"]),
+                    "value": item.get("csv_file", item["pulled_at"])} for item in snapshots]
+        available = {option['value'] for option in options}
+        if current_game and previous and previous not in available and pulled_snapshot not in available:
+            return (no_update,)*6
+
+        game = game or current_game
         if not game and snapshots:
             saved = snapshots[0]
             game = saved.get("game") or {"id": game_id, "start": saved["commence_time"],
                 "home": {"name": saved["home_team"], "abbreviation": saved.get("home_abbreviation", "HOME")},
                 "away": {"name": saved["away_team"], "abbreviation": saved.get("away_abbreviation", "AWAY")}, "time_tbd": False}
-        context = {**game, "sport": sport, "token": previous_context["token"] if previous_context and previous_context.get("sport", "NFL") == sport and str(previous_context.get("id")) == game_id
-                   else uuid4().hex} if game else None
-        options = [{"label": format_eastern(item["pulled_at"]),
-                    "value": item.get("csv_file", item["pulled_at"])} for item in snapshots]
-        available={option['value'] for option in options}
+        context = {**game, "sport": sport, "token": current_game["token"] if current_game else uuid4().hex} if game else None
         remembered=remembered_market(market_return,sport,location_hash)
         restored=remembered.get('snapshot') if remembered else None
-        chosen = previous if previous in available else restored if restored in available else options[0]['value'] if options else None
-        if ("market-refresh-signal.data" in ctx.triggered_prop_ids and refreshed and
-                refreshed.get("sport", "NFL") == sport and str(refreshed.get("game_id")) == game_id and refreshed.get("snapshot") in {item["value"] for item in options}):
-            chosen = refreshed["snapshot"]
-        return {"display": "none"}, {"display": "block"}, game_header(game, snapshots[0] if snapshots else None, sport), options, chosen, context
+        chosen = next((value for value in (pulled_snapshot, previous, restored) if value in available),
+                      options[0]['value'] if options else None)
+        return ({"display": "none"}, {"display": "block"}, game_header(game, snapshots[0] if snapshots else None, sport), options,
+                no_update if current_game and chosen == previous else chosen,
+                no_update if current_game and context == current_game else context)
 
     @app.callback(Output("market-refresh-signal", "data"),
                   Input("market-detail-pull", "n_clicks"), State("market-detail-context", "data"),
@@ -132,16 +146,23 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                      if item.get("csv_file", item["pulled_at"]) == selection), None)
 
     @scoped_callback(app,'market',Output("market-category", "children"), Output("market-category", "value"), Output("market-snapshot-status", "children"),
-                  Input("market-snapshot", "value"), Input("market-url", "hash"), State("market-category", "value"),State('market-return','data'))
-    def snapshot_categories(selection, location_hash, previous,market_return=None):
+                  Output('market-category-scope', 'data'), Input("market-snapshot", "value"), Input("market-url", "hash"),
+                  State("market-category", "value"), State('market-return','data'), State('market-category-scope', 'data'))
+    def snapshot_categories(selection, location_hash, previous, market_return=None, previous_scope=None):
         if not market_game_id(location_hash):raise PreventUpdate
         sport=market_game_sport(location_hash)
         information_tab=(dcc.Tab(label=ADDITIONAL_INFORMATION,value=ADDITIONAL_INFORMATION,className='market-category-tab',
                                 selected_className='market-category-tab selected market-info-tab-selected') if sport in {'NBA','NFL'} else None)
         snapshot = saved_snapshot(location_hash, selection)
+        scope = [location_hash, selection]
         if not snapshot:
-            return ([information_tab],ADDITIONAL_INFORMATION,"No saved markets yet. Additional Information is available without pulling odds.") if information_tab is not None else (
-                [], None, "No saved markets yet. Use Pull Live Markets above to download a snapshot.")
+            # Returning to an active filter can briefly miss the saved file.
+            # Preserve tabs only when they already belong to this snapshot.
+            if previous_scope == scope:
+                return (no_update,) * 4
+            if information_tab is not None:
+                return [information_tab], ADDITIONAL_INFORMATION, "No saved markets yet. Additional Information is available without pulling odds.", None
+            return [], None, "No saved markets yet. Use Pull Live Markets above to download a snapshot.", None
         available = {row["group"] for row in snapshot["rows"]}
         available.add(FILTER_CATEGORY)
         if information_tab is not None:available.add(ADDITIONAL_INFORMATION)
@@ -157,7 +178,7 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         cost = f"{snapshot['cost']} credits" if snapshot["cost"] is not None else "Cost not reported"
         # A response for a snapshot can arrive after a different tab was clicked.
         return tabs, no_update if value==previous else value, [html.Span(latest_pull_text(snapshot) + f" · {cost}"),
-                             html.Small("Saved in data/market_data", title=snapshot.get("csv_file", "Saved locally"))]
+                             html.Small("Saved in data/market_data", title=snapshot.get("csv_file", "Saved locally"))], scope
 
     @app.callback(Output("market-applied-criteria", "data"), Output("market-criteria-status", "children"),
                   Output("market-category", "value", allow_duplicate=True),
@@ -249,11 +270,16 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         return (label("game", game_method or "PPP", "Latest historical game used: "),
                 label("player", player_method or "WHP", "Latest historical performance used: "))
 
-    model_sources=sorted((PROJECT_DIRECTORY / 'models').rglob('*.py'))
+    # Imported model code belongs to the current app process. Its data and
+    # availability revisions are still checked when submitting a forecast.
+    model_sources = []
+    for path in sorted((PROJECT_DIRECTORY / 'models').rglob('*.py')):
+        stat = path.stat()
+        model_sources.append((str(path), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+    model_code = request_key(model_sources)
+
     def forecast_environment(sport):
-        revisions=[]
-        for path in model_sources:
-            stat=path.stat();revisions.append((str(path),stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns))
+        revisions = [model_code]
         if sport in {'NBA','NFL'}:revisions.append(availability_service.revision(sport))
         if sport=='NCAAF':revisions+=forecast_revision(ncaaf_model_data,sport)
         return revisions,int(time()//300)
@@ -390,26 +416,37 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                   Input('market-snapshot','value'),Input('market-quick-game-methods','value'),Input('market-quick-player-methods','value'),
                   Input('market-quick-probability','value'),Input('market-quick-edge','value'),
                   State('mispricing-forecast-history','data'),State('workspace-page','value'),
-                  Input(prompt_fields,'value'),State(prompt_fields,'id'),Input('market-quick-poll','n_intervals'),prevent_initial_call=True)
-    def quick_filter_markets(request,category,location_hash,selection,methods,player_methods,probability,edge,previous_history,page=None,prompt_values=None,prompt_ids=None,_quick_tick=None):
+                  Input(prompt_fields,'value'),State(prompt_fields,'id'),Input('market-quick-poll','n_intervals'),
+                  Input('quick-monitor-completions','data'),prevent_initial_call=True)
+    def quick_filter_markets(request,category,location_hash,selection,methods,player_methods,probability,edge,previous_history,
+                             page=None,prompt_values=None,prompt_ids=None,_quick_tick=None,completions=None):
         if (page is not None and page!='market') or not market_game_id(location_hash):raise PreventUpdate
+        triggered = set(getattr(ctx, 'triggered_prop_ids', {})) if page is not None else set()
+        monitor_only = triggered == {'quick-monitor-completions.data'}
         restored = None
         if category==FILTER_CATEGORY and [(request or {}).get('location'),(request or {}).get('snapshot')]!=[location_hash,selection]:
             restored = filter_jobs.tasks.latest(quick_filter_monitor.owner(),('market',location_hash,selection))
             if restored:
                 request = restored
+        if monitor_only:
+            job = (request or {}).get('job')
+            if (category != FILTER_CATEGORY or not job or [request.get('location'), request.get('snapshot')] != [location_hash, selection]
+                    or not any(key == job for key, _ in (completions or []))):
+                raise PreventUpdate
+            if previous_history and previous_history.get('completed') and previous_history.get('filter_key') == request:
+                raise PreventUpdate
         sequence=(request or {}).get('sequence')
         def in_scope(content):return quick_visibility.scoped(content,location_hash,selection,sequence)
         prompt=in_scope(html.P(quick_visibility.PROMPTS['market'],className='saved-market-empty'))
         def changed_selection():
             if page is None:return prompt,no_update
             previous=previous_history if previous_history and previous_history.get('context')==[location_hash,selection] else {}
-            return prompt,dict(previous,context=[location_hash,selection],pending=False)
+            return prompt,dict(previous,context=[location_hash,selection],pending=False,completed=False)
         if category!=FILTER_CATEGORY:return prompt,no_update
         # Mounting or editing the per-prompt selectors only changes controls.
         # Fitting starts when the button publishes a new request.
         explicit=page is not None and (ctx.triggered_id=='mispricing-request' or
-                                       'mispricing-request.data' in getattr(ctx,'triggered_prop_ids',{}))
+                                       'mispricing-request.data' in triggered)
         if page is not None and isinstance(ctx.triggered_id,dict) and not explicit:return changed_selection()
         if not restored:
             try:
@@ -431,12 +468,8 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                 history,progress=progress['percent'])
             return in_scope(quick_progress(progress,'market')),update
 
-        def completed_view(job,result):
-            if (previous_history and previous_history.get('pending') and previous_history.get('job')==job
-                    and previous_history.get('filter_key')==request):
-                checkpoint=quick_finish_progress(filter_jobs.tasks,job,previous_history.get('progress'))
-                if checkpoint:return pending_view(previous_history,checkpoint)
-            return in_scope(copy(result[0])),{**result[1],'filter_key':request}
+        def completed_view(result):
+            return in_scope(copy(result[0])),{**result[1],'filter_key':request,'pending':False,'completed':True}
 
         if page is not None and ctx.triggered_id=='market-quick-poll' and previous_history and previous_history.get('filter_key')==request:
             job=previous_history.get('job')
@@ -445,7 +478,7 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                 if state['pending']:return pending_view(previous_history,filter_jobs.tasks.progress(job))
                 if state['error']:return in_scope(html.P(state['error'],className='mispricing-error')),dict(previous_history,pending=False)
                 result=filter_jobs.tasks.peek(job)
-                if result is not None:return completed_view(job,result)
+                if result is not None:return completed_view(result)
                 return in_scope(html.P('This result expired. Run Quick Filtering again.',className='mispricing-error')),dict(previous_history,pending=False)
         job=request.get('job')
         if job:
@@ -459,7 +492,7 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                 return in_scope(html.P(str(exc),className='saved-market-empty')),no_update
             if page is None:return calculate_filter(snapshot,request,previous_history)
             job,result,pending,error=start_filter(snapshot,request,previous_history,refresh=explicit)
-        if result is not None and not pending and not error:return completed_view(job,result)
+        if result is not None and not pending and not error:return completed_view(result)
         history=dict(context=[location_hash,selection],filter_key=request,pending=pending,job=job)
         if error:return in_scope(html.P(error,className='mispricing-error')),history
         if not pending:return in_scope(html.P('This result expired. Run Quick Filtering again.',className='mispricing-error')),history
@@ -491,13 +524,15 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         context = [location_hash, selection]
         previous = previous_history if previous_history and previous_history.get("context") == context else {}
         view_key=[category,method,player_method,criteria,POLICY_VERSION]
-        if (page is not None and ctx.triggered_id=='market-model-poll' and previous.get('view_key')==view_key
-                and previous.get('pending') and previous.get('job')
-                and market_page_tasks.queue.state(previous['job'])['pending']):
+        trigger = ctx.triggered_id if page is not None else None
+        same_view = previous.get('view_key') == view_key
+        pending_job = previous.get('job') if same_view and previous.get('pending') else None
+        if (trigger in {'market-model-poll', 'history-update-poll'} and pending_job
+                and market_page_tasks.queue.state(pending_job)['pending']):
             # Polling a running fit needs no snapshot reads, filesystem scans,
             # hashes or quote/accordion reconstruction.
             return no_update,no_update
-        if page is not None and ctx.triggered_id in {'market-url','nav-market'} and previous.get('view_key')==view_key and not previous.get('pending'):
+        if trigger in {'market-url','nav-market'} and same_view and not previous.get('pending'):
             return no_update,no_update
         history = {"context": context, "view_key":view_key,"game": dict(previous.get("game", {})), "player": dict(previous.get("player", {}))}
         snapshot = saved_snapshot(location_hash, selection)
@@ -515,26 +550,28 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         if page is not None:
             # Highlight thresholds and the other market type's method do not
             # change a forecast. Reuse the exact saved-snapshot calculation.
-            forecast_scope=['game',method] if category=='Game' else ['player',player_method,category if player_method=='WHP' else 'all']
-            if category=='Game':
-                source=game_services[snapshot['sport']][method]
-            else:
-                source = player_services[player_method]
-            revision=forecast_revision(source,snapshot['sport'])
-            if snapshot['sport'] in {'NBA','NFL'}:revision.append(availability_service.revision(snapshot['sport']))
-            if snapshot['sport']=='NCAAF' and category!='Game':revision+=forecast_revision(ncaaf_model_data,'NCAAF')
-            key=hashlib.sha256(json.dumps([context,forecast_scope,POLICY_VERSION,revision,snapshot],sort_keys=True).encode()).hexdigest()
             # Preparing a cold forecast can itself create input files. Finish
             # that job rather than submitting another one on every poll.
-            if ctx.triggered_id=='market-model-poll' and previous.get('pending') and previous.get('job') and previous.get('view_key')==view_key:
-                key=previous['job']
+            if trigger == 'market-model-poll' and pending_job:
+                key = pending_job
+            else:
+                forecast_scope=['game',method] if category=='Game' else ['player',player_method,category if player_method=='WHP' else 'all']
+                source = game_services[snapshot['sport']][method] if category == 'Game' else player_services[player_method]
+                revision=forecast_revision(source,snapshot['sport'])
+                if snapshot['sport'] in {'NBA','NFL'}:revision.append(availability_service.revision(snapshot['sport']))
+                if snapshot['sport']=='NCAAF' and category!='Game':revision+=forecast_revision(ncaaf_model_data,'NCAAF')
+                key=hashlib.sha256(json.dumps([context,forecast_scope,POLICY_VERSION,revision,snapshot],sort_keys=True).encode()).hexdigest()
+            if (trigger == 'history-update-poll' and same_view and key == previous.get('job')
+                    and previous.get('rendered') and not previous.get('pending') and not previous.get('error')
+                    and market_page_tasks.peek(key) is not None):
+                return no_update, no_update
             resume=previous.get('pending') and previous.get('job')==key
             calculated,pending,error=market_page_tasks.read(key,calculate_view)
             history.update(pending=pending,job=key,error=error)
             if pending and previous.get('view_key')==view_key and previous.get('rendered'):
                 history.update(rendered=True,keep_visible=True)
                 return no_update,history
-            if pending and resume and ctx.triggered_id=='market-model-poll':return no_update,no_update
+            if pending and resume and trigger=='market-model-poll':return no_update,no_update
             if pending or calculated is None:
                 return market_sections(snapshot,category,model_error=error,method=player_method if category!='Game' else method,
                     criteria=criteria,loading=pending,prop_context=[*context,category]),history

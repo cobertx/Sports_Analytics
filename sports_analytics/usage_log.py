@@ -109,8 +109,9 @@ class ApiUsageLog:
         return sorted((row for row in rows if row["account_id"] in accounts),
                       key=lambda row: row["timestamp_utc"], reverse=True)
 
-    def record(self, *, usage_id, account, sport, game_id, event_id, home_team, away_team,
-               game_start, timestamp, markets, headers=None, cost=None, status="Saved", source="Live pull"):
+    @staticmethod
+    def _record_row(*, usage_id, account, sport, game_id, event_id, home_team, away_team,
+                    game_start, timestamp, markets, headers=None, cost=None, status="Saved", source="Live pull"):
         if sport not in SPORTS:
             raise ValueError("Unsupported sport for API usage log.")
         headers = CaseInsensitiveDict(headers or {})
@@ -121,27 +122,49 @@ class ApiUsageLog:
         charge = request_cost(headers) if cost is None else cost
         if charge is not None and (isinstance(charge, bool) or not isinstance(charge, int) or charge < 0):
             raise ValueError("Credits must be a nonnegative integer or unknown.")
-        row = dict(zip(FIELDS, [usage_id, account, timestamp, format_eastern(timestamp), sport, str(game_id), event_id,
-                               f"{away_team} @ {home_team}", game_start, "fanduel", "; ".join(markets), charge,
-                               used, remaining, status, source]))
+        return dict(zip(FIELDS, [usage_id, account, timestamp, format_eastern(timestamp), sport, str(game_id), event_id,
+                                f"{away_team} @ {home_team}", game_start, "fanduel", "; ".join(markets), charge,
+                                used, remaining, status, source]))
+
+    def _append_rows(self, incoming):
+        if not incoming:
+            return []
         with self._locked():
             rows = self._read()
-            if any(item["usage_id"] == usage_id and item["account_id"] == account for item in rows):
-                return False
-            self._write([*rows, row])
-        return True
+            seen = {(row["account_id"], row["usage_id"]) for row in rows}
+            added = []
+            for row in incoming:
+                identity = (row["account_id"], row["usage_id"])
+                added.append(identity not in seen)
+                if added[-1]:
+                    seen.add(identity)
+                    rows.append(row)
+            if any(added):
+                self._write(rows)
+        return added
+
+    def record(self, **fields):
+        return self._append_rows([self._record_row(**fields)])[0]
+
+    def _snapshot_rows(self, snapshot, account):
+        identity = f"{account}:{snapshot['event_id']}:{snapshot['pulled_at']}"
+        yield self._record_row(usage_id=snapshot.get("usage_log_id") or hashlib.sha256(identity.encode()).hexdigest(),
+                               account=account, sport=snapshot.get("sport", "NFL"), game_id=snapshot["game_id"], event_id=snapshot["event_id"],
+                               home_team=snapshot["home_team"], away_team=snapshot["away_team"],
+                               game_start=snapshot["commence_time"], timestamp=snapshot["pulled_at"],
+                               markets=snapshot.get("requested", []), headers=snapshot.get("usage_headers"),
+                               cost=snapshot.get("cost"), source="Saved snapshot")
+        for audit in snapshot.get('usage_attempts', []):
+            yield self._record_row(**audit)
+
+    def import_snapshots(self, snapshots, account, *, failed_attempts=()):
+        """Reconcile archived pulls in one locked read and at most one write."""
+        rows = [row for snapshot in snapshots for row in self._snapshot_rows(snapshot, account)]
+        rows.extend(self._record_row(**audit) for audit in failed_attempts)
+        return self._append_rows(rows)
 
     def import_snapshot(self, snapshot, account):
-        identity = f"{account}:{snapshot['event_id']}:{snapshot['pulled_at']}"
-        recorded = self.record(usage_id=snapshot.get("usage_log_id") or hashlib.sha256(identity.encode()).hexdigest(),
-                           account=account, sport=snapshot.get("sport", "NFL"), game_id=snapshot["game_id"], event_id=snapshot["event_id"],
-                           home_team=snapshot["home_team"], away_team=snapshot["away_team"],
-                           game_start=snapshot["commence_time"], timestamp=snapshot["pulled_at"],
-                           markets=snapshot.get("requested", []), headers=snapshot.get("usage_headers"),
-                           cost=snapshot.get("cost"), source="Saved snapshot")
-        for audit in snapshot.get('usage_attempts', []):
-            self.record(**audit)
-        return recorded
+        return self.import_snapshots([snapshot], account)[0]
 
 
 def usage_summary(records, now=None, account_labels=None):

@@ -135,6 +135,46 @@ class NavigationPipelineChecks(TestCase):
         self.assertEqual(post(self.app,'open_game',values,'nav-market.data').get('response',{}),{})
         self.fixture.markets.history.assert_not_called()
 
+    def test_schedule_refresh_keeps_open_game_and_quick_filter_snapshot(self):
+        stamp = '2026-11-22T23:00:00Z'
+        game = dict(id='123', start=stamp, home=dict(name='Baltimore Ravens', abbreviation='BAL'),
+                    away=dict(name='Cleveland Browns', abbreviation='CLE'), time_tbd=False)
+        context = dict(game, sport='NFL', token='open-game')
+        values = {'workspace-page':'market', 'sport':'NFL', 'market-url':'#nfl-game-123',
+                  'market-schedule':[], 'market-snapshot':'saved.csv', 'market-detail-context':context}
+        self.fixture.markets.history.return_value = []
+        # The schedule can drop the game at kickoff while its scan still uses
+        # the selected snapshot. Neither store should be cleared in that case.
+        self.assertFalse(post(self.app, 'open_game', values, 'market-schedule.data').get('response'))
+        self.fixture.markets.history.assert_not_called()
+        values['market-schedule'] = [game]
+        self.assertFalse(post(self.app, 'open_game', values, 'market-schedule.data').get('response'))
+
+        # A successful pull on the still-open game can select a new snapshot
+        # even after the game disappears from the upcoming schedule.
+        self.fixture.markets.history.return_value = [dict(game=game, pulled_at=stamp, csv_file='new.csv',
+                                                        home_team=game['home']['name'], away_team=game['away']['name'])]
+        values.update({'market-schedule':[], 'market-refresh-signal':dict(sport='NFL', game_id='123', snapshot='new.csv')})
+        pulled = post(self.app, 'open_game', values, 'market-refresh-signal.data')['response']
+        self.assertEqual(pulled['market-snapshot']['value'], 'new.csv')
+        self.assertNotIn('market-detail-context', pulled)
+
+    def test_return_to_filter_preserves_tabs_only_for_the_loaded_snapshot(self):
+        route, selection = '#nfl-game-123', 'saved.csv'
+        self.fixture.markets.history.return_value = [dict(pulled_at='2026-11-22T23:00:00Z', csv_file=selection,
+                                                        cost=17, rows=[dict(group='Game')])]
+        values = {'workspace-page':'market', 'sport':'NFL', 'market-url':route,
+                  'market-snapshot':selection, 'market-category':'Mispricing'}
+        first = post(self.app, 'snapshot_categories', values, 'market-snapshot.value')['response']
+        values['market-category-scope'] = first['market-category-scope']['data']
+        self.assertEqual(values['market-category-scope'], [route, selection])
+        self.fixture.markets.history.return_value = []
+        self.assertFalse(post(self.app, 'snapshot_categories', values, 'nav-market.data').get('response'))
+        values['market-url'] = '#nfl-game-456'
+        different = post(self.app, 'snapshot_categories', values, 'nav-market.data')['response']
+        self.assertEqual(different['market-category']['value'], 'Additional Information')
+        self.assertIsNone(different['market-category-scope']['data'])
+
     def test_warm_http_market_return_does_not_fit_or_rebuild_loaded_results(self):
         import check_mispricing as fixtures
         fixture=fixtures.MispricingChecks();fixture.setUp();self.addCleanup(fixture.doCleanups)

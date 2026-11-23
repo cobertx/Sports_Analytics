@@ -13,3 +13,24 @@
   animation: action-spin .8s linear infinite; }
 @keyframes action-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .action-spinner { animation: none; border-top-width: 4px; } }
+
+.market-loading-state {
+  display: flex;
+  align-items: center;
+  min-height: 64px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.market-loading-state .action-loading-message {
+  gap: var(--space-3);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.market-loading-state .action-spinner {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+}

@@ -1,7 +1,7 @@
 """Sportsbook game list and matchup workspace."""
 
 from dash import dcc, html
-from app.shell.loading import indicator
+from app.shell.loading import market_loading
 from sports_analytics.schedule import FANDUEL_LINKS
 from app.sections.markets.market_view import market_provider_heading
 from app.sections.markets.mispricing import quick_controls
@@ -76,7 +76,7 @@ def layout():
             quick_controls('market', 'mispricing-results'),
             ],id='mispricing-filter-panel',className='panel market-criteria'),
             html.Div([
-                html.Div(indicator('Loading the selected markets…'),id='market-sections-transition',className='market-sections-transition'),
+                market_loading('Loading the selected markets…', id='market-sections-transition'),
                 dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),
             ],id='market-quote-content'),
             outlet('market'),

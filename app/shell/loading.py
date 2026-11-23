@@ -8,6 +8,10 @@ def indicator(message,*,overlay=False):
                      role='status',**{'aria-live':'polite'})
 
 
+def market_loading(message, **props):
+    return html.Div(indicator(message), className='market-loading-state', **props)
+
+
 def loading(children,message='Loading…'):
     identity=getattr(children,'id',None)
     target='figure' if isinstance(children,dcc.Graph) else 'data' if isinstance(children,dash_table.DataTable) else 'children'

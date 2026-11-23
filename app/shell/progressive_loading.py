@@ -1,7 +1,7 @@
 """Independent presentation guards: optional work cannot hold the shell closed."""
 from dash import Input, Output, State, dcc, html
 
-from app.shell.loading import indicator
+from app.shell.loading import market_loading
 
 
 def configure(layout):
@@ -15,10 +15,14 @@ def configure(layout):
             node.children = visit(node.children)
         identity = getattr(node, 'id', None)
         if isinstance(identity, str) and identity in {'market-page', 'kalshi-page', 'polymarket-page'}:
-            node.children = [html.Div([
-                html.Div(indicator('Loading the selected game…'), className='section-page-loading'),
-                html.P('Game unavailable. Refresh the game list or choose another game.', className='section-page-unavailable'),
-            ], className='section-page-status', role='status'), *node.children]
+            heading = next(index for index, child in enumerate(node.children)
+                           if 'market-provider-heading' in (getattr(child, 'className', '') or '').split())
+            node.children.insert(heading + 1, html.Div([
+                html.Div(market_loading('Loading upcoming games…'), className='section-list-loading'),
+                html.Div(market_loading('Loading the selected game…'), className='section-game-loading'),
+                html.P('Game unavailable. Refresh the game list or choose another game.',
+                       className='section-page-unavailable', role='status'),
+            ], className='section-page-status'))
         if getattr(node, 'className', None) == 'historical-results':
             node.id = 'historical-results'
         if identity == 'career-panel':

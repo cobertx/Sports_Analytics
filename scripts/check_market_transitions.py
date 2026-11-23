@@ -133,6 +133,14 @@ class MarketTransitionChecks(TestCase):
                 providers.add(provider)
         self.assertEqual(providers, {'FanDuel', 'DraftKings', 'Kalshi', 'Polymarket'})
 
+    def test_provider_header_precedes_market_loading_status(self):
+        for page in fixtures.components(self.app.layout):
+            if getattr(page, 'id', None) not in ('market-page', 'kalshi-page', 'polymarket-page'):
+                continue
+            children = [getattr(child, 'className', '') or '' for child in page.children]
+            position = next(i for i, name in enumerate(children) if 'market-provider-heading' in name.split())
+            self.assertEqual(children[position + 1], 'section-page-status')
+
     def test_late_quick_filter_cannot_replace_the_current_game_forecast_poll_state(self):
         metadata=next(m for m in self.app.callback_map.values() if m.get('callback')
                       and m['callback'].__wrapped__.__name__=='quick_filter_markets')

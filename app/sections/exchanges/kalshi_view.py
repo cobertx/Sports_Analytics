@@ -12,6 +12,7 @@ from dash.dash_table.Format import Format, Scheme, Symbol
 from sports_analytics.kalshi import CATEGORIES, DOCS, KalshiService, category, ticker
 from sports_analytics.display_time import format_eastern
 from app.sections.markets.market_view import logo_badge, market_provider_heading, NBA_LOGO_FILES, NFL_LOGO_FILES, NCAAF_LOGO_FILES
+from app.shell.loading import market_loading
 from sports_analytics.nba_markets import NBA_TEAM_CODES
 from sports_analytics.nfl_markets import NFL_TEAM_CODES
 from app.sections.markets.mispricing import quick_controls
@@ -180,7 +181,7 @@ def layout(provider='Kalshi'):
                     html.Div(id='kalshi-model-status',className='forecast-history exchange-update-line',role='status')
                     if not polymarket else None,
                 ],className='exchange-update-status'),
-                html.Div(className='exchange-sections-transition'),
+                market_loading('Loading the selected markets…', id=f'{prefix}-sections-transition'),
                 html.Div(id=f'{prefix}-market-sections'),
                 html.Details([html.Summary('Detailed quote table & CSV export'),
                   dash_table.DataTable(id=f'{prefix}-table', columns=columns, data=[], page_size=20, sort_action='native',

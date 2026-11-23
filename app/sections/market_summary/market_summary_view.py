@@ -6,6 +6,7 @@ from dash import dcc,html
 
 from sports_analytics.display_time import format_eastern
 from app.sections.markets.market_view import logo_badge,market_provider_heading,probability_text
+from app.shell.loading import market_loading
 from app.sections.markets.mispricing import GAME_METHODS,PLAYER_METHODS,QUICK_DEFAULT_PROBABILITY,QUICK_DEFAULT_EDGE,quick_start_progress
 from app.sections.markets import quick_visibility
 from app.sections.market_structure.market_structure_link import line_actions
@@ -146,8 +147,10 @@ def layout():
                 }.get(value))
                 for value in ['Game Lines','Player Props',QUICK,'Other Markets']],className='market-category-tabs'),
             quick_controls(),
-            html.Div(dcc.Loading(html.Div(id='summary-market-sections'),delay_show=500,color='#57dbc4',
-                                 overlay_style={'visibility':'visible'}),id='summary-quote-content'),
+            html.Div([
+                market_loading('Loading the selected markets…', id='summary-sections-transition'),
+                dcc.Loading(html.Div(id='summary-market-sections'), color='#57dbc4'),
+            ],id='summary-quote-content'),
             html.Section([
                 html.H2('Game outcome distributions'),
                 chart_criteria_controls(),

@@ -5,6 +5,7 @@ from collections import OrderedDict
 import csv
 from datetime import datetime, timezone
 import hashlib
+from itertools import chain
 import json
 import math
 from pathlib import Path
@@ -183,6 +184,7 @@ class NflMarketService:
         log_root = self.csv_directory.parent.parent if bookmaker == 'draftkings' else self.csv_directory.parent
         self.usage_log = usage_log or ApiUsageLog(log_root / "API Log" / "api_credit_usage.csv")
         self._csv_cache = OrderedDict()
+        self._csv_metadata = OrderedDict()
         self._csv_lock = threading.Lock()
         self._history_cache = OrderedDict()
         self._history_lock = threading.Lock()
@@ -233,20 +235,50 @@ class NflMarketService:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
 
-    def _read_csv(self, path):
+    @staticmethod
+    def _file_stamp(path):
         stat = path.stat()
-        stamp = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
+        return stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino
+
+    def _read_csv(self, path, *, account=None, selected=None, stamps=None):
+        def matches(snapshot):
+            return (account is None or snapshot.get('account_id') == account
+                    and snapshot.get('bookmaker', 'fanduel') == self.bookmaker
+                    and (selected is None or snapshot['game_id'] in selected))
+
+        stamp = stamps.get(path) if stamps is not None else None
+        if stamp is None:
+            stamp = self._file_stamp(path)
+            if stamps is not None:
+                stamps[path] = stamp
         with self._csv_lock:
             cached = self._csv_cache.get(path.name)
             if cached and cached[0] == stamp:
                 self._csv_cache.move_to_end(path.name)
-                return cached[1]
+                return cached[1] if matches(cached[1]) else None
+            if account is not None:
+                metadata = self._csv_metadata.get(path.name)
+                if metadata and metadata[0] == stamp and not matches(metadata[1]):
+                    self._csv_metadata.move_to_end(path.name)
+                    return None
         with path.open(encoding="utf-8-sig", newline="") as file:
             reader = csv.DictReader(file)
             first = next(reader)
             snapshot = json.loads(first["snapshot_metadata_json"])
+            if account is not None:
+                identity = {key: snapshot.get(key) for key in ("account_id", "game_id")}
+                identity["bookmaker"] = snapshot.get("bookmaker", "fanduel")
+                # Keep identities of skipped files without retaining their
+                # quote rows or original response. Recheck on replacement.
+                with self._csv_lock:
+                    self._csv_metadata[path.name] = (stamp, identity)
+                    self._csv_metadata.move_to_end(path.name)
+                    if len(self._csv_metadata) > 512:
+                        self._csv_metadata.popitem(last=False)
+            if not matches(snapshot):
+                return None
             snapshot["rows"] = []
-            for row in [first, *reader]:
+            for row in chain((first,), reader):
                 if not row.get("market_key"):
                     continue
                 item = {key: row.get(key, "") for key in ROW_FIELDS}
@@ -269,14 +301,15 @@ class NflMarketService:
             return []
         # A game is read by several Dash callbacks. Reuse its saved snapshots
         # only while SQLite, exported CSVs and the credit log are unchanged.
-        revision = self._saved_revision() if selected is not None and len(selected) == 1 else None
+        stamps = {}
+        revision = self._saved_revision(stamps=stamps) if selected is not None and len(selected) == 1 else None
         key = (tuple(accounts), tuple(sorted(selected)), revision) if revision is not None else None
         if key is not None:
             with self._history_lock:
                 if key in self._history_cache:
                     self._history_cache.move_to_end(key)
                     return self._copy_snapshots(self._history_cache[key])
-        snapshots = sorted((snapshot for account in accounts for snapshot in self._saved_account(account, selected)),
+        snapshots = sorted((snapshot for account in accounts for snapshot in self._saved_account(account, selected, stamps)),
                            key=lambda item:item['pulled_at'], reverse=True)
         if key is not None and revision == self._saved_revision():
             with self._history_lock:
@@ -313,7 +346,7 @@ class NflMarketService:
         # Quote rows are independent; the archived raw response stays read-only.
         return [{**snapshot, 'rows': [dict(row) for row in snapshot['rows']]} for snapshot in snapshots]
 
-    def _saved_revision(self):
+    def _saved_revision(self, *, stamps=None):
         if not isinstance(self.usage_log, ApiUsageLog):
             return None
         paths = [self.path, Path(str(self.path) + '-wal'), Path(str(self.path) + '-journal'),
@@ -322,18 +355,22 @@ class NflMarketService:
         try:
             for path in paths:
                 try:
-                    stat = path.stat()
-                    revision.append((str(path), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino))
+                    stamp = self._file_stamp(path)
+                    revision.append((str(path), *stamp))
+                    if stamps is not None:
+                        stamps[path] = stamp
                 except FileNotFoundError:
                     revision.append((str(path), None))
         except OSError:
             return None  # Let the normal reader report export/log access errors.
         return tuple(revision)
 
-    def _saved_account(self, account, selected):
+    def _saved_account(self, account, selected, stamps):
         saved = {}
         with closing(self._connect()) as db:
             scope = '' if selected is None else f" AND game_id IN ({','.join('?' for _ in selected)})"
+            failed = db.execute(f"SELECT payload FROM {self.table} WHERE account = ? AND state = 'failed' AND payload IS NOT NULL",
+                                (account,)).fetchall()
             rows = db.execute(f"SELECT game_id, payload FROM {self.table} WHERE account = ? AND state = 'done'{scope} ORDER BY pulled_at DESC",
                               (account, *(sorted(selected) if selected is not None else ())))
             for game_id, payload in rows:
@@ -343,24 +380,26 @@ class NflMarketService:
                     saved[(game_id, snapshot["pulled_at"])] = snapshot
         for path in self.csv_directory.glob(f"{self.sport.lower()}_*.csv"):
             try:
-                snapshot = self._read_csv(path)
-                if (snapshot.get("account_id") == account and snapshot.get('bookmaker','fanduel')==self.bookmaker
-                        and (selected is None or snapshot["game_id"] in selected)):
+                snapshot = self._read_csv(path, account=account, selected=selected, stamps=stamps)
+                if snapshot is not None:
                     snapshot = {key: value for key, value in snapshot.items() if key != "account_id"}
                     saved[(snapshot["game_id"], snapshot["pulled_at"])] = snapshot
             except (OSError, ValueError, KeyError, StopIteration, TypeError, csv.Error):
                 continue
         snapshots = sorted(saved.values(), key=lambda item: item["pulled_at"], reverse=True)
         try:
-            for snapshot in snapshots:
-                self.usage_log.import_snapshot(snapshot, account)
-            with closing(self._connect()) as db:
-                failed = db.execute(f"SELECT payload FROM {self.table} WHERE account = ? AND state = 'failed' AND payload IS NOT NULL",
-                                    (account,)).fetchall()
+            attempts = []
             for (audit,) in failed:
                 entry = json.loads(audit)
-                for attempt in entry.pop('attempts',[]):self.usage_log.record(**attempt)
-                self.usage_log.record(**entry)
+                attempts.extend(entry.pop('attempts', []))
+                attempts.append(entry)
+            if isinstance(self.usage_log, ApiUsageLog):
+                self.usage_log.import_snapshots(snapshots, account, failed_attempts=attempts)
+            else:
+                for snapshot in snapshots:
+                    self.usage_log.import_snapshot(snapshot, account)
+                for entry in attempts:
+                    self.usage_log.record(**entry)
         except (OSError, ValueError, csv.Error):
             raise DataSourceError("Saved markets are available, but the API credit log could not be updated. Check data/API Log folder access and CSV format; do not pull again to repair the log.") from None
         return snapshots

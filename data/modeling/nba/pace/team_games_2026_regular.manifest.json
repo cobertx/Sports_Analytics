@@ -9,10 +9,10 @@
     "week": null
   },
   "source": "ESPN box scores via SportsDataverse",
-  "source_fetched_at": "2026-11-21T19:20:09+00:00",
+  "source_fetched_at": "2026-11-23T00:39:57+00:00",
   "cache_key": "c63a484f04bada5cfab6a504f16d1ad6af87348150b12f73bb7f030409ff20ad",
-  "games": 235,
-  "sha256": "f8907c2676eb73a613658083cec9c308efa8799d7576f40d8a62e911dfbe54b6",
+  "games": 241,
+  "sha256": "c964bf3b15729f2f2db99905213ece7ed39aca0ec6b1337a7747568bb0fc0eb1",
   "possessions": "mean of both teams' FGA + 0.44*FTA - OREB + TOV; includes overtime",
   "availability": "Observed source availability; legacy rows use UTC game date + 2 days"
 }

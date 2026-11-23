@@ -24,6 +24,13 @@ check(api.quote_guard('kalshi',hash,'saved','Game Lines',view,quotes).includes('
 check(api.quote_guard('kalshi',hash,'live','Game Lines',view,{...quotes,rows:[],updating:true}).includes('pending'),'Empty pending quotes reserve a placeholder');
 check(!api.quote_guard('kalshi',hash,'live','Game Lines',view,{...quotes,rows:[],error:'offline'}).includes('pending'),'Terminal empty/error quotes terminate the placeholder');
 check(api.page_guard('kalshi',hash,'NFL',null,{sport:'NFL',games:[]}).includes('unavailable'),'Missing game terminates loading');
+window.location.hash='#nba-games';
+const pendingSchedule={sport:'NBA',pending:true,updating:true};
+check(api.page_guard('market','#nba-games','NBA',null,pendingSchedule,[]).includes('pending'),'Cold FanDuel schedule retains upcoming-games feedback');
+check(api.page_guard('market','#nba-games','NBA',null,{sport:'NBA'},[])==='market-page','Finished FanDuel schedule reveals the list');
+window.location.hash='#nba-game-123';
+check(api.page_guard('market','#nba-game-123','NBA',null,pendingSchedule,[]).includes('pending'),'Cold schedule cannot mark a game unavailable');
+check(api.page_guard('market','#nba-game-123','NBA',{sport:'NBA',id:'123'},pendingSchedule,[])==='market-page','Saved FanDuel game appears while the schedule is pending');
 const d={key:'fixture',revision:'v1',sport:'NBA',kind:'player',season:2025,phase:'regular'},route='#historical-player';
 window.location.hash=route;
 const scope={v:2,route,key:d.key,revision:d.revision,sport:'NBA',kind:'player',season:2025,phase:'regular',week:null,

@@ -103,22 +103,31 @@ def register(app, schedule_service, market_services):
             saved = market_services[sport].latest([game["id"] for game in previous_games])
             return schedule_blocks(previous_games, sport, saved), no_update, no_update,no_update
         try:
-            schedule = schedule_service.load(sport, days, refresh=ctx.triggered_id == "market-refresh")
+            schedule = schedule_service.load(sport, days, refresh=ctx.triggered_id == "market-refresh", local_first=True)
         except (DataSourceError, ValueError) as exc:
             return html.Div([html.H3("Schedule unavailable"), html.P(str(exc)),
                              html.A("Check ESPN schedule ↗", href=SCHEDULE_LINKS[sport], target="_blank", rel="noopener noreferrer")],
                             className="panel market-empty"), "Upcoming games could not be loaded.", [],dict(sport=sport,days=days,checked_at=0)
-        status = f"{sport} · {len(schedule.games)} upcoming games · ESPN · Oldest schedule update: {format_eastern(schedule.fetched_at)} · Refreshes every 5 minutes."
         updating=getattr(schedule,'updating',False)
-        if updating:status+=' Saved schedules are available now; checking for updates in the background.'
+        status = f"{sport} · {len(schedule.games)} upcoming games · ESPN"
+        if schedule.fetched_at:
+            status += f" · Oldest schedule update: {format_eastern(schedule.fetched_at)} · Refreshes every 5 minutes."
+        if updating:
+            status += " · Checking for schedule updates."
         if schedule.stale_days:
             status += " Saved schedules shown after a source error for: " + ", ".join(schedule.stale_days) + "."
         if schedule.failed_days:
             status += " Incomplete coverage; unavailable dates: " + ", ".join(schedule.failed_days) + "."
-        saved = market_services[sport].latest([game["id"] for game in schedule.games]) if sport in market_services else {}
+        new_scope = dict(sport=sport, days=days, checked_at=time(), updating=bool(updating),
+                         pending=bool(updating and not schedule.fetched_at))
+        if (ctx.triggered_id == 'market-timer' and scope and scope.get('updating')
+                and updating and scope.get('sport') == sport and scope.get('days') == days
+                and schedule.games == previous_games and new_scope['pending'] == scope.get('pending')):
+            return no_update, status, no_update, new_scope
+        saved = market_services[sport].latest([game["id"] for game in schedule.games]) if schedule.games and sport in market_services else {}
         blocks = schedule_blocks(schedule.games, sport, saved)
-        if not blocks:
+        if not blocks and not updating:
             blocks = html.Div([html.H3("No upcoming games found"),
                                html.P("No scheduled games were returned for the loaded dates. Try the 14-day window or refresh the schedule.")],
                               className="panel market-empty")
-        return blocks, status, schedule.games,dict(sport=sport,days=days,checked_at=time(),updating=bool(updating))
+        return blocks, status, schedule.games, new_scope

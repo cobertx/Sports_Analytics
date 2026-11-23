@@ -33,7 +33,7 @@ from sports_analytics.history_updates import HistoryUpdater
 from sports_analytics.game_data_status import GameDataStatus
 from app.sections.markets.lazy_markets import register as register_lazy_markets
 from sports_analytics.filter_jobs import FilterJobs
-from app.shell.loading import configure as configure_loading, register as register_loading, indicator
+from app.shell.loading import configure as configure_loading, register as register_loading
 from app.shell.progressive_loading import configure as configure_progressive, register as register_progressive
 from app.sections.markets.player_distribution import register as register_player_distribution
 from app.sections.markets.prop_probability import register as register_prop_probability
@@ -186,6 +186,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                   dcc.Input(id='entity-type',type='hidden',value='team')],style={'display':'none'}),
         dcc.Location(id="market-url", refresh=False), dcc.Store(id="market-schedule", data=[]),
         dcc.Store(id="market-detail-context"), dcc.Store(id="market-refresh-signal"),
+        dcc.Store(id='market-category-scope'),
         dcc.Store(id='market-schedule-scope'),
         dcc.Store(id="market-applied-criteria"),
         dcc.Store(id='market-return',data={},storage_type='session'),
@@ -247,10 +248,6 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
                     html.Div([
                         html.P(id='navigation-feedback',className='navigation-feedback',role='status',**{'aria-live':'polite'}),
                         html.P(id='market-return-status',className='market-return-status chart-note',role='status'),
-                        html.Div([html.Span(indicator('Loading the selected market…'),className='market-transition-loading'),
-                                  html.Span('This game is unavailable in the loaded catalog. Return to the market’s game list and refresh.',
-                                            className='market-transition-unavailable')],
-                                 id='market-transition-status',role='status',className='market-transition-status'),
                         historical_layout(),
                         market_layout(),
                         backtesting_layout(),

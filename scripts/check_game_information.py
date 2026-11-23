@@ -157,7 +157,7 @@ class GameInformationChecks(TestCase):
     def test_additional_tab_exists_without_odds_and_never_fits_a_model(self):
         app,cb,market=self.app()
         for sport in ('NBA','NFL'):
-            tabs,value,status=cb['snapshot_categories'](None,f'#{sport.lower()}-game-123',None)
+            tabs,value,status,_=cb['snapshot_categories'](None,f'#{sport.lower()}-game-123',None)
             self.assertEqual([t.value for t in tabs],[ADDITIONAL_INFORMATION]);self.assertEqual(value,ADDITIONAL_INFORMATION)
             market.history.reset_mock()
             self.assertEqual(cb['show_saved_markets'](ADDITIONAL_INFORMATION,None,f'#{sport.lower()}-game-123',None,'PPP','WHP',None,'market'),([],no_update))

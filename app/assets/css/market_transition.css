@@ -1,6 +1,4 @@
 /* Market visibility follows the URL while slower server updates finish. */
-.market-transition-status { display: none; padding: 24px; color: var(--muted); }
-.market-transition-unavailable { display: none; }
 .market-screen #sport-pages { display: grid !important; }
 .market-screen #historical-page,.market-screen #backtesting-page,.market-screen #in-game-page,
 .market-screen #odds-api-page,
@@ -15,14 +13,10 @@
 .market-screen-detail #market-list,.market-screen-detail #kalshi-list,.market-screen-detail #polymarket-list { display: none !important; }
 .market-screen-list #market-list,.market-screen-list #kalshi-list,.market-screen-list #polymarket-list,
 .market-screen-detail #market-game-detail,.market-screen-detail #kalshi-detail,.market-screen-detail #polymarket-detail { display: block !important; }
-.market-screen-pending #market-transition-status { display: block; }
 .market-screen-pending #market-list,.market-screen-pending #kalshi-list,.market-screen-pending #polymarket-list,
 .market-screen-pending #market-game-detail,.market-screen-pending #kalshi-detail,.market-screen-pending #polymarket-detail { display: none !important; }
 .app-shell:not(.market-screen-draftkings) .draftkings-market-heading { display: none; }
 .market-screen-detail #market-page > .market-provider-heading { margin-bottom: var(--space-3); }
-.market-screen-unavailable #market-transition-status { display: block; }
-.market-screen-unavailable .market-transition-loading { display: none; }
-.market-screen-unavailable .market-transition-unavailable { display: inline; }
 .market-screen-unavailable #kalshi-detail,.market-screen-unavailable #polymarket-detail { display: none !important; }
 .market-screen .sport-page-link.active { background: transparent; color: var(--muted); font-weight: 400; }
 .market-screen-market #market-page-link,.market-screen-kalshi #kalshi-page-link,.market-screen-polymarket #polymarket-page-link,.market-screen-summary:not(.market-screen-draftkings) #market-summary-page-link,.market-screen-draftkings #draftkings-page-link,
@@ -31,16 +25,19 @@
 }
 .market-screen-kalshi #parlay-drawer,.market-screen-polymarket #parlay-drawer,.market-screen-summary #parlay-drawer,
 .market-screen-filtered #parlay-drawer { display: none !important; }
-.market-sections-transition { display: none; padding: 16px 0; min-height: 220px; }
+:is(#market-sections-transition,#kalshi-sections-transition,#polymarket-sections-transition,#summary-sections-transition) { display: none; }
 .market-quotes-pending #saved-market-sections { display: none !important; }
 .market-quotes-pending #market-prop-result { display: none; }
-.market-quotes-pending #market-sections-transition { display: block; }
-.exchange-sections-transition { display: none; padding: 16px 0; min-height: 220px; }
+.market-quotes-pending #market-sections-transition,
+.exchange-quotes-pending :is(#kalshi-sections-transition,#polymarket-sections-transition),
+#summary-quote-content:has(.summary-quotes-pending) > #summary-sections-transition { display: flex; }
 .exchange-quotes-pending #kalshi-market-sections,.exchange-quotes-pending #polymarket-market-sections,
 .exchange-quotes-pending :is(#kalshi-game-distributions,#polymarket-game-distributions),
 .exchange-quotes-pending [data-prop-chart-result],
 .exchange-quotes-pending .kalshi-detail-table,.exchange-quotes-pending .kalshi-rules { display: none !important; }
-.exchange-quotes-pending .exchange-sections-transition { display: block; }
+.market-quotes-pending #market-quote-content > .action-loading,
+#summary-quote-content:has(.summary-quotes-pending) > .action-loading,
+.exchange-quotes-pending :is(#kalshi-quote-status-loading,#polymarket-quote-status-loading) .action-loading-overlay { display: none; }
 .market-model-pending :is(.ppp-probability,.ppp-fair-odds,.market-edge),
 .exchange-model-pending :is(.model-probability,.model-fair-odds,.market-edge) { visibility: hidden; }
 .market-model-pending :is(.player-distribution,.ppp-chart):not(.market-quotes-only .ppp-chart,.prop-quotes-only) { display: none; }
@@ -53,16 +50,24 @@
   position: absolute; inline-size: 1px; block-size: 1px; margin: 0; overflow: hidden; clip-path: inset(50%);
 }
 .market-return-status { padding: 8px 0; }
-.section-page-status { display: none; padding: 24px; min-height: 220px; }
+.section-page-status { display: none; }
+.market-page > .section-page-status { margin-block: var(--space-3); }
 .market-screen-pending > .section-page-status,.market-screen-unavailable > .section-page-status { display: block; }
-.section-page-unavailable,.market-screen-unavailable .section-page-loading { display: none; }
-.market-screen-unavailable .section-page-unavailable { display: block; }
-.market-screen-unavailable > :not(.section-page-status) { display: none !important; }
+.section-page-unavailable,.section-game-loading,
+.market-screen-detail .section-list-loading { display: none; }
+.market-screen-detail .section-game-loading { display: block; }
+.market-screen-unavailable :is(.section-list-loading,.section-game-loading) { display: none; }
+.market-screen-unavailable .section-page-unavailable {
+  display: block; margin: 0; padding: var(--space-3) var(--space-4); color: var(--muted);
+}
+:is(#market-page,#kalshi-page,#polymarket-page).market-screen-unavailable > :not(.section-page-status,.market-provider-heading) {
+  display: none !important;
+}
+#market-page.market-screen-pending > .market-provider-heading { margin-bottom: 0; }
+.kalshi-page.market-screen-pending > .kalshi-api-info { display: none; }
 .market-sport-list :is(#market-game-detail,#kalshi-detail,#polymarket-detail) { display: none !important; }
 .market-sport-list:not(.market-screen-pending) :is(#market-list,#kalshi-list,#polymarket-list) { display: block !important; }
-.summary-quotes-pending { min-height: 220px; }
-.summary-quotes-pending > * { display: none !important; }
-.summary-quotes-pending::before { content: 'Loading the selected game’s markets…'; color: var(--muted); display: block; padding: 16px 0; }
+.summary-quotes-pending { display: none; }
 .market-view-updating:not(.kalshi-sportsbook,.market-screen-kalshi,.market-screen-polymarket)::before { content: 'Updating · Previously loaded data retains its timestamp.'; display: block; color: var(--muted); padding: 8px 0; font-size: 12px; }
 .market-model-pending::before { content: 'Quotes available · Calculating probabilities…'; display: block; color: var(--muted); padding: 8px 0; font-size: 12px; }
 /* Leaving a market must hide it before the new page's server callbacks finish. */

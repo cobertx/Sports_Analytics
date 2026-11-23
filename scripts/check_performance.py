@@ -411,6 +411,24 @@ class MarketPerformanceChecks(TestCase):
         self.assertEqual(service.history('123'),[])
         api.get.assert_not_called()
 
+    def test_warm_schedule_reads_one_credit_log_and_skips_unrelated_archive_files(self):
+        api = Mock()
+        api.account_id.return_value = 'account'
+        log = ApiUsageLog(self.root/'API Log'/'usage.csv')
+        service = NbaMarketService(api, self.root/'markets.sqlite3', self.root/'markets', log)
+        for game_id, hour in [('123', '12'), ('456', '13'), ('789', '14')]:
+            service._export_csv({**self.snapshot, 'game_id':game_id, 'pulled_at':f'2026-03-01T{hour}:00:00Z'}, 'account')
+        expected = service.latest(['123', '456'])
+
+        with patch.object(Path, 'open', autospec=True, side_effect=Path.open) as opened, \
+                patch.object(log, '_read', wraps=log._read) as ledger:
+            self.assertEqual(service.latest(['123', '456']), expected)
+            ledger.assert_called_once()
+            self.assertFalse(any(call.args[0].parent == service.csv_directory for call in opened.call_args_list))
+        self.assertEqual({row['game_id'] for row in log.records('account')}, {'123', '456'})
+        self.assertEqual(service.history('789')[0]['game_id'], '789')
+        api.get.assert_not_called()
+
 
 if __name__ == '__main__':
     main()

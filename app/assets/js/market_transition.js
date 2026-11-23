@@ -28,8 +28,8 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
       guards[provider]=[provider,hash,sport,context,catalog,schedule];
       const route=window.dash_clientside.market_transition.route(hash),base=provider==='market'?'market-page':'kalshi-page';
       if(!route||route.provider!==provider)return base;
-      if(sport&&route.sport!==sport)return base+' market-sport-list'+(catalog?.sport===sport?'':' market-screen-pending');
-      const ready=route.game?context?.sport===route.sport&&String(context.id)===route.game:catalog?.sport===route.sport;
+      if(sport&&route.sport!==sport)return base+' market-sport-list'+(catalog?.sport===sport&&!catalog.pending?'':' market-screen-pending');
+      const ready=route.game?context?.sport===route.sport&&String(context.id)===route.game:catalog?.sport===route.sport&&!catalog.pending;
       const games=provider==='market'?schedule:catalog?.games;
       const unavailable=!ready&&route.game&&catalog?.sport===route.sport&&!catalog.updating&&Array.isArray(games)&&
         !games.some(game=>String(game.id)===route.game);

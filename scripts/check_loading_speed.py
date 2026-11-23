@@ -22,6 +22,7 @@ from app.sections.exchanges.kalshi_view import team_aliases,team_identity
 from app.sections.markets.market_view import NBA_LOGO_FILES,NFL_LOGO_FILES,NCAAF_LOGO_FILES
 import check_kalshi as kalshi_fixtures
 import check_polymarket as polymarket_fixtures
+from check_dashboard_efficiency import post
 
 
 class LoadingSpeedChecks(TestCase):
@@ -207,6 +208,61 @@ class LoadingSpeedChecks(TestCase):
         with patch('sports_analytics.schedule.HttpClient.json',side_effect=AssertionError('Use updated local dates')):
             self.assertFalse(service.load('NFL',7,now=now).updating)
         print(f'Cached weekly schedule: {1000*elapsed:.1f} ms while source was blocked.')
+
+    def test_fanduel_opens_saved_game_while_first_schedule_download_is_pending(self):
+        schedule = ScheduleService(self.root/'schedule.sqlite3')
+        self.queue(schedule)
+        markets = Mock()
+        stamp = '2026-11-23T00:00:00Z'
+        markets.history.return_value = [dict(game_id='123', pulled_at=stamp, commence_time=stamp,
+                                             home_team='Boston Celtics', away_team='Sacramento Kings')]
+        app = create_app(service=Mock(path=self.root/'cache.sqlite3'),
+                         schedule_service=schedule, nba_market_service=markets)
+        route = '#nba-game-123'
+        values = {'workspace-page':'market', 'sport':'NBA', 'market-url':route, 'market-days':7,
+                  'market-schedule':[], 'market-timer':0,
+                  'nav-market-active':dict(v=1, page='market', sport='NBA'),
+                  'nav-market':dict(v=1, page='market', sport='NBA', hash=route)}
+        entered, release = Event(), Event()
+
+        def held_feed(*args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError('Schedule source was not released')
+            return {'events': []}
+
+        with patch('sports_analytics.schedule.HttpClient.json', side_effect=held_feed) as feed:
+            try:
+                first = post(app, 'upcoming_games', values, 'nav-market-active.data')['response']
+                scope = first['market-schedule-scope']['data']
+                self.assertTrue(scope['pending'])
+                self.assertTrue(entered.wait(2))
+                markets.latest.assert_not_called()
+                values['market-schedule'] = first['market-schedule']['data']
+                values['market-schedule-scope'] = scope
+                detail = post(app, 'open_game', values, 'market-schedule.data')['response']
+                self.assertEqual(detail['market-snapshot']['value'], stamp)
+                self.assertEqual(detail['market-detail-context']['data']['id'], '123')
+                pending = post(app, 'upcoming_games', values, 'market-timer.n_intervals')['response']
+                self.assertNotIn('market-schedule', pending)
+            finally:
+                release.set()
+                schedule._refresh.tasks.join()
+            completed = post(app, 'upcoming_games', values, 'market-timer.n_intervals')['response']
+            self.assertFalse(completed['market-schedule-scope']['data']['updating'])
+            self.assertIn('No upcoming games found', str(completed['market-games']['children']))
+            self.assertEqual(feed.call_count, 8)
+
+    def test_uncached_schedule_failure_ends_loading_without_repeating_requests(self):
+        schedule = ScheduleService(self.root/'schedule.sqlite3')
+        self.queue(schedule)
+        now = datetime(2026, 11, 22, 18, tzinfo=timezone.utc)
+        with patch('sports_analytics.schedule.HttpClient.json', side_effect=DataSourceError('Offline')) as feed:
+            schedule.load('NBA', 7, now=now, local_first=True)
+            schedule._refresh.tasks.join()
+            with self.assertRaisesRegex(DataSourceError, 'Upcoming games could not be loaded'):
+                schedule.load('NBA', 7, now=now, local_first=True)
+            self.assertEqual(feed.call_count, 8)
 
     def test_indexed_team_aliases_preserve_canonical_names_and_ambiguous_or_unknown_teams(self):
         for sport,files in [('NBA',NBA_LOGO_FILES),('NFL',NFL_LOGO_FILES),('NCAAF',NCAAF_LOGO_FILES)]:

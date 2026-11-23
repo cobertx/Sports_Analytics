@@ -94,7 +94,7 @@ class MispricingChecks(TestCase):
             self.assertEqual(sum(getattr(c,'id',None)==control for c in components(self.app.layout)),1)
         for sport in ['NBA','NFL','NCAAF']:
             self.saved['sport']=sport
-            tabs,value,_=self.cb['snapshot_categories'](self.saved['pulled_at'],f'#{sport.lower()}-game-123',FILTER_CATEGORY)
+            tabs,value,_,_=self.cb['snapshot_categories'](self.saved['pulled_at'],f'#{sport.lower()}-game-123',FILTER_CATEGORY)
             self.assertIs(value,no_update)
             self.assertEqual(tabs[-1].label,'Mispricing Filter')
             self.assertIn('market-filter-tab-selected',tabs[-1].selected_className.split())
