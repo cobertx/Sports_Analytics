@@ -9,8 +9,7 @@ from app.paths import APP_DIRECTORY
 from urllib.parse import quote
 
 from dash import dcc, html
-import plotly.graph_objects as go
-from app.components.presentation import chart_style, signed_state
+from app.components.presentation import TEMPLATE, chart_style, signed_state
 
 from models.Game_Outcome.PPP.PPP import PPPError, implied_probability
 from sports_analytics.display_time import eastern_datetime, format_eastern
@@ -23,6 +22,8 @@ from app.sections.market_structure.market_structure_link import line_actions
 from app.sections.markets import prop_probability
 from app.sections.information.availability_view import panel as availability_panel
 from app.sections.markets.lazy_markets import markets as lazy_markets
+
+COMPARISON_TEMPLATE = TEMPLATE.to_plotly_json()
 
 NFL_LOGO_DIRECTORY = APP_DIRECTORY / "images" / "NFL" / "Team Logos"
 NFL_LOGO_FILES = {path.stem.casefold(): path.name for path in NFL_LOGO_DIRECTORY.glob("*.png")}
@@ -230,26 +231,27 @@ def _comparison_figure(snapshot, forecast, market_key, group, method="PPP", crit
     values = [_line_values(row, forecast) for row in selected]
     model_probabilities = [estimate.probability if estimate else None for _, estimate, _ in values]
     market_probabilities = [implied for implied, _, _ in values]
-    figure = go.Figure()
+    traces = []
     if forecast and selected:
-        figure.add_trace(go.Scatter(x=lines, y=model_probabilities, name=f"{method} probability", mode="lines+markers",
-                                   line={"color": "#57dbc4", "width": 2.5}, marker={"size": 4},
-                                   fill="tozeroy", fillcolor="rgba(87, 219, 196, 0.16)", connectgaps=False,
-                                   customdata=labels,
-                                   hovertemplate=f"%{{customdata}}<br>{method} %{{y:.2%}}<extra>%{{fullData.name}}</extra>"))
+        traces.append(dict(type="scatter", x=lines, y=model_probabilities, name=f"{method} probability", mode="lines+markers",
+                           line={"color": "#57dbc4", "width": 2.5}, marker={"size": 4},
+                           fill="tozeroy", fillcolor="rgba(87, 219, 196, 0.16)", connectgaps=False,
+                           customdata=labels,
+                           hovertemplate=f"%{{customdata}}<br>{method} %{{y:.2%}}<extra>%{{fullData.name}}</extra>"))
     if selected:
-        figure.add_trace(go.Scatter(x=lines, y=market_probabilities, name="Market implied probability", mode="markers" if curve else "lines+markers",
-                               line={"color": "#8197ff", "width": 2.5}, marker={"symbol": "diamond", "size": 5},
-                               fill="tozeroy", fillcolor="rgba(129, 151, 255, 0.16)", connectgaps=False,
-                               customdata=[[label, f"{row['odds']:+g}" if row["odds"] is not None else "Unreported"]
-                                           for label, row in zip(labels, selected)],
-                               hovertemplate="%{customdata[0]}<br>Market %{y:.2%}<br>Odds %{customdata[1]}<extra>%{fullData.name}</extra>"))
+        traces.append(dict(type="scatter", x=lines, y=market_probabilities, name="Market implied probability",
+                           mode="markers" if curve else "lines+markers",
+                           line={"color": "#8197ff", "width": 2.5}, marker={"symbol": "diamond", "size": 5},
+                           fill="tozeroy", fillcolor="rgba(129, 151, 255, 0.16)", connectgaps=False,
+                           customdata=[[label, f"{row['odds']:+g}" if row["odds"] is not None else "Unreported"]
+                                       for label, row in zip(labels, selected)],
+                           hovertemplate="%{customdata[0]}<br>Market %{y:.2%}<br>Odds %{customdata[1]}<extra>%{fullData.name}</extra>"))
     matches = [criteria_match(probability, edge, criteria)
                for probability, (_, _, edge) in zip(model_probabilities, values)]
     if any(matches):
         # Keep nonmatches as gaps: a gold line must never bridge unqualified quotes.
-        figure.add_trace(go.Scatter(
-            x=lines, y=[p if match else None for p, match in zip(model_probabilities, matches)],
+        traces.append(dict(
+            type="scatter", x=lines, y=[p if match else None for p, match in zip(model_probabilities, matches)],
             name="Meets criteria", mode="lines+markers", connectgaps=False,
             line={"color": "#f6c667", "width": 4},
             marker={"color": "#f6c667", "size": 9, "symbol": "circle", "line": {"color": "#111d2e", "width": 1}},
@@ -259,28 +261,30 @@ def _comparison_figure(snapshot, forecast, market_key, group, method="PPP", crit
             hovertemplate=(f"%{{customdata[0]}}<br>{method} %{{y:.2%}}<br>Market %{{customdata[1]}}"
                            "<br>Edge %{customdata[2]}<extra>Meets criteria</extra>")))
     if curve:
-        figure.add_trace(go.Scatter(x=curve[0],y=curve[1],name=f'{method} calculated distribution',
-            mode='lines',line=dict(color='#57dbc4',width=2.5,shape='hvh'),
-            hovertemplate='%{x:g}<br>%{y:.2%}<extra>%{fullData.name}</extra>'))
-    figure.update_layout(**chart_style(), height=420,
-                         margin={"l": 55, "r": 20, "t": 65, "b": 115},
-                         legend={"orientation": "h", "y": 1.18, "font": {"size": 11}}, hovermode="x unified")
+        traces.append(dict(type="scatter", x=curve[0], y=curve[1], name=f'{method} calculated distribution',
+                           mode='lines', line=dict(color='#57dbc4', width=2.5, shape='hvh'),
+                           hovertemplate='%{x:g}<br>%{y:.2%}<extra>%{fullData.name}</extra>'))
+    # Dash accepts a figure specification directly. All axes and trace types
+    # are known here, so each update can reuse the same template data.
+    layout = chart_style(template=COMPARISON_TEMPLATE, height=420, margin={"l": 55, "r": 20, "t": 65, "b": 115},
+                         legend={"orientation": "h", "y": 1.18, "font": {"size": 11}}, hovermode="x unified",
+                         xaxis=dict(title={"text": "Team handicap" if spreads else "Game total line (points)"},
+                                    gridcolor="#223047", automargin=True),
+                         yaxis=dict(title={"text": "Win probability"}, tickformat=".0%", range=[0, 1], gridcolor="#223047"))
     ticks = list(range(0, len(lines), max(1, math.ceil(len(lines) / 6))))
     if ticks and ticks[-1] != len(lines) - 1:
         ticks.append(len(lines) - 1)
-    figure.update_xaxes(title="Team handicap" if spreads else "Game total line (points)", gridcolor="#223047",
-                        automargin=True)
     if not curve:
-        figure.update_xaxes(tickmode="array",tickvals=[lines[index] for index in ticks],
-                            ticktext=[labels[index] for index in ticks],tickangle=-35)
-    figure.update_yaxes(title="Win probability", tickformat=".0%", range=[0, 1], gridcolor="#223047")
+        layout["xaxis"].update(tickmode="array", tickvals=[lines[index] for index in ticks],
+                               ticktext=[labels[index] for index in ticks], tickangle=-35)
+    annotation = None
     if not forecast:
-        figure.add_annotation(text=f"{method} estimate unavailable; market probabilities shown", x=.5, y=1.02,
-                              xref="paper", yref="paper", showarrow=False)
+        annotation = f"{method} estimate unavailable; market probabilities shown"
     elif not any(value is not None for value in market_probabilities):
-        figure.add_annotation(text="No comparable market prices for this side",x=.5,y=1.02,
-                              xref="paper",yref="paper",showarrow=False)
-    return figure
+        annotation = "No comparable market prices for this side"
+    if annotation:
+        layout["annotations"] = [dict(text=annotation, x=.5, y=1.02, xref="paper", yref="paper", showarrow=False)]
+    return dict(data=traces, layout=layout)
 
 
 def ppp_comparison(snapshot, forecast=None, error=None, method="PPP", criteria=None):
@@ -501,8 +505,9 @@ def market_sections(snapshot, category, forecast=None, model_error=None, criteri
             sections.insert(0,availability_panel(forecast))
     if loading:
         sections.insert(0,indicator('Quotes are ready. Calculating the selected forecast in the background…'))
-    if category == "Game":
-        sections.append(ppp_comparison(snapshot, forecast, 'Calculating the selected forecast…' if loading else model_error, method, criteria))
+    # Quote rows can paint before Plotly constructs the comparison figures.
+    if category == "Game" and not loading:
+        sections.append(ppp_comparison(snapshot, forecast, model_error, method, criteria))
     if prop_panel is not None:
         sections.append(prop_panel)
     return sections or [html.P("No saved selections in this category.", className="saved-market-empty")]

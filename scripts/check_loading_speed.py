@@ -264,6 +264,34 @@ class LoadingSpeedChecks(TestCase):
                 schedule.load('NBA', 7, now=now, local_first=True)
             self.assertEqual(feed.call_count, 8)
 
+    def test_manual_schedule_refresh_returns_saved_data_while_the_feed_is_blocked(self):
+        service = ScheduleService(self.root / 'schedule.sqlite3')
+        self.queue(service)
+        now = datetime(2026, 11, 22, 18, tzinfo=timezone.utc)
+        with patch('sports_analytics.schedule.HttpClient.json', return_value={'events': []}):
+            saved = service.load('NBA', 7, now=now)
+        entered, release = Event(), Event()
+
+        def held_feed(*args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError('Schedule source was not released')
+            return {'events': []}
+
+        with patch('sports_analytics.schedule.HttpClient.json', side_effect=held_feed) as feed:
+            try:
+                refresh = service.load('NBA', 7, refresh=True, now=now + timedelta(seconds=1), local_first=True)
+                self.assertEqual(refresh.fetched_at, saved.fetched_at)
+                self.assertTrue(refresh.updating)
+                self.assertTrue(entered.wait(2))
+            finally:
+                release.set()
+            service._refresh.tasks.join()
+            updated = service.load('NBA', 7, now=now + timedelta(seconds=2), local_first=True)
+            self.assertFalse(updated.updating)
+            self.assertGreater(updated.fetched_at, saved.fetched_at)
+            self.assertEqual(feed.call_count, 8)
+
     def test_indexed_team_aliases_preserve_canonical_names_and_ambiguous_or_unknown_teams(self):
         for sport,files in [('NBA',NBA_LOGO_FILES),('NFL',NFL_LOGO_FILES),('NCAAF',NCAAF_LOGO_FILES)]:
             index=team_aliases(sport)

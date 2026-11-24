@@ -71,8 +71,10 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                   Output("market-detail-context", "data"),
                   Input("market-url", "hash"), Input("sport", "value"), Input("workspace-page", "value"),
                   Input("market-schedule", "data"), Input("market-refresh-signal", "data"),
-                  State("market-snapshot", "value"), State("market-detail-context", "data"),State('market-return','data'))
-    def open_game(location_hash, sport, page, games, refreshed, previous, previous_context,market_return=None):
+                  State("market-snapshot", "value"), State("market-detail-context", "data"),State('market-return','data'),
+                  State("market-list", "style"), State("market-snapshot", "options"))
+    def open_game(location_hash, sport, page, games, refreshed, previous, previous_context, market_return=None,
+                  list_style=None, previous_options=None):
         game_id = market_game_id(location_hash)
         if page!='market' or sport not in market_services:raise PreventUpdate
         if not game_id or market_game_sport(location_hash)!=sport:
@@ -80,7 +82,9 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         triggered = set(ctx.triggered_prop_ids)
         current_game = previous_context if (previous_context and previous_context.get('sport') == sport
                                             and str(previous_context.get('id')) == game_id) else None
-        if current_game and previous and triggered <= {'market-url.hash','workspace-page.value','nav-market.data'}:
+        navigating = triggered <= {'market-url.hash','workspace-page.value','nav-market.data'}
+        from_list = (list_style or {}).get("display") == "block"
+        if current_game and previous and navigating and not from_list:
             return (no_update,)*6
 
         pulled_snapshot = None
@@ -90,12 +94,20 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         game = next((game for game in (games or []) if str(game["id"]) == game_id), None)
         # The upcoming catalog drops games at tipoff and can be incomplete
         # during refresh. Keep the open game and its snapshot scoped to the URL.
-        if current_game and not game and not pulled_snapshot:
+        if current_game and not game and not pulled_snapshot and not from_list:
             return (no_update,)*6
-        snapshots = market_services[sport].history(game_id)
+        service = market_services[sport]
+        snapshots = service.snapshot_options(game_id) if hasattr(type(service), "snapshot_options") else service.history(game_id)
         options = [{"label": format_eastern(item["pulled_at"]),
                     "value": item.get("csv_file", item["pulled_at"])} for item in snapshots]
         available = {option['value'] for option in options}
+        # Card pulls affect the archive while detail controls are offscreen.
+        # Advance to a newly saved pull on reentry and preserve an older
+        # selection when the latest available snapshot has not changed.
+        if current_game and from_list and not pulled_snapshot and options and previous_options:
+            latest = options[0]["value"]
+            if latest not in {option["value"] for option in previous_options}:
+                pulled_snapshot = latest
         if current_game and previous and previous not in available and pulled_snapshot not in available:
             return (no_update,)*6
 
@@ -142,7 +154,11 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         game_id = market_game_id(location_hash)
         if not game_id or not selection:
             return None
-        return next((item for item in market_services[market_game_sport(location_hash)].history(game_id)
+        service = market_services[market_game_sport(location_hash)]
+        reader = getattr(type(service), "saved_snapshot", None)
+        if reader is not None:
+            return reader(service, game_id, selection)
+        return next((item for item in service.history(game_id)
                      if item.get("csv_file", item["pulled_at"]) == selection), None)
 
     @scoped_callback(app,'market',Output("market-category", "children"), Output("market-category", "value"), Output("market-snapshot-status", "children"),
@@ -527,8 +543,8 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         trigger = ctx.triggered_id if page is not None else None
         same_view = previous.get('view_key') == view_key
         pending_job = previous.get('job') if same_view and previous.get('pending') else None
-        if (trigger in {'market-model-poll', 'history-update-poll'} and pending_job
-                and market_page_tasks.queue.state(pending_job)['pending']):
+        polling = trigger in {'market-model-poll', 'history-update-poll'}
+        if polling and pending_job and market_page_tasks.queue.state(pending_job)['pending']:
             # Polling a running fit needs no snapshot reads, filesystem scans,
             # hashes or quote/accordion reconstruction.
             return no_update,no_update
@@ -552,7 +568,7 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
             # change a forecast. Reuse the exact saved-snapshot calculation.
             # Preparing a cold forecast can itself create input files. Finish
             # that job rather than submitting another one on every poll.
-            if trigger == 'market-model-poll' and pending_job:
+            if polling and pending_job:
                 key = pending_job
             else:
                 forecast_scope=['game',method] if category=='Game' else ['player',player_method,category if player_method=='WHP' else 'all']
@@ -560,7 +576,9 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                 revision=forecast_revision(source,snapshot['sport'])
                 if snapshot['sport'] in {'NBA','NFL'}:revision.append(availability_service.revision(snapshot['sport']))
                 if snapshot['sport']=='NCAAF' and category!='Game':revision+=forecast_revision(ncaaf_model_data,'NCAAF')
-                key=hashlib.sha256(json.dumps([context,forecast_scope,POLICY_VERSION,revision,snapshot],sort_keys=True).encode()).hexdigest()
+                forecast_input = {name: value for name, value in snapshot.items() if name != 'raw_response'}
+                key=hashlib.sha256(json.dumps([context,forecast_scope,POLICY_VERSION,revision,forecast_input],
+                                             sort_keys=True).encode()).hexdigest()
             if (trigger == 'history-update-poll' and same_view and key == previous.get('job')
                     and previous.get('rendered') and not previous.get('pending') and not previous.get('error')
                     and market_page_tasks.peek(key) is not None):

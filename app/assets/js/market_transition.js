@@ -38,7 +38,9 @@ window.dash_clientside = Object.assign({},window.dash_clientside,{
     market_guard: function(hash,selection,category,method,player,history) {
       if(window.location.hash&&hash!==window.location.hash)return window.dash_clientside.no_update;
       guards.marketResults=[hash,selection,category,method,player,history];
-      const active=/^#(?:nba|nfl|ncaaf)-game-\d+$/.test(hash||'')&&!['Mispricing','Additional Information'].includes(category);
+      const game=/^#(?:nba|nfl|ncaaf)-game-\d+$/.test(hash||'');
+      if(game&&!category)return 'market-detail-view market-no-category';
+      const active=game&&!['Mispricing','Additional Information'].includes(category);
       const stale=active&&(!same(history?.context,[hash,selection])||history?.view_key?.[0]!==category);
       const model=active&&!stale&&(history?.view_key?.[1]!==method||history?.view_key?.[2]!==player||history?.pending&&!history?.keep_visible);
       return 'market-detail-view'+(stale?' market-quotes-pending':'')+(model?' market-model-pending':'')+

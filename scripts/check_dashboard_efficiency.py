@@ -164,6 +164,36 @@ class LazyRowChecks(TestCase):
 
 
 class AsyncScanChecks(TestCase):
+    def test_fanduel_game_renders_quotes_before_comparison_figures(self):
+        fixture = self.fixture()
+        entered, release = Event(), Event()
+        self.addCleanup(fixture.app._page_tasks.queue.shutdown)
+        self.addCleanup(release.set)
+
+        def forecast(_snapshot):
+            entered.set()
+            if not release.wait(10):
+                raise AssertionError('Forecast was not released')
+            return None
+
+        fixture.game_services['PPP'].forecast.side_effect = forecast
+        values = {'workspace-page':'market', 'sport':'NFL', 'market-url':'#nfl-game-123',
+                  'market-category':'Game', 'market-snapshot':fixture.saved['pulled_at'],
+                  'market-forecast-method':'PPP', 'player-forecast-method':'WHP'}
+        reply = post(fixture.app, 'show_saved_markets', values, 'market-snapshot.value')['response']
+        values['market-forecast-history'] = reply['market-forecast-history']['data']
+        self.assertTrue(values['market-forecast-history']['pending'])
+        self.assertTrue(entered.wait(3))
+        self.assertIn('market-price-button', str(reply['saved-market-sections']))
+        self.assertNotIn('Game outcome distributions', str(reply['saved-market-sections']))
+
+        release.set()
+        fixture.app._page_tasks.queue.tasks.join()
+        reply = post(fixture.app, 'show_saved_markets', values, 'history-update-poll.n_intervals')['response']
+        self.assertFalse(reply['market-forecast-history']['data']['pending'])
+        self.assertIn('Game outcome distributions', str(reply['saved-market-sections']))
+        fixture.game_services['PPP'].forecast.assert_called_once()
+
     def test_fanduel_idle_refresh_keeps_rendered_market_until_inputs_change(self):
         f = self.fixture()
         self.addCleanup(f.app._page_tasks.queue.shutdown)

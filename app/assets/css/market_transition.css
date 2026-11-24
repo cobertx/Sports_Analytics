@@ -26,6 +26,7 @@
 .market-screen-kalshi #parlay-drawer,.market-screen-polymarket #parlay-drawer,.market-screen-summary #parlay-drawer,
 .market-screen-filtered #parlay-drawer { display: none !important; }
 :is(#market-sections-transition,#kalshi-sections-transition,#polymarket-sections-transition,#summary-sections-transition) { display: none; }
+.market-no-category #market-quote-content { display: none; }
 .market-quotes-pending #saved-market-sections { display: none !important; }
 .market-quotes-pending #market-prop-result { display: none; }
 .market-quotes-pending #market-sections-transition,

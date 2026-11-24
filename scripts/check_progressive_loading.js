@@ -31,6 +31,7 @@ check(api.page_guard('market','#nba-games','NBA',null,{sport:'NBA'},[])==='marke
 window.location.hash='#nba-game-123';
 check(api.page_guard('market','#nba-game-123','NBA',null,pendingSchedule,[]).includes('pending'),'Cold schedule cannot mark a game unavailable');
 check(api.page_guard('market','#nba-game-123','NBA',{sport:'NBA',id:'123'},pendingSchedule,[])==='market-page','Saved FanDuel game appears while the schedule is pending');
+check(api.market_guard('#nba-game-123',null,null,'PPP','WHP',null)==='market-detail-view market-no-category','Games without a selected market do not keep the quotes spinner visible');
 const d={key:'fixture',revision:'v1',sport:'NBA',kind:'player',season:2025,phase:'regular'},route='#historical-player';
 window.location.hash=route;
 const scope={v:2,route,key:d.key,revision:d.revision,sport:'NBA',kind:'player',season:2025,phase:'regular',week:null,

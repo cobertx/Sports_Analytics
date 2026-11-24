@@ -61,6 +61,13 @@ def schedule_blocks(games, sport, snapshots=None):
 
 
 def register(app, schedule_service, market_services):
+    def pull_times(sport, games):
+        service = market_services[sport]
+        ids = [game["id"] for game in games]
+        if hasattr(type(service), "latest_pull_times"):
+            return service.latest_pull_times(ids)
+        return service.latest(ids)
+
     def register_card_pull(league):
         prefix = league.lower()
 
@@ -78,7 +85,7 @@ def register(app, schedule_service, market_services):
             try:
                 snapshot = markets.pull(game, f"{game['id']}:{game['token']}:{clicks}")
             except DataSourceError as exc:
-                saved = markets.latest([game["id"]]).get(str(game["id"]))
+                saved = pull_times(league, [game]).get(str(game["id"]))
                 return [latest_pull_status(saved), html.Span(str(exc), className="market-pull-error")]
             return latest_pull_status(snapshot)
 
@@ -100,7 +107,7 @@ def register(app, schedule_service, market_services):
         if (ctx.triggered_id in {'workspace-page','nav-market-active'} and scope and [scope.get('sport'),scope.get('days')]==[sport,days]
                 and 0<=time()-scope.get('checked_at',0)<300):raise PreventUpdate
         if ctx.triggered_id == "market-refresh-signal" and sport in market_services and previous_games:
-            saved = market_services[sport].latest([game["id"] for game in previous_games])
+            saved = pull_times(sport, previous_games)
             return schedule_blocks(previous_games, sport, saved), no_update, no_update,no_update
         try:
             schedule = schedule_service.load(sport, days, refresh=ctx.triggered_id == "market-refresh", local_first=True)
@@ -124,7 +131,7 @@ def register(app, schedule_service, market_services):
                 and updating and scope.get('sport') == sport and scope.get('days') == days
                 and schedule.games == previous_games and new_scope['pending'] == scope.get('pending')):
             return no_update, status, no_update, new_scope
-        saved = market_services[sport].latest([game["id"] for game in schedule.games]) if schedule.games and sport in market_services else {}
+        saved = pull_times(sport, schedule.games) if schedule.games and sport in market_services else {}
         blocks = schedule_blocks(schedule.games, sport, saved)
         if not blocks and not updating:
             blocks = html.Div([html.H3("No upcoming games found"),

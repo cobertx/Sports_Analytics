@@ -159,6 +159,29 @@ class NavigationPipelineChecks(TestCase):
         self.assertEqual(pulled['market-snapshot']['value'], 'new.csv')
         self.assertNotIn('market-detail-context', pulled)
 
+    def test_reopening_a_card_selects_a_newly_pulled_snapshot(self):
+        stamp = '2026-11-22T23:00:00Z'
+        game = dict(id='123', start=stamp, home=dict(name='Baltimore Ravens', abbreviation='BAL'),
+                    away=dict(name='Cleveland Browns', abbreviation='CLE'), time_tbd=False)
+        previous = dict(game=game, pulled_at=stamp, csv_file='old.csv',
+                        home_team=game['home']['name'], away_team=game['away']['name'])
+        values = {'workspace-page':'market', 'sport':'NFL', 'market-url':'#nfl-game-123',
+                  'market-schedule':[game], 'market-list':{'display':'block'}, 'market-snapshot':'old.csv',
+                  'market-detail-context':dict(game, sport='NFL', token='open-game')}
+        # The previous detail view knows about one later snapshot and the user
+        # intentionally selected the older one before returning to the list.
+        latest = dict(previous, pulled_at='2026-11-22T23:01:00Z', csv_file='latest.csv')
+        values['market-snapshot.options'] = [{'value':'latest.csv'}, {'value':'old.csv'}]
+        self.fixture.markets.history.return_value = [latest, previous]
+
+        def reopen():
+            return post(self.app, 'open_game', values, 'nav-market.data')['response']['market-snapshot']
+
+        self.assertNotIn('value', reopen())
+        self.fixture.markets.history.return_value = [
+            dict(latest, pulled_at='2026-11-22T23:02:00Z', csv_file='new.csv'), latest, previous]
+        self.assertEqual(reopen()['value'], 'new.csv')
+
     def test_return_to_filter_preserves_tabs_only_for_the_loaded_snapshot(self):
         route, selection = '#nfl-game-123', 'saved.csv'
         self.fixture.markets.history.return_value = [dict(pulled_at='2026-11-22T23:00:00Z', csv_file=selection,

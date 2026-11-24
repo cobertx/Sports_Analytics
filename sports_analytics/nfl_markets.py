@@ -8,6 +8,7 @@ import hashlib
 from itertools import chain
 import json
 import math
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -184,7 +185,7 @@ class NflMarketService:
         log_root = self.csv_directory.parent.parent if bookmaker == 'draftkings' else self.csv_directory.parent
         self.usage_log = usage_log or ApiUsageLog(log_root / "API Log" / "api_credit_usage.csv")
         self._csv_cache = OrderedDict()
-        self._csv_metadata = OrderedDict()
+        self._csv_headers = OrderedDict()
         self._csv_lock = threading.Lock()
         self._history_cache = OrderedDict()
         self._history_lock = threading.Lock()
@@ -199,8 +200,7 @@ class NflMarketService:
                 pulled_at TEXT, payload TEXT, error TEXT)""")
         return connection
 
-    def _export_csv(self, snapshot, account):
-        """Atomic, readable outcome rows plus complete response JSON once per file."""
+    def _export_filename(self, snapshot):
         game = snapshot.get("game", {})
         snapshot.setdefault("sport", self.sport)
         snapshot.setdefault("home_abbreviation", game.get("home", {}).get("abbreviation") or self.team_codes.get(snapshot["home_team"], "HOME"))
@@ -210,7 +210,11 @@ class NflMarketService:
         snapshot.setdefault("game_date", played.astimezone(GAME_TIMEZONE).date().isoformat())
         home = re.sub(r"[^a-z0-9]", "", snapshot["home_abbreviation"].lower())
         away = re.sub(r"[^a-z0-9]", "", snapshot["away_abbreviation"].lower())
-        filename = f"{self.sport.lower()}_{home}_{away}_{snapshot['game_date']}_{taken:%Y%m%dT%H%M%S%fZ}.csv"
+        return f"{self.sport.lower()}_{home}_{away}_{snapshot['game_date']}_{taken:%Y%m%dT%H%M%S%fZ}.csv"
+
+    def _export_csv(self, snapshot, account):
+        """Atomic, readable outcome rows plus complete response JSON once per file."""
+        filename = self._export_filename(snapshot)
         snapshot["csv_file"] = filename
         destination = self.csv_directory / filename
         if destination.is_file():
@@ -240,9 +244,11 @@ class NflMarketService:
         stat = path.stat()
         return stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino
 
-    def _read_csv(self, path, *, account=None, selected=None, stamps=None):
+    def _read_csv(self, path, *, account=None, selected=None, stamps=None, metadata_only=False):
+        accounts = {account} if isinstance(account, str) else account
+
         def matches(snapshot):
-            return (account is None or snapshot.get('account_id') == account
+            return (accounts is None or snapshot.get('account_id') in accounts
                     and snapshot.get('bookmaker', 'fanduel') == self.bookmaker
                     and (selected is None or snapshot['game_id'] in selected))
 
@@ -255,28 +261,46 @@ class NflMarketService:
             cached = self._csv_cache.get(path.name)
             if cached and cached[0] == stamp:
                 self._csv_cache.move_to_end(path.name)
-                return cached[1] if matches(cached[1]) else None
-            if account is not None:
-                metadata = self._csv_metadata.get(path.name)
-                if metadata and metadata[0] == stamp and not matches(metadata[1]):
-                    self._csv_metadata.move_to_end(path.name)
+                if not matches(cached[1]):
                     return None
+                if metadata_only:
+                    return {key: value for key, value in cached[1].items() if key not in {"rows", "raw_response"}}
+                return cached[1]
+            if accounts is not None:
+                header = self._csv_headers.get(path.name)
+                if header and header[0] == stamp:
+                    self._csv_headers.move_to_end(path.name)
+                    game_id, snapshot = header[1:]
+                    if selected is not None and game_id not in selected:
+                        return None
+                    if snapshot is not None:
+                        if not matches(snapshot):
+                            return None
+                        if metadata_only:
+                            return snapshot
         with path.open(encoding="utf-8-sig", newline="") as file:
+            if accounts is not None and stamps is not None and selected is not None:
+                # Our exports put the game ID first. Skip unrelated games
+                # before parsing the potentially large archived API response
+                # on the first row. Other layouts use the full CSV reader.
+                header, newline, first = file.read(512).partition("\n")
+                game_id, comma, _ = first.partition(",")
+                if (newline and comma and header.startswith("game_id,")
+                        and game_id.isascii() and game_id.isdecimal() and game_id not in selected):
+                    self._remember_csv_header(path.name, stamp, game_id, None)
+                    return None
+                file.seek(0)
             reader = csv.DictReader(file)
             first = next(reader)
             snapshot = json.loads(first["snapshot_metadata_json"])
-            if account is not None:
-                identity = {key: snapshot.get(key) for key in ("account_id", "game_id")}
-                identity["bookmaker"] = snapshot.get("bookmaker", "fanduel")
-                # Keep identities of skipped files without retaining their
-                # quote rows or original response. Recheck on replacement.
-                with self._csv_lock:
-                    self._csv_metadata[path.name] = (stamp, identity)
-                    self._csv_metadata.move_to_end(path.name)
-                    if len(self._csv_metadata) > 512:
-                        self._csv_metadata.popitem(last=False)
+            snapshot["csv_file"] = path.name
+            if accounts is not None:
+                self._remember_csv_header(path.name, stamp, snapshot["game_id"], snapshot)
+            if metadata_only:
+                return snapshot if matches(snapshot) else None
             if not matches(snapshot):
                 return None
+            snapshot = dict(snapshot)
             snapshot["rows"] = []
             for row in chain((first,), reader):
                 if not row.get("market_key"):
@@ -286,13 +310,87 @@ class NflMarketService:
                     item[key] = float(item[key]) if item[key] else None
                 snapshot["rows"].append(item)
             snapshot["raw_response"] = json.loads(first.get("api_response_json") or "null")
-            snapshot["csv_file"] = path.name
         with self._csv_lock:
             self._csv_cache[path.name] = (stamp, snapshot)
             self._csv_cache.move_to_end(path.name)
             if len(self._csv_cache) > 32:
                 self._csv_cache.popitem(last=False)
         return snapshot
+
+    def _remember_csv_header(self, name, stamp, game_id, snapshot):
+        with self._csv_lock:
+            self._csv_headers[name] = stamp, game_id, snapshot
+            self._csv_headers.move_to_end(name)
+            if len(self._csv_headers) > 1024:
+                self._csv_headers.popitem(last=False)
+
+    def _browse_exports(self, selected, accounts):
+        """Read export headers, reusing unchanged files across schedule and detail views."""
+        prefix = self.sport.lower() + "_"
+        try:
+            entries = os.scandir(self.csv_directory)
+        except OSError:
+            return
+        with entries:
+            for entry in entries:
+                if not entry.name.startswith(prefix) or not entry.name.endswith(".csv"):
+                    continue
+                path = self.csv_directory / entry.name
+                try:
+                    stat = entry.stat()
+                    stamp = stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino
+                    snapshot = self._read_csv(path, account=accounts, selected=selected,
+                                              stamps={path: stamp}, metadata_only=True)
+                    if snapshot is not None and isinstance(snapshot.get("pulled_at"), str):
+                        yield snapshot
+                except (OSError, ValueError, KeyError, StopIteration, TypeError, csv.Error):
+                    continue
+
+    def latest_pull_times(self, game_ids):
+        """Return only the last-pull timestamp needed by each upcoming game card."""
+        try:
+            accounts = set(self._accounts())
+        except DataSourceError:
+            return {}
+        selected = set(map(str, game_ids))
+        if not selected:
+            return {}
+        account_slots = ",".join("?" for _ in accounts)
+        game_slots = ",".join("?" for _ in selected)
+        with closing(self._connect()) as db:
+            latest = dict(db.execute(f"""SELECT game_id, MAX(pulled_at) FROM {self.table}
+                WHERE state = 'done' AND account IN ({account_slots}) AND game_id IN ({game_slots})
+                GROUP BY game_id""", (*accounts, *selected)))
+        for snapshot in self._browse_exports(selected, accounts):
+            game_id, stamp = snapshot["game_id"], snapshot["pulled_at"]
+            if stamp > (latest.get(game_id) or ""):
+                latest[game_id] = stamp
+        return {game_id: {"pulled_at": stamp} for game_id, stamp in latest.items()}
+
+    def snapshot_options(self, game_id):
+        """List saved pulls for a matchup without loading every set of quotes."""
+        try:
+            accounts = set(self._accounts())
+        except DataSourceError:
+            return []
+        game_id = str(game_id)
+        account_slots = ",".join("?" for _ in accounts)
+        saved = {(item["account_id"], item["pulled_at"]): {
+            key: value for key, value in item.items() if key != "account_id"
+        } for item in self._browse_exports({game_id}, accounts)}
+        with closing(self._connect()) as db:
+            rows = db.execute(f"""SELECT account, pulled_at FROM {self.table}
+                WHERE state = 'done' AND game_id = ? AND account IN ({account_slots})""", (game_id, *accounts))
+            missing = [(account, stamp) for account, stamp in rows if (account, stamp) not in saved]
+            for account, stamp in missing:
+                row = db.execute(f"""SELECT json_remove(payload, '$.rows', '$.raw_response')
+                    FROM {self.table} WHERE state = 'done' AND game_id = ? AND account = ? AND pulled_at = ?""",
+                                 (game_id, account, stamp)).fetchone()
+                if row is not None:
+                    snapshot = json.loads(row[0])
+                    snapshot["csv_file"] = self._export_filename(snapshot)
+                    saved[account, stamp] = snapshot
+        return sorted(saved.values(), key=lambda item: item["pulled_at"], reverse=True)
 
     def _saved(self, selected):
         try:
@@ -412,6 +510,27 @@ class NflMarketService:
 
     def history(self, game_id):
         return self._saved({str(game_id)})
+
+    def saved_snapshot(self, game_id, selection):
+        """Read a selected export directly, with a fallback for older snapshots."""
+        game_id = str(game_id)
+        prefix = self.sport.lower() + "_"
+        if (isinstance(selection, str) and selection.startswith(prefix) and selection.endswith(".csv")
+                and "/" not in selection and "\\" not in selection and ":" not in selection):
+            try:
+                for account in self._accounts():
+                    snapshot = self._read_csv(self.csv_directory / selection, account=account, selected={game_id})
+                    if snapshot is not None:
+                        result = self._copy_snapshots([snapshot])[0]
+                        result.pop("account_id", None)
+                        return result
+            except (OSError, ValueError, KeyError, StopIteration, TypeError, csv.Error):
+                # SQLite can still have a complete pull when its export is missing or unreadable.
+                pass
+            except DataSourceError:
+                return None
+        return next((item for item in self.history(game_id)
+                     if selection in {item.get("csv_file"), item["pulled_at"]}), None)
 
     def export_existing(self):
         """Backfill CSVs for completed pulls without making any API requests."""

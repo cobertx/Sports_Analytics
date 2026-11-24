@@ -235,6 +235,45 @@ class OddsAccountsChecks(TestCase):
         with patch.dict(os.environ,{'ODDS_API_KEY_2':''}):
             self.assertEqual(len(markets.history('123')),1)
 
+    def test_selected_export_read_is_scoped_and_falls_back_to_sqlite(self):
+        game, event, body = fixture()
+        markets = self.market()
+        self.session.get.side_effect = [response([event]), exhausted(), response(body, last=17)]
+        saved = markets.pull(game, 'selected')
+        name = saved['csv_file']
+        with patch.object(markets, 'history', side_effect=AssertionError('Selected exports need no archive scan')):
+            selected = markets.saved_snapshot('123', name)
+        self.assertEqual(selected['rows'], saved['rows'])
+        self.assertIsNone(markets.saved_snapshot('456', name))
+        with patch.dict(os.environ, {'ODDS_API_KEY_2': ''}):
+            self.assertIsNone(markets.saved_snapshot('123', name))
+        (markets.csv_directory / name).unlink()
+        self.assertEqual(markets.saved_snapshot('123', name)['rows'], saved['rows'])
+        self.assertEqual(self.session.get.call_count, 3)
+
+    def test_browsing_merges_export_and_database_metadata_without_credit_log_work(self):
+        game, event, body = fixture()
+        markets = self.market()
+        self.session.get.side_effect = [response([event]), response(body, last=17)]
+        database = markets.pull(game, 'database')
+        archive = {**database, 'pulled_at': '2030-01-01T00:00:00Z'}
+        markets._export_csv(archive, B)
+        (markets.csv_directory / database['csv_file']).unlink()
+        markets.usage_log.path.unlink()
+
+        with patch.object(markets, '_saved_account', side_effect=AssertionError('Browse loads only metadata')):
+            options = markets.snapshot_options('123')
+            self.assertEqual([item['csv_file'] for item in options], [archive['csv_file'], database['csv_file']])
+            self.assertFalse(any({'account_id', 'rows', 'raw_response'} & item.keys() for item in options))
+            self.assertEqual(markets.latest_pull_times(['123', '456']), {'123': {'pulled_at': archive['pulled_at']}})
+            with patch.dict(os.environ, {'ODDS_API_KEY_2': ''}):
+                self.assertEqual(markets.latest_pull_times(['123']), {'123': {'pulled_at': database['pulled_at']}})
+                self.assertEqual([item['csv_file'] for item in markets.snapshot_options('123')], [database['csv_file']])
+
+        self.assertFalse(markets.usage_log.path.exists())
+        self.assertEqual(markets.saved_snapshot('123', database['csv_file'])['rows'], database['rows'])
+        self.assertEqual(self.session.get.call_count, 2)
+
     def test_dashboard_combines_quota_and_history_without_exposing_keys(self):
         game,event,body=fixture();markets=self.market()
         self.session.get.side_effect=[response([event]),exhausted(),response(body,last=17)]

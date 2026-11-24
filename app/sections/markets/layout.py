@@ -77,7 +77,8 @@ def layout():
             ],id='mispricing-filter-panel',className='panel market-criteria'),
             html.Div([
                 market_loading('Loading the selected markets…', id='market-sections-transition'),
-                dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4"),
+                dcc.Loading(html.Div(id="saved-market-sections"), color="#57dbc4",
+                            target_components={"saved-market-sections": "children"}),
             ],id='market-quote-content'),
             outlet('market'),
             ], className="sportsbook-view"),

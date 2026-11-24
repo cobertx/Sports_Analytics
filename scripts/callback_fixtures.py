@@ -16,6 +16,8 @@ def callback_functions(app):
 
 def wire_value(item,values):
     identity=item['id']
+    prop=f"{identity}.{item['property']}"
+    if prop in values:return values[prop]
     if identity.startswith('{'):return values.get(identity,[])
     page=values.get('workspace-page') or values.get('_navigation_page')
     sport=values.get('sport')

@@ -73,10 +73,8 @@ class ScheduleService:
         self.background=background
         self._refresh=RefreshQueue(workers=workers)
 
-    def _day(self, sport, day, now, refresh, local_first=False):
+    def _day(self, sport, day, now, refresh, local_first, saved):
         key = f"{sport}:{day:%Y%m%d}"
-        with closing(sqlite3.connect(self.path, timeout=30)) as db:
-            saved = db.execute("SELECT fetched_at, payload FROM schedules WHERE key = ?", (key,)).fetchone()
         cached = None
         if saved:
             try:
@@ -85,14 +83,15 @@ class ScheduleService:
                 if not isinstance(cached, list):
                     cached = None
                 elif not refresh and now - stamp < self.ttl:
-                    return cached, saved[0], False, False
+                    state = self._refresh.state(key) if local_first else {}
+                    return cached, saved[0], bool(state.get("error")), bool(state.get("pending"))
             except (ValueError, TypeError):
                 cached = None
-        if not refresh and (local_first or cached is not None and self.background):
+        if local_first or not refresh and cached is not None and self.background:
             def update():
-                _,_,stale,_=self._day(sport,day,now,True)
+                _, _, stale, _ = self._day(sport, day, now, True, False, saved)
                 if stale:raise DataSourceError('ESPN refresh failed; saved schedules are still available.')
-            state=self._refresh.request(key,update)
+            state = self._refresh.request(key, update, force=refresh)
             # The worker may finish after our local read. Poll once more to
             # pick up its data even if the queue already reports completion.
             pending = not state['error']
@@ -124,28 +123,43 @@ class ScheduleService:
         # Keep whole Eastern calendar days, including evening games after midnight UTC.
         dates = [now.astimezone(EASTERN).date() + timedelta(days=offset) for offset in range(-1, days)]
         end = datetime.combine(dates[-1] + timedelta(days=1), datetime.min.time(), EASTERN).astimezone(timezone.utc)
+        # Fetch today's games first. Yesterday is still read for events near a date boundary.
+        dates = dates[1:] + dates[:1]
+        keys = [f"{sport}:{day:%Y%m%d}" for day in dates]
+        placeholders = ",".join("?" for _ in keys)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path, timeout=30)) as db, db:
             db.execute("CREATE TABLE IF NOT EXISTS schedules (key TEXT PRIMARY KEY, fetched_at TEXT, payload TEXT)")
+            saved = {key: (stamp, payload) for key, stamp, payload in db.execute(
+                f"SELECT key, fetched_at, payload FROM schedules WHERE key IN ({placeholders})", keys)}
         events, stamps, stale, failed, updating_days = [], [], [], [], []
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
-            tasks = {pool.submit(self._day, sport, day, now, refresh, local_first): day for day in dates}
-            for task in as_completed(tasks):
-                day = tasks[task].isoformat()
-                try:
-                    daily, stamp, was_stale, pending = task.result()
-                    if pending:
-                        updating_days.append(day)
-                    if stamp is None:
-                        if not pending:
-                            failed.append(day)
-                        continue
-                    events.extend(daily)
-                    stamps.append(stamp)
-                    if was_stale:
-                        stale.append(day)
-                except DataSourceError:
+        def collect(day, result):
+            day = day.isoformat()
+            daily, stamp, was_stale, pending = result
+            if pending:
+                updating_days.append(day)
+            if stamp is None:
+                if not pending:
                     failed.append(day)
+                return
+            events.extend(daily)
+            stamps.append(stamp)
+            if was_stale:
+                stale.append(day)
+
+        if local_first:
+            for day, key in zip(dates, keys):
+                collect(day, self._day(sport, day, now, refresh, True, saved.get(key)))
+        else:
+            with ThreadPoolExecutor(max_workers=self.workers) as pool:
+                tasks = {pool.submit(self._day, sport, day, now, refresh, False, saved.get(key)): day
+                         for day, key in zip(dates, keys)}
+                for task in as_completed(tasks):
+                    day = tasks[task]
+                    try:
+                        collect(day, task.result())
+                    except DataSourceError:
+                        failed.append(day.isoformat())
         if len(failed) == len(dates):
             raise DataSourceError("Upcoming games could not be loaded from ESPN. Check connectivity and refresh to retry.")
         updating=bool(updating_days) or any(self._refresh.pending(f'{sport}:{day:%Y%m%d}') for day in dates)
