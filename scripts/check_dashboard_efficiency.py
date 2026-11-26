@@ -7,16 +7,18 @@ import sys
 from threading import Event,Lock
 from time import perf_counter
 from unittest import TestCase,main
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from dash import no_update
+from dash import Dash, dcc, html, no_update
 from dash._utils import to_json
+from app.sections.historical import game_data_monitor
 from models.replay import input_digest
 from scripts.callback_fixtures import wire_value
 from sports_analytics.frame_cache import FrameCache
+from sports_analytics.game_data_status import SavedGame
 from app.sections.markets.lazy_markets import LazyMarkets,markets
 from app.sections.markets.market_view import market_sections
 from sports_analytics.filter_jobs import FilterJobs
@@ -39,6 +41,45 @@ def post(app,name,values,trigger,*,client=None):
         state=[dict(**item,value=value(item)) for item in meta['state']],changedPropIds=[trigger]))
     if response.status_code not in {200,204}:raise AssertionError(response.get_data(as_text=True))
     return response.get_json() if response.status_code==200 else {}
+
+
+class GameDataMonitorChecks(TestCase):
+    def test_sidebar_reads_once_off_request_path_and_delivers_to_both_tabs(self):
+        app = Dash(__name__)
+        app.layout = html.Div([dcc.Interval(id='history-update-poll'), game_data_monitor.layout(app.get_asset_url)])
+        entered, release = Event(), Event()
+        game = SavedGame('123', pd.Timestamp('2026-11-22', tz='UTC'), 'Away @ Home',
+                         pd.Timestamp('2026-11-23', tz='UTC'))
+
+        def latest_games():
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError('The game lookup was not released')
+            return {'NBA': game}
+
+        history = Mock()
+        history.latest.side_effect = latest_games
+        tasks = game_data_monitor.PageTasks(capacity=1, workers=1)
+        self.addCleanup(tasks.queue.shutdown)
+        self.addCleanup(release.set)
+        with patch.object(game_data_monitor, 'PageTasks', return_value=tasks):
+            game_data_monitor.register(app, history)
+
+        first, second = (app.server.test_client() for _ in range(2))
+        values = {'history-update-poll': 0, 'game-data-poll': 0}
+        for client in (first, second):
+            response = post(app, 'update_game_data', values, 'history-update-poll.n_intervals', client=client)
+            self.assertEqual(response['response'], {'game-data-poll': {'disabled': False}})
+        self.assertTrue(entered.wait(1))
+        history.latest.assert_called_once()
+        release.set()
+        tasks.queue.tasks.join()
+
+        values['game-data-poll'] = 1
+        for client in (first, second):
+            response = post(app, 'update_game_data', values, 'game-data-poll.n_intervals', client=client)['response']
+            self.assertTrue(response['game-data-poll']['disabled'])
+            self.assertIn('Away @ Home', str(response['game-data-rows']['children']))
 
 
 class CacheChecks(TestCase):

@@ -95,21 +95,23 @@ class DataService:
         completed dataset. Normal model loads and explicit refreshes still wait.
         """
         if local_first and not refresh:
-            cached=self.cached(self.key(query))
+            key = self.key(query)
+            cached = self._local_cached(key)
             if cached and self.compatible(query,cached):
+                cached = replace(cached, frame=cached.frame.copy(deep=True))
                 if self.fresh(query,cached):return cached
                 def update():
                     result=self.load(query,refresh=True)
                     if result.status=='stale cache':raise DataSourceError(result.notice)
-                state=self._refresh.request(self.key(query),update)
+                state=self._refresh.request(key,update)
                 return replace(cached,status='stale cache' if state['error'] else 'updating cache',
                                notice=state['error'] or 'Checking the source in the background; saved data is available now.')
             if cached is None:
                 # First-time history navigation should render immediately too.
                 # The normal keyed load lock still deduplicates the download.
-                state=self._refresh.request(self.key(query),lambda:self.load(query))
+                state=self._refresh.request(key,lambda:self.load(query))
                 if state['error']:raise DataSourceError(state['error'])
-                return Dataset(self.key(query),pd.DataFrame(),SOURCES[query.sport][0],'','loading cache')
+                return Dataset(key,pd.DataFrame(),SOURCES[query.sport][0],'','loading cache')
         with self._load_guard:lock=self._load_locks.setdefault(self.key(query),Lock())
         # Navigation can update several controls at once. Share its first download
         # instead of issuing duplicate requests for the same season and scope.
@@ -169,7 +171,7 @@ class DataService:
     def _read(self, key, revision=None):
         return self.cached(key)
 
-    def read(self, key):
+    def _local_cached(self, key):
         # Local imports and SQLite WAL writes must invalidate previously read frames.
         revision=[]
         for path in (self.path, self.path.with_name(self.path.name+'-wal')):
@@ -177,7 +179,10 @@ class DataService:
                 stamp=path.stat()
                 revision.append((stamp.st_size,stamp.st_mtime_ns,stamp.st_ctime_ns,stamp.st_ino))
             except FileNotFoundError:revision.append(None)
-        dataset = self._read(key, tuple(revision))
+        return self._read(key, tuple(revision))
+
+    def read(self, key):
+        dataset = self._local_cached(key)
         if dataset is None:
             raise DataSourceError("This cached dataset is no longer available. Load the data again.")
         return replace(dataset,frame=dataset.frame.copy(deep=True))

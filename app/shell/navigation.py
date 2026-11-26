@@ -35,6 +35,9 @@ def scoped_callback(app,page,*dependencies,**options):
     changes only while its workspace is active, so leaving a page generates no
     data request there. Independent controls still use their original Inputs.
     """
+    # The initial layout has no scope. The navigation callback supplies it
+    # after resolving the URL, which also triggers the active workspace.
+    options.setdefault('prevent_initial_call', True)
     converted=[];count=0;route=False
     for dependency in dependencies:
         if isinstance(dependency,(Input,State)):
