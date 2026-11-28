@@ -311,21 +311,21 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                     'pulled_at','commence_time')), snapshot.get('game'), has_game_lines(snapshot)])
         return request_key({key:value for key,value in snapshot.items() if key!='raw_response'})
 
+    def forecast_method_revision(sport,method,environment=None):
+        source=player_services[method] if method in player_services else game_services[sport][method]
+        common,epoch=forecast_environment(sport) if environment is None else environment
+        parameters=[repr(getattr(source,'config',None)),repr(getattr(source,'scenarios',None)),
+                    repr(getattr(getattr(source,'model',None),'config',None))]
+        return [method,POLICY_VERSION,forecast_revision(source,sport),common,parameters,epoch]
+
     def forecast_identity(snapshot,method,category=None,*,environment=None,snapshot_keys=None):
         sport=snapshot['sport']
-        if method in player_services:
-            source=player_services[method]
-        else:
-            source=game_services[sport][method]
-        revisions=forecast_revision(source,sport)
-        common,epoch=forecast_environment(sport) if environment is None else environment
+        source=player_services[method] if method in player_services else game_services[sport][method]
         game=type(source) in (PPPMarketService,EPAMarketService,ELOMarketService,
                               NBAPPPMarketService,NBAEPAMarketService,NBAELOMarketService,NBAPaceMarketService,
                               NBAAdjustedEfficiencyMarketService,NBAFourFactorsMarketService,NCAAFMarketForecastService)
         scope=forecast_snapshot_key(snapshot,game) if snapshot_keys is None else snapshot_keys[game]
-        parameters=[repr(getattr(source,'config',None)),repr(getattr(source,'scenarios',None)),
-                    repr(getattr(getattr(source,'model',None),'config',None))]
-        return request_key([method,category,POLICY_VERSION,revisions,common,parameters,epoch,scope])
+        return request_key([forecast_method_revision(sport,method,environment),category,scope])
 
     def forecast_player_markets(snapshot,player_method,category=None):
         if player_method not in quick_methods.player_methods(snapshot['sport']):
@@ -388,14 +388,28 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
         needed={method for choices in assignments.values() for method in choices}
         game_methods=[method for method in quick_methods.game_methods(snapshot['sport']) if method in needed]
         chosen_players=[method for method in quick_methods.player_methods(snapshot['sport']) if method in needed]
-        tasks={method:lambda method=method:forecast_game_markets(snapshot,method) for method in game_methods}
-        tasks.update({method:lambda method=method:forecast_player_markets(snapshot,method) for method in chosen_players})
-        forecasts=run_forecasts(tasks,snapshot['sport'],report)
+        sport=snapshot['sport']
+        environment=forecast_environment(sport)
+        quote_key=forecast_snapshot_key(snapshot)
+        def evaluate(method,player):
+            key=request_key(['fanduel-method',quote_key,forecast_method_revision(sport,method,environment)])
+            def calculate():
+                quotes={**snapshot,'rows':[row for row in snapshot['rows'] if row['market_key'].startswith('player_')==player]}
+                if player:
+                    record=forecast_player_markets(snapshot,method)
+                    ranking=rank_markets(quotes,None,record[0],ALL_PROBABILITIES,player_method=method)
+                else:
+                    record=forecast_game_markets(snapshot,method)
+                    ranking=rank_markets(quotes,record[0],None,ALL_PROBABILITIES,method)
+                return ranking,record
+            return filter_jobs.tasks.evaluate_method(key,calculate,lambda result:not result[1][1])
+
+        tasks={method:lambda method=method:evaluate(method,False) for method in game_methods}
+        tasks.update({method:lambda method=method:evaluate(method,True) for method in chosen_players})
+        evaluated=run_forecasts(tasks,sport,report)
         if report:report(85,'Applying thresholds and ranking selections')
-        game_rows={**snapshot,'rows':[row for row in snapshot['rows'] if not row['market_key'].startswith('player_')]}
-        player_rows={**snapshot,'rows':[row for row in snapshot['rows'] if row['market_key'].startswith('player_')]}
-        rankings={method:rank_markets(game_rows,forecasts[method][0],None,ALL_PROBABILITIES,method) for method in game_methods}
-        rankings.update({method:rank_markets(player_rows,None,forecasts[method][0],ALL_PROBABILITIES,player_method=method) for method in chosen_players})
+        rankings={method:result[0] for method,result in evaluated.items()}
+        forecasts={method:result[1] for method,result in evaluated.items()}
         ranked=quick_methods.consensus(rankings,assignments,snapshot['rows'],criteria,
             lambda item:(item['row']['market_key'],item['row']['subject'],item['row']['selection'],str(item['row']['line'])),consensus_rankings)
         context=[location_hash,selection]
@@ -653,4 +667,4 @@ def register(app, market_services, game_services, player_services, *, ncaaf_mode
                 forecast_revision(player_services[player_method],sport)]
 
     register_parlay(app, saved_snapshot, forecast_game_markets, forecast_player_markets)
-    return forecast_game_markets, forecast_player_markets, exchange_source_revision
+    return forecast_game_markets, forecast_player_markets, exchange_source_revision, forecast_method_revision

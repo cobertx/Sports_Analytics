@@ -97,6 +97,34 @@ class SummaryFilteringChecks(TestCase):
             self.assertIn('error',request)
         f.engines['PPP'].forecast.assert_not_called()
 
+    def test_subset_rankings_match_a_fresh_scan_and_skip_row_pricing(self):
+        from check_dashboard_efficiency import post
+        from sports_analytics import summary_filtering
+
+        f=self.fixture()
+        client=f.app.server.test_client()
+        values={'summary-quick-player-methods':['WHP'],'summary-quick-probability':50,'summary-quick-edge':0,
+                'summary-quotes':f.data,'summary-game':'123','summary-category':QUICK,
+                'workspace-page':'market-summary','sport':'NFL'}
+
+        def scan(sequence,methods):
+            values.update({'summary-quick-run':sequence,'summary-quick-game-methods':methods})
+            reply=post(f.app,'summary_quick_submit',values,'summary-quick-run.n_clicks',client=client)
+            request=reply['response']['summary-quick-request']['data']
+            f.app._summary_quick_jobs.queue.tasks.join()
+            return f.app._summary_quick_jobs.peek(request['job'])
+
+        with patch.object(summary_filtering,'calculate',wraps=summary_filtering.calculate) as price:
+            scan(1,['PPP','EPA','ELO'])
+            warmed=scan(2,['PPP','EPA'])
+            self.assertEqual(price.call_count,4)
+        f.app._summary_quick_jobs.method_results.clear()
+        fresh=scan(3,['PPP','EPA'])
+        self.assertTrue(warmed['matches'])
+        self.assertEqual(warmed['matches'],fresh['matches'])
+        for key in ('evaluated','unavailable','errors','player_lines'):
+            self.assertEqual(warmed[key],fresh[key])
+
     def test_summary_and_draftkings_are_tracked_and_restore_their_submitted_quotes(self):
         from check_dashboard_efficiency import post
         f=self.fixture()
@@ -201,7 +229,7 @@ class SummaryFilteringChecks(TestCase):
         from time import perf_counter
         f=self.fixture();release=Event();entered=Event();advance=Event();advanced=Event()
         self.addCleanup(release.set);self.addCleanup(advance.set)
-        def blocked(*args):
+        def blocked(*args,**kwargs):
             report=args[-1]
             report(15,'0 of 2 forecast methods completed')
             entered.set()
@@ -236,7 +264,7 @@ class SummaryFilteringChecks(TestCase):
 
     def test_first_history_refresh_recalculates_once_then_rejects_later_changes(self):
         f=self.fixture();state={'revision':0}
-        def fit(*args):
+        def fit(*args,**kwargs):
             state['revision']=1
             return dict(matches=[],evaluated=0,unavailable=0,errors=[])
         with patch('app.sections.market_summary.summary_filter_callbacks.availability_revision',side_effect=lambda sport:state['revision']),\

@@ -198,6 +198,91 @@ class QuickLifecycleChecks(TestCase):
         self.f.exchange.all_quotes.assert_called_once()
         self.f.exchange.saved.assert_called_once_with(self.f.game,'Game Lines','archive.json')
 
+    def test_threshold_only_change_reuses_live_quotes_and_estimates(self):
+        self.f.exchange.background=True
+        for engine in self.f.engines.values():
+            engine.forecast.return_value=SimpleNamespace(
+                diagnostics={},total=lambda line,side:MarketProbability(.78,.22,0))
+        client=self.f.app.server.test_client()
+        values={'kalshi-context':self.f.game,'kalshi-quick-game-methods':['PPP','EPA'],
+                'kalshi-quick-player-methods':['WHP'],'kalshi-quick-edge':-100}
+        tasks=self.f.app._filter_jobs.tasks
+
+        def scan(sequence,probability,client=client):
+            values.update({'kalshi-quick-request':fixtures.quick_request(sequence),
+                           'kalshi-quick-probability':probability})
+            response=post(self.f.app,'kalshi_quick_scan',values,'kalshi-quick-request.data',client=client)
+            request=response['response']['kalshi-quick-scan']['data']
+            self.ready()
+            return request,tasks.peek(request['job'])
+
+        with patch.object(kalshi_analysis,'rank',wraps=kalshi_analysis.rank) as price:
+            _,first=scan(1,80)
+            request,warm=scan(2,75)
+            self.f.exchange.all_quotes.assert_called_once_with(self.f.game,refresh=True,save=False)
+            self.assertEqual(price.call_count,2)
+        self.assertEqual(first['ranked']['matches'],[])
+        self.assertTrue(warm['reused_quotes'])
+        self.assertEqual(warm['refilter_until'],first['refilter_until'])
+        self.assertEqual(warm['snapshot']['fetched_at'],first['snapshot']['fetched_at'])
+        self.assertEqual(len(warm['ranked']['matches']),8)
+        for method in ['PPP','EPA']:
+            self.f.engines[method].forecast.assert_called_once()
+        response=self.display(request,**{'kalshi-quick-game-methods':['PPP','EPA'],
+            'kalshi-quick-probability':75,'kalshi-quick-state':dict(job=request['job'],sequence=2,status='pending',progress=5)})
+        self.assert_terminal(response,'complete')
+        self.assertIn('8 qualifying selections',str(response))
+
+        with patch('app.sections.exchanges.kalshi_analysis_callbacks.monotonic',return_value=warm['refilter_until']):
+            _,expired=scan(3,76)
+        self.assertFalse(expired['reused_quotes'])
+        self.assertEqual(self.f.exchange.all_quotes.call_count,2)
+
+    def test_reducing_methods_reuses_the_completed_live_snapshot_and_method_estimates(self):
+        snapshot=self.f.snapshot
+        player=dict(snapshot['rows'][0],ticker='KXNFLPASSYDS-PLAYER',event_ticker='KXNFLPASSYDS-26OCT25PITNO',
+                    event_title='Test Quarterback: Passing Yards',category='Passing Props',line=200,strike_type='greater_or_equal')
+        snapshot['rows'].append(player)
+        self.f.players['WHP'].forecast.return_value=SimpleNamespace(
+            forecasts={},selection=lambda row:MarketProbability(.8,.2,0))
+        self.f.engines['ELO'].forecast.return_value=SimpleNamespace(
+            diagnostics={},total=lambda line,side:MarketProbability(.5,.5,0))
+        values={'kalshi-quick-probability':60,'kalshi-quick-edge':-100,
+                'kalshi-quick-player-methods':['WHP'],'kalshi-context':self.f.game}
+        client=self.f.app.server.test_client()
+        tasks=self.f.app._filter_jobs.tasks
+
+        def scan(sequence,methods,client=client):
+            values.update({'kalshi-quick-request':fixtures.quick_request(sequence),'kalshi-quick-game-methods':methods})
+            reply=post(self.f.app,'kalshi_quick_scan',values,'kalshi-quick-request.data',client=client)
+            self.ready()
+            return tasks.peek(reply['response']['kalshi-quick-scan']['data']['job'])
+
+        full=['PPP','EPA','ELO']
+        subset=['PPP','EPA']
+        with patch.object(kalshi_analysis,'rank',wraps=kalshi_analysis.rank) as rank:
+            first=scan(1,full)
+            self.assertFalse(first['reused_quotes'])
+            warm=scan(2,subset)
+            self.assertTrue(warm['reused_quotes'])
+            self.assertGreater(len(warm['ranked']['matches']),len(first['ranked']['matches']))
+            self.assertEqual(warm['snapshot']['fetched_at'],first['snapshot']['fetched_at'])
+            self.f.exchange.all_quotes.assert_called_once()
+            self.assertEqual(rank.call_count,4)
+            for engine in [*self.f.engines.values(),self.f.players['WHP']]:
+                engine.forecast.assert_called_once()
+
+        tasks.method_results.clear()
+        fresh=scan(3,subset,client=self.f.app.server.test_client())
+        self.assertFalse(fresh['reused_quotes'])
+        self.assertEqual({key:value for key,value in warm['ranked'].items() if key!='player_fits'},
+                         {key:value for key,value in fresh['ranked'].items() if key!='player_fits'})
+        expired_again=scan(4,full)
+        with patch('app.sections.exchanges.kalshi_analysis_callbacks.monotonic',return_value=expired_again['refilter_until']):
+            after_expiry=scan(5,subset)
+        self.assertFalse(after_expiry['reused_quotes'])
+        self.assertEqual(self.f.exchange.all_quotes.call_count,4)
+
     def test_evicted_job_reports_expiry_and_client_polling_does_not_restart_terminal_jobs(self):
         scan=self.submit();self.ready()
         with self.f.app._filter_jobs.tasks.lock:self.f.app._filter_jobs.tasks.values.pop(scan['job'])

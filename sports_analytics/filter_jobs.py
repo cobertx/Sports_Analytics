@@ -25,6 +25,23 @@ class QuickScanTasks(PageTasks):
         super().__init__(capacity=capacity)
         self.progress_records = OrderedDict()
         self.tracked = OrderedDict()
+        self.method_results = OrderedDict()
+
+    def evaluate_method(self, key, calculate, reusable):
+        """Keep successful, threshold-independent estimates for an unchanged input."""
+        with self.lock:
+            cached = self.method_results.get(key)
+            if cached is not None and reusable(cached):
+                self.method_results.move_to_end(key)
+                return cached
+        result = calculate()
+        if reusable(result):
+            with self.lock:
+                self.method_results[key] = result
+                self.method_results.move_to_end(key)
+                while len(self.method_results) > 3 * self.capacity:
+                    self.method_results.popitem(last=False)
+        return result
 
     def track(self, owner, key, scope, request, *, provider, sport, matchup, methods):
         """Keep each browser's submitted scans discoverable outside the active market."""

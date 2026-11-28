@@ -142,6 +142,7 @@ class MispricingChecks(TestCase):
         for sport in ['NBA','NFL','NCAAF']:
             for player_method in ['WHP','UO','OAM','PGE']:
                 self.app._filter_jobs.forecasts.clear()
+                self.app._filter_jobs.tasks.method_results.clear()
                 for service in [*self.game_services.values(),*self.player_services.values()]:service.reset_mock()
                 location=f'#{sport.lower()}-game-123';selection=self.saved['pulled_at']
                 with patch('app.sections.markets.callbacks.ctx',SimpleNamespace(triggered_id='market-quick-filter')):
@@ -160,6 +161,34 @@ class MispricingChecks(TestCase):
                 self.assertEqual(len(received['rows']),7 if player_method=='WHP' else 9)
                 self.assertEqual(received['sport'],sport)
         self.markets.pull.assert_not_called()
+
+    def test_subset_reuses_method_rankings_and_newly_qualifies_previously_blocked_lines(self):
+        from check_dashboard_efficiency import post
+
+        class LowGame(GameForecast):
+            def total(self,line,side):return MarketProbability(.6,.4,0)
+
+        self.game_services['ELO'].forecast.return_value=LowGame()
+        client=self.app.server.test_client()
+        values={'market-quick-probability':75,'market-quick-edge':5,'market-quick-player-methods':['WHP'],
+                'market-url':'#nfl-game-123','market-snapshot':self.saved['pulled_at'],
+                'market-category':FILTER_CATEGORY,'workspace-page':'market'}
+
+        def scan(sequence,methods):
+            values.update({'market-quick-filter':sequence,'market-quick-game-methods':methods})
+            submission=post(self.app,'request_quick_filter',values,'market-quick-filter.n_clicks',client=client)
+            request=submission['response']['mispricing-request']['data']
+            return str(finish_filter(self.app,request)[0])
+
+        with patch('app.sections.markets.callbacks.rank_markets',wraps=rank_markets) as price:
+            self.assertIn('4 qualifying selections',scan(1,['PPP','EPA','ELO']))
+            self.assertIn('5 qualifying selections',scan(2,['PPP','EPA']))
+            self.assertEqual(price.call_count,4)
+            self.game_services['EPA'].config={'lookback':99}
+            self.assertIn('5 qualifying selections',scan(3,['PPP','EPA']))
+            self.assertEqual(price.call_count,5)
+        self.game_services['PPP'].forecast.assert_called_once()
+        self.assertEqual(self.game_services['EPA'].forecast.call_count,2)
 
     def test_changed_context_drops_stale_rankings_and_partial_failures_keep_other_markets(self):
         criteria=criteria_values(75,5);location='#nfl-game-123';selection=self.saved['pulled_at']

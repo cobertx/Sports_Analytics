@@ -40,12 +40,14 @@ def quote_version(sport,game,providers):
         for p,r in sorted(providers.items())]])
 
 
-def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast,pages=None,tasks=None,source_revision=None,*,draftkings=None,quick_jobs=None):
+def register(app,schedule,markets,kalshi,polymarket,game_forecast,player_forecast,pages=None,tasks=None,source_revision=None,*,
+             draftkings=None,quick_jobs=None,method_revision=None):
     register_controls(app,'summary',single='summary-game-method',player_single='summary-player-method')
     quote_jobs=SummaryQuoteJobs()
     books={'FanDuel':markets,'DraftKings':draftkings or {}}
     from app.sections.market_summary.summary_filter_callbacks import register as register_quick
-    quick_chart_result=register_quick(app,quote_jobs,game_forecast,player_forecast,source_revision,quick_jobs)
+    quick_chart_result=register_quick(app,quote_jobs,game_forecast,player_forecast,source_revision,quick_jobs,
+                                      method_revision=method_revision)
     costs={provider:{sport:view.pull_estimate(sport,provider) for sport in SOURCES} for provider in books}
     app.clientside_callback("function(sport){return '#'+sport.toLowerCase()+'-draftkings-market';}",
         Output('draftkings-page-link','href'),Input('sport','value'))

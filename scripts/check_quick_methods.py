@@ -194,7 +194,7 @@ class PromptMethodChecks(TestCase):
         self.assertIn('Click Quick Filtering',str(f.cb['kalshi_quick_results'](
             scan,f.game,['PPP'],['WHP'],0,-100,'live',FILTER,'kalshi',changed,pi)))
         f.players['OAM'].forecast.side_effect=DataSourceError('Unavailable OAM')
-        f.app._filter_jobs.forecasts.clear()
+        f.players['OAM'].config={'lookback':99}
         failed,_=quick_scan(f,kalshi.quick_request(2),0,-100,['PPP'],['WHP'],f.game,None,pv,pi)
         self.assertEqual(len(failed['ranked']['matches']),18)
 

@@ -15,7 +15,7 @@ from app.sections.market_summary import market_summary_view as view
 from sports_analytics.market_summary import POLICY_VERSION
 
 
-def register(app,quotes,game_forecast,player_forecast,source_revision,jobs=None):
+def register(app,quotes,game_forecast,player_forecast,source_revision,jobs=None,*,method_revision=None):
     jobs=jobs if jobs is not None else QuickScanTasks(capacity=8)
     app._summary_quick_jobs=jobs
     def revision(sport,methods,players):
@@ -77,8 +77,13 @@ def register(app,quotes,game_forecast,player_forecast,source_revision,jobs=None)
                     report(86+percent//10,'Updated history · '+message)
 
                 for progress in (report,report_retry):
-                    before=[revision(sport,methods,players),availability_revision(sport)]
-                    ranked=calculate_filter(bundle,methods,players,criteria,game_forecast,player_forecast,progress)
+                    availability=availability_revision(sport)
+                    before=[revision(sport,methods,players),availability]
+                    def evaluate(method,price,reusable):
+                        method_key=request_key(['summary-method',bundle['id'],method_revision(sport,method),availability])
+                        return jobs.evaluate_method(method_key,price,reusable)
+                    ranked=calculate_filter(bundle,methods,players,criteria,game_forecast,player_forecast,progress,
+                                            evaluate_method=evaluate if method_revision else None)
                     after=[revision(sport,methods,players),availability_revision(sport)]
                     if before==after:
                         report(97,'Publishing filtered selections')

@@ -2,6 +2,7 @@
 from app.shell.navigation import scoped_callback
 from app.components.presentation import signed_state
 from copy import deepcopy
+from time import monotonic
 
 from dash import ALL,Input,Output,State,ctx,html,no_update,set_props
 from dash.exceptions import PreventUpdate
@@ -21,6 +22,9 @@ from app.sections.market_structure.market_structure_link import line_actions
 from sports_analytics.filter_jobs import FilterJobs,request_key
 from app.sections.markets.lazy_markets import markets as lazy_markets
 from app.sections.markets import prop_probability, quick_filter_monitor, quick_visibility
+
+
+LIVE_REFILTER_SECONDS = 60
 
 
 def results(snapshot, ranked, criteria, models):
@@ -91,7 +95,8 @@ def filter_snapshot(service,game,selected,pull=False,*,current=False):
     return snapshot,status
 
 
-def register(app,service,game_forecast,player_forecast,filtered_results=None,*,jobs=None,tasks=None,source_revision=None):
+def register(app,service,game_forecast,player_forecast,filtered_results=None,*,jobs=None,tasks=None,source_revision=None,
+             method_revision=None):
     jobs=jobs or FilterJobs()
     quick_methods.register_controls(app,'kalshi',single='kalshi-game-method',player_single='kalshi-player-method')
     prompt_fields=dict(type='kalshi-quick-prompt-method',scope=ALL,prompt=ALL)
@@ -345,11 +350,42 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
             methods,player_methods=selected_methods(methods,player_methods,sport)
             overrides=quick_methods.choices(prompt_values,prompt_ids,quick_methods.scope('kalshi',sport,game_id),ignore_stale=True)
             game=deepcopy(game)
+            owner=quick_filter_monitor.owner()
+            scope=('kalshi',location_hash,selected)
+            context=identity(game,selected,methods,player_methods)
+            game_key=request_key([context[:7],sorted(set(game.get('events',[])))])
+            previous=None
+            if selected=='live':
+                prior=jobs.tasks.latest(owner,scope)
+                if prior:
+                    _,_,_,prior_methods,prior_players=prior['scope']
+                    prior_overrides=prior.get('prompt_methods',{})
+                    if prior['criteria']!=criteria:
+                        reuse_settings=(methods,player_methods,overrides)==(prior_methods,prior_players,prior_overrides)
+                    else:
+                        reuse_settings=quick_methods.reduces_methods(methods,player_methods,overrides,
+                            prior_methods,prior_players,prior_overrides)
+                    if reuse_settings:
+                        state=jobs.tasks.queue.state(prior['job'])
+                        if not state['pending'] and not state['error']:
+                            previous=jobs.tasks.peek(prior['job'])
+
             def calculate_scan(report):
-                report(5,'Loading market quotes')
-                snapshot,status=filter_snapshot(service,game,selected,current=True)
+                reuse=(previous and previous.get('game_key')==game_key
+                       and monotonic()<previous.get('refilter_until',0))
+                if reuse:
+                    snapshot,status=previous['snapshot'],previous['status']
+                    report(5,'Using quotes from the previous scan')
+                else:
+                    report(5,'Loading market quotes')
+                    snapshot,status=filter_snapshot(service,game,selected,current=True)
                 report(10,'Preparing forecast methods')
-                ranked,errors=quick_calculate(game,snapshot,selected,methods,player_methods,criteria,game_forecast,player_forecast,overrides,report)
+                quote_key=request_key([game_key,selected,snapshot['category'],snapshot.get('fetched_at'),snapshot['rows']])
+                def evaluate(method,price,reusable):
+                    method_key=request_key(['kalshi-method',quote_key,method_revision(sport,method),context[7]])
+                    return jobs.tasks.evaluate_method(method_key,price,reusable)
+                ranked,errors=quick_calculate(game,snapshot,selected,methods,player_methods,criteria,game_forecast,player_forecast,
+                    overrides,report,evaluate_method=evaluate if method_revision else None)
                 if filtered_results is not None:
                     report(95,'Saving filtered selections')
                     try:
@@ -357,14 +393,21 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
                             request=dict(selection=selected,methods=methods,player_methods=player_methods,prompt_methods=overrides,sequence=clicks))
                     except (DataSourceError,OSError,ValueError) as exc:
                         errors=[*errors,'Quick Filtering completed, but its report was not saved: '+str(exc)]
-                return dict(snapshot=snapshot,game=game,ranked=ranked,errors=errors,status=status)
-            context=identity(game,selected,methods,player_methods)
-            key=request_key([context,criteria,overrides])
+                refilter_until=0
+                if reuse:
+                    # Refiltering shares the original quote freshness window.
+                    refilter_until=previous['refilter_until']
+                elif (selected=='live' and snapshot.get('fetched_at') and snapshot['rows']
+                      and not snapshot.get('updating') and not snapshot.get('notices')):
+                    refilter_until=monotonic()+LIVE_REFILTER_SECONDS
+                return dict(snapshot=snapshot,game=game,ranked=ranked,errors=errors,status=status,
+                            game_key=game_key,refilter_until=refilter_until,reused_quotes=bool(reuse))
+            key=request_key([owner,context,criteria,overrides])
             _,_,error=jobs.tasks.scan(key,calculate_scan,refresh=True,force=True)
             if error:raise DataSourceError(error)
             scan = dict(context=context,scope=quick_scope(game,selected,methods,player_methods),
                         criteria=criteria,prompt_methods=overrides,job=key,sequence=clicks)
-            jobs.tasks.track(quick_filter_monitor.owner(),key,('kalshi',location_hash,selected),scan,
+            jobs.tasks.track(owner,key,scope,scan,
                              provider='Kalshi',sport=sport,matchup=game.get('title') or game_id,
                              methods=[*methods,*player_methods])
             return scan, submission(quick_progress(jobs.tasks.progress(key),'kalshi-submitted'))
@@ -439,8 +482,8 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
                      'This result expired. Click Quick Filtering to load it again.')
             state('error',message)
             return in_scope(html.P(message,className='mispricing-error',role='status'))
-        if (not restored and previous and previous.get('status')=='pending' and previous.get('job')==scan.get('job')
-                and previous.get('sequence')==scan.get('sequence')):
+        if (not restored and not record.get('reused_quotes') and previous and previous.get('status')=='pending'
+                and previous.get('job')==scan.get('job') and previous.get('sequence')==scan.get('sequence')):
             checkpoint=quick_finish_progress(jobs.tasks,scan['job'],previous.get('progress'))
             if checkpoint:return pending_view(checkpoint)
         ranked=record['ranked']
@@ -450,7 +493,8 @@ def register(app,service,game_forecast,player_forecast,filtered_results=None,*,j
             message='Quick Filtering results could not be displayed: '+str(exc)+'. Click Quick Filtering to retry.'
             state('error',message)
             return in_scope(html.P(message,className='mispricing-error',role='status'))
-        state('complete',record.get('status','')+f" Quick Filtering completed: {len(ranked['matches'])} qualifying selections; "
+        status='Re-filtered quotes from the previous scan.' if record.get('reused_quotes') else record.get('status','')
+        state('complete',status+f" Quick Filtering completed: {len(ranked['matches'])} qualifying selections; "
               f"{ranked['evaluated']} evaluated; {ranked['unavailable']} unavailable.")
         return in_scope(content)
 

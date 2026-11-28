@@ -302,7 +302,7 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     player_services = {"WHP": whp_service, "UO": usage_opportunity_service,
                        "OAM": opponent_adjusted_service, "PGE": pace_game_environment_service,
                        "PTR": playing_time_rotation_service, "ILA": injury_lineup_service}
-    forecast_game_markets, forecast_player_markets, exchange_source_revision = register_markets(
+    forecast_game_markets, forecast_player_markets, exchange_source_revision, method_revision = register_markets(
         app, market_services, game_services, player_services, ncaaf_model_data=ncaaf_model_data,
         availability_service=availability_service, market_page_tasks=market_page_tasks,
         filter_jobs=filter_jobs, filtered_results_service=filtered_results_service,
@@ -324,12 +324,13 @@ def create_app(service=None, career_service=None, schedule_service=None, odds_se
     register_in_game_callbacks(app,in_game_service)
     register_kalshi_callbacks(app,kalshi_service,pages=exchange_pages.get('Kalshi'))
     register_kalshi_analysis(app,kalshi_service,forecast_game_markets,forecast_player_markets,filtered_results_service,
-                            jobs=filter_jobs,tasks=market_page_tasks,source_revision=exchange_source_revision)
+                            jobs=filter_jobs,tasks=market_page_tasks,source_revision=exchange_source_revision,
+                            method_revision=method_revision)
     register_kalshi_callbacks(app,polymarket_service,view=polymarket_view,provider='Polymarket',pages=exchange_pages.get('Polymarket'))
     polymarket_view.register_distributions(app,forecast_game_markets,forecast_player_markets,market_page_tasks)
     register_market_summary(app,schedule_service,market_services,kalshi_service,polymarket_service,forecast_game_markets,forecast_player_markets,
                             pages=exchange_pages,tasks=market_page_tasks,source_revision=exchange_source_revision,
-                            draftkings=draftkings_services,quick_jobs=filter_jobs.tasks)
+                            draftkings=draftkings_services,quick_jobs=filter_jobs.tasks,method_revision=method_revision)
     register_filtered_results(app,filtered_results_service)
     app._history_updates=history_updater
     game_data_monitor.register(app, GameDataStatus(service, history_updater.root/'data/modeling'))

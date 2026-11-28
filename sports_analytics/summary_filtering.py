@@ -7,12 +7,13 @@ from .filter_jobs import forecast_progress
 from .market_summary import calculate,prepare_forecast
 from app.sections.markets.market_view import criteria_match
 from app.sections.markets.mispricing import run_forecasts
+from app.sections.markets.prop_probability import stored_fit
 
 
 def selection_key(row):return row['provider'],row['index'],row['side'] or ''
 
 
-def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player_forecast,report=None):
+def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player_forecast,report=None,*,evaluate_method=None):
     values={};errors=[]
     rows,source=prepare_forecast(bundle)
     # The joint forecasts still receive the full source. Only row pricing and
@@ -32,9 +33,13 @@ def calculate_filter(bundle,methods,player_methods,criteria,game_forecast,player
         nonlocal completed
         results=[]
         for method in selected:
-            result=calculate(bundle,method if kind=='game' else methods[0],
-                method if kind=='player' else player_methods[0],game_forecast,player_forecast,
-                kinds=(kind,),prepared=(by_kind[kind],source),inline=True,include_distributions=kind=='player')
+            def price():
+                return calculate(bundle,method if kind=='game' else methods[0],
+                    method if kind=='player' else player_methods[0],game_forecast,player_forecast,
+                    kinds=(kind,),prepared=(by_kind[kind],source),inline=True,include_distributions=kind=='player')
+            result=price() if evaluate_method is None else evaluate_method(method,price,lambda record:
+                all(error.startswith('Game injuries:') for error in record['errors'])
+                and (not record.get('player_fit') or stored_fit(record['player_fit']) is not None))
             results.append((method,result))
             with progress_lock:
                 completed+=1

@@ -12,6 +12,7 @@ from app.sections.markets.mispricing import ALL_PROBABILITIES, consensus_ranking
 from .availability import revision as availability_revision
 from .availability_adjustment import note as availability_note
 from app.sections.markets import quick_methods
+from app.sections.markets.prop_probability import stored_fit
 
 FILTER = 'Mispricing Filter'
 ADAPTER_VERSION = 4
@@ -287,7 +288,8 @@ def prompt_targets(game,snapshot):
             for ticker,target in mapped.items()}
 
 
-def quick_calculate(game, snapshot, selected, methods, player_methods, criteria, game_forecast, player_forecast,prompt_methods=None,report=None):
+def quick_calculate(game, snapshot, selected, methods, player_methods, criteria, game_forecast, player_forecast,
+                    prompt_methods=None,report=None,*,evaluate_method=None):
     """Fit each selected method once, with the same quotes and historical cutoff."""
     try:
         source,mapped=prepare_targets(game,snapshot)
@@ -305,7 +307,7 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
     inputs={player:({**snapshot,'rows':rows},(source,{row['ticker']:mapped[row['ticker']] for row in rows}),
                     tuple(contract_pricing(row) for row in rows))
             for player,rows in groups.items()}
-    def evaluate(method, player):
+    def price(method, player):
         subset,prepared,contracts=inputs[player]
         game_method,player_method=(methods[0],method) if player else (method,player_methods[0])
         context=identity(game,selected,game_method,player_method,revision=revision)
@@ -314,6 +316,12 @@ def quick_calculate(game, snapshot, selected, methods, player_methods, criteria,
         displayed=decorate(subset,game,selected,game_method,player_method,models,context=context,contracts=contracts)
         return (rank(displayed,ALL_PROBABILITIES),models.get('errors',[]),displayed['rows'] if player else [],
                 models.get('player_fits',{}).get(subset.get('category','')) if player else None)
+
+    def evaluate(method,player):
+        if evaluate_method is None:return price(method,player)
+        return evaluate_method(method,lambda:price(method,player),lambda record:
+            all(error.startswith('Game injuries:') for error in record[1])
+            and (not record[3] or stored_fit(record[3]) is not None))
     tasks={method:lambda method=method:evaluate(method,False) for method in quick_methods.game_methods(game['sport']) if method in needed}
     tasks.update({method:lambda method=method:evaluate(method,True) for method in quick_methods.player_methods(game['sport']) if method in needed})
     forecasts=run_forecasts(tasks,game['sport'],report)

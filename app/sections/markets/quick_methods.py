@@ -127,6 +127,19 @@ def plan(rows,game_methods,player_methods,overrides=None):
             for key,entry in catalog(rows).items()}
 
 
+def reduces_methods(methods,players,overrides,previous_methods,previous_players,previous_overrides):
+    """Check inherited and explicit prompt selections for a strict reduction."""
+    defaults=(set(methods),set(players))
+    previous_defaults=(set(previous_methods),set(previous_players))
+    selections=list(zip(defaults,previous_defaults))
+    for prompt in overrides.keys() | previous_overrides.keys():
+        is_player=json.loads(prompt)[0].startswith('player_')
+        selections.append((set(overrides.get(prompt,defaults[is_player])),
+                           set(previous_overrides.get(prompt,previous_defaults[is_player]))))
+    return all(current <= previous for current,previous in selections) and any(
+        current < previous for current,previous in selections)
+
+
 def consensus(rankings,assignments,rows,criteria,selection_key,combine,*,prompt=prompt_key,sides=1):
     """Reuse each fitted method; intersect only the methods assigned to each prompt."""
     counts=Counter(prompt(row) for row in rows)
